@@ -2,3 +2,8 @@ node_modules/
 dist/
 *.log
 .DS_Store
+
+# Interne Doku, bleibt lokal (nicht im öffentlichen Repo)
+teamlead/
+docs/
+CLAUDE.md
