@@ -8,7 +8,7 @@ import { randomName } from './names';
 import { CharacterPreview } from './preview';
 import { SettingsView } from './settingsView';
 
-export type LobbyChoice = { kind: 'create'; code: string } | { kind: 'join'; code: string } | { kind: 'bench' };
+export type LobbyChoice = { kind: 'create'; code: string; voice: boolean } | { kind: 'join'; code: string } | { kind: 'bench' };
 
 /** The one map so far. Kept as data so the menu already separates map, game and character. */
 export const MAP = { name: 'Hypertrain', line: 'Linie 7' };
@@ -153,6 +153,8 @@ export class MainMenu extends MenuShell {
   private resolve: ((c: LobbyChoice) => void) | null = null;
   private status: { text: string; actions: HTMLElement[] } | null = null;
   private orphanTimer = 0;
+  /** "Raum ohne Sprachchat": for groups already talking in TeamSpeak or Discord. */
+  private quiet = false;
 
   constructor(host: HTMLElement, profile: PersonState, onProfile: (p: PersonState) => void) {
     super(profile, onProfile, 'Spielen', el('h1', 'brand-name', 'uKnowHeDoesntKnow'));
@@ -209,7 +211,13 @@ export class MainMenu extends MenuShell {
 
     const create = el('button', invite ? 'btn ghost' : 'btn big', 'Raum erstellen');
     create.type = 'button';
-    create.addEventListener('click', () => this.pick({ kind: 'create', code: newRoomCode() }));
+    create.addEventListener('click', () => this.pick({ kind: 'create', code: newRoomCode(), voice: !this.quiet }));
+    const quiet = el('label', 'check');
+    const cb = el('input');
+    cb.type = 'checkbox';
+    cb.checked = this.quiet;
+    cb.addEventListener('change', () => (this.quiet = cb.checked));
+    quiet.append(cb, el('span', '', 'Raum ohne Sprachchat'), el('span', 'note', 'wenn ihr schon im TeamSpeak oder Discord seid'));
 
     const form = el('form', 'join');
     // Placeholder shows the format; the label stays for screen readers only, the row is tight.
@@ -237,7 +245,7 @@ export class MainMenu extends MenuShell {
     const actions = el('div', 'play-actions');
     actions.append(create, el('span', 'or', 'oder'), form);
     if (invite) col.append(nameRow, el('p', 'note', 'Du wurdest eingeladen, der Code ist schon eingetragen.'), actions, err, map);
-    else col.append(nameRow, actions, err, map);
+    else col.append(nameRow, actions, quiet, err, map);
     this.panel.append(col);
   }
 
@@ -285,6 +293,8 @@ export interface RoomInfo {
   role: 'host' | 'client';
   rttMs: number;
   players: { id: string; name: string; seat: number; me: boolean; host: boolean }[];
+  /** Voice chat for the whole room (host switch). */
+  voice: boolean;
 }
 
 /** Per-player voice volume, from the voice engine. */
@@ -298,6 +308,10 @@ export class PauseMenu extends MenuShell {
   private room: RoomInfo | null = null;
   onResume: () => void = () => {};
   volume: VolumeControl | null = null;
+  /** Host: switch the room's voice chat for everyone. */
+  onRoomVoice: ((on: boolean) => void) | null = null;
+  /** Minigame block in the game tab (start/end a round), built by the game. */
+  gameControls: (() => HTMLElement | null) | null = null;
 
   constructor(
     private host: HTMLElement,
@@ -390,10 +404,25 @@ export class PauseMenu extends MenuShell {
       const meta = [`${r.players.length}/${NET.maxPlayers} im Wagen`, r.role === 'host' ? 'du bist Host' : 'du bist Gast'];
       if (r.role === 'client' && Number.isFinite(r.rttMs)) meta.push(`Ping ${Math.round(r.rttMs)} ms`);
       sec.append(el('span', 'eyebrow', 'Raum'), codeRow, list, el('p', 'note', meta.join(' · ')));
+      const vrow = el('div', 'row');
+      if (r.role === 'host' && this.onRoomVoice) {
+        const t = el('button', 'btn toggle', r.voice ? 'Sprachchat für alle: an' : 'Sprachchat für alle: aus');
+        t.type = 'button';
+        t.setAttribute('aria-pressed', String(r.voice));
+        t.addEventListener('click', () => {
+          // Focus inside the panel blocks the refresh (volume sliders); this button may refresh.
+          t.blur();
+          this.onRoomVoice?.(!r.voice);
+        });
+        vrow.append(t, el('span', 'note', 'Aus, wenn ihr schon im TeamSpeak oder Discord seid.'));
+      } else vrow.append(el('span', 'note', r.voice ? 'Sprachchat im Raum: an' : 'Sprachchat im Raum: aus (vom Host)'));
+      sec.append(vrow);
     } else {
       sec.append(el('span', 'eyebrow', this.bench ? 'Benchmark' : 'Allein'), el('p', 'note', 'Ohne Netzwerk, die drei Mitreisenden sind simuliert.'));
     }
     this.panel.append(sec);
+    const game = this.gameControls?.();
+    if (game) this.panel.append(game);
 
     const help = el('dl', 'keys');
     const keys = [
@@ -401,6 +430,9 @@ export class PauseMenu extends MenuShell {
       ['Rechte Maustaste', 'heranzoomen'],
       ['M', 'Mikro stumm an/aus'],
       ['V', 'halten zum Sprechen (bei Push-to-talk)'],
+      ['G', 'Wer bin ich? starten (Host)'],
+      ['F / R / P', 'fragen, raten, weitergeben (wenn du dran bist)'],
+      ['1 / 2 / 3', 'Ja, Nein, Weiß nicht'],
       ['Esc', 'dieses Menü'],
     ];
     for (const [k, v] of keys) help.append(el('dt', '', k), el('dd', '', v));

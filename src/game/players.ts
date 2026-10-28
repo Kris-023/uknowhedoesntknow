@@ -1,5 +1,5 @@
 import * as THREE from 'three';
-import { CAMERA, COLORS, HEAD, LIGHTS, NET, PLAYER_SEATS, SEAT_X } from '../config';
+import { CAMERA, COLORS, HEAD, LIGHTS, NET, PLAYER_SEATS, SEAT_X, WHOAMI } from '../config';
 import { mulberry32, type Rand } from '../core/rng';
 import { ITEMS, ITEM_IDS, SLOTS, type ItemId } from '../characters/accessories';
 import { makeLook, type Look } from '../characters/look';
@@ -146,6 +146,18 @@ export class Players {
     return this.people[i].rig.head.localToWorld(out.set(0, 0.12, 0.05));
   }
 
+  /** World position of the card above the head of seat `i` (follows the head when it turns). */
+  cardPos(i: number, out: THREE.Vector3): THREE.Vector3 {
+    const head = this.people[i].rig.head;
+    head.localToWorld(out.set(0, 0, 0));
+    out.y = this.people[i].root.localToWorld(this.tmp.set(0, WHOAMI.cardY, 0)).y;
+    return out;
+  }
+
+  private tmp = new THREE.Vector3();
+  /** Marker diamonds make room for the cards during a round. */
+  showMarkers = true;
+
   /** World position for the name label of seat `i`. */
   labelPos(i: number, out: THREE.Vector3): THREE.Vector3 {
     return this.people[i].root.localToWorld(out.set(0, LABEL_Y, 0));
@@ -176,7 +188,7 @@ export class Players {
       const self = pov && i === this.active;
       p.rig.povHide.visible = !self;
       const mk = this.markers[i];
-      mk.visible = !self;
+      mk.visible = !self && this.showMarkers;
       mk.position.y = 1.55 + 0.04 * Math.sin(t * 2 + i);
       mk.rotation.y = t * 1.5;
       // Markers are UI, not light sources: keep them just under the bloom threshold so they never glow.

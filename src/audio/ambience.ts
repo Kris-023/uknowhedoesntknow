@@ -107,6 +107,12 @@ export class Ambience {
     }
   }
 
+  /** Gong, then a spoken announcement (the Schaffner uses this too). */
+  announce(text: string): void {
+    this.gong();
+    setTimeout(() => this.speak(text, true), 1700);
+  }
+
   private burst(at: number, dur: number): AudioBufferSourceNode {
     const s = new AudioBufferSourceNode(this.ctx, { buffer: this.noise });
     s.start(at, Math.random() * 1.5, dur);
@@ -152,8 +158,9 @@ export class Ambience {
    * Placeholder voice: the browser's speech synthesis. It can't be routed through Web Audio, so it
    * plays without the speaker filter; recorded or generated lines can replace it later (see F5).
    */
-  private speak(text: string): void {
-    if (!settings.announcements || typeof speechSynthesis === 'undefined') return;
+  private speak(text: string, important = false): void {
+    // Stop announcements can be switched off; a Schaffner call is part of the game and always speaks.
+    if ((!settings.announcements && !important) || typeof speechSynthesis === 'undefined') return;
     const u = new SpeechSynthesisUtterance(text);
     u.lang = 'de-DE';
     const de = speechSynthesis.getVoices().find((v) => v.lang.startsWith('de'));

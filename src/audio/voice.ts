@@ -90,6 +90,8 @@ export class Voice {
   micError = '';
   muted = false;
   pttHeld = false;
+  /** Room-wide voice chat (host setting). Off: no mic, nothing sent, no voices played. */
+  roomVoice = true;
 
   constructor() {
     this.bus = this.ctx.createGain();
@@ -119,10 +121,10 @@ export class Voice {
     let last = { ...settings };
     onSettings(() => {
       const s = settings;
-      this.master.gain.setTargetAtTime(s.voiceVolume, this.ctx.currentTime, 0.05);
+      this.master.gain.setTargetAtTime(this.roomVoice ? s.voiceVolume : 0, this.ctx.currentTime, 0.05);
       this.mic?.gain.gain.setTargetAtTime(s.micGain, this.ctx.currentTime, 0.05);
       if (s.micOn !== last.micOn || (s.micOn && s.micDevice !== last.micDevice)) {
-        if (s.micOn) void this.startMic();
+        if (s.micOn && this.roomVoice) void this.startMic();
         else this.stopMic();
       }
       if (s.voiceMode !== last.voiceMode) {
@@ -173,8 +175,18 @@ export class Voice {
     net.onLeave((id) => this.removePeer(id));
   }
 
+  /** Host switched the room's voice chat. The own mic setting stays as it is for the next room. */
+  setRoomVoice(on: boolean): void {
+    if (on === this.roomVoice) return;
+    this.roomVoice = on;
+    this.master.gain.setTargetAtTime(on ? settings.voiceVolume : 0, this.ctx.currentTime, 0.05);
+    if (!on) this.stopMic();
+    else if (settings.micOn) void this.startMic();
+    this.emit();
+  }
+
   async startMic(): Promise<void> {
-    if (this.micState === 'starting') return;
+    if (this.micState === 'starting' || !this.roomVoice) return;
     this.stopMic();
     this.micState = 'starting';
     this.emit();

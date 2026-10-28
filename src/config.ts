@@ -284,3 +284,36 @@ export const NPC_DEFS = [
   { stand: { x: 0.5, z: -3.4, yaw: -0.6 }, act: 'beer' },
   { stand: { x: -0.45, z: -2.9, yaw: 0.35 }, act: 'paper' },
 ] as const;
+
+/** Minigame "Wer bin ich?". Rules are open (F4); these are the first, simple ones. */
+export const WHOAMI = {
+  /** Points for solving, by order: first, second, third, rest. */
+  points: [3, 2, 1, 1],
+  /** A vote closes after this long with the votes that came in. */
+  voteS: 20,
+  /** Card image: longest side in px, JPEG quality. Kept in memory only, never uploaded. */
+  cardPx: 512,
+  cardQuality: 0.82,
+  /** Largest card payload accepted from a peer (base64 data URL). */
+  cardMaxChars: 600_000,
+  /** Card above the head: size in metres (for the on-screen size); its bottom edge this high above the seat root. */
+  cardSizeM: 0.44,
+  cardY: 1.1,
+} as const;
+
+/**
+ * The Schaffner: too loud for too long (measured by the host from everyone's audio) brings an
+ * announcement and a point off.
+ */
+export const SCHAFFNER = {
+  /** Mouth/meter level that counts as shouting. */
+  loudLevel: 0.97,
+  /** Seconds of shouting within `windowS` that trigger him. */
+  loudS: 2.5,
+  windowS: 5,
+  /** He doesn't come again for the same person within this many seconds. */
+  cooldownS: 30,
+  penalty: 1,
+  /** How long he stands next to you. */
+  showS: 7,
+} as const;

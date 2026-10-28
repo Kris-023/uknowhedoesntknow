@@ -25,7 +25,10 @@ export class MicHud {
     let text: string;
     let warn = false;
     let level = 0;
-    switch (v.micState) {
+    switch (v.roomVoice ? v.micState : 'room') {
+      case 'room':
+        text = 'Sprachchat im Raum aus';
+        break;
       case 'off':
         text = 'Mikro aus';
         break;

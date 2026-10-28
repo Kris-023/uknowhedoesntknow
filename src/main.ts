@@ -2,7 +2,7 @@ import * as THREE from 'three';
 import { Ambience } from './audio/ambience';
 import { getVoice, type Voice } from './audio/voice';
 import type { PersonState } from './characters/person';
-import { AMBIENCE, CAMERA, HEAD, LIGHT_PRESETS, LIGHTS, NET, VOICE } from './config';
+import { AMBIENCE, CAMERA, HEAD, LIGHT_PRESETS, LIGHTS, NET, SCHAFFNER, VOICE } from './config';
 import { SharedClock } from './core/clock';
 import { DebugPanel } from './debug/panel';
 import { sceneTree } from './debug/sceneTree';
@@ -18,6 +18,12 @@ import { BenchPanel } from './ui/benchPanel';
 import { MainMenu, PauseMenu } from './ui/menu';
 import { MicHud } from './ui/micHud';
 import { NameTags } from './ui/nametags';
+import { LocalGameRoom, sessionNet, type GameNet } from './game/minigame';
+import { LoudTracker, SchaffnerFigure } from './game/schaffner';
+import { WhoamiBots } from './game/whoami/bots';
+import { CardsView } from './game/whoami/cardsView';
+import { WhoamiGame } from './game/whoami/game';
+import { WhoamiUi } from './game/whoami/ui';
 import { initUiScale } from './ui/scale';
 import { loadProfile, onSettings, saveProfile, settings } from './ui/store';
 import './style.css';
@@ -64,7 +70,11 @@ async function start(): Promise<void> {
   // Still within the click's user activation: audio may start and the mic may be asked for now.
   const voice = getVoice(true);
   voice?.resume();
-  if (voice && settings.micOn && voice.micState !== 'on') void voice.startMic();
+  // Mic now for the benchmark and own rooms with voice; a joiner asks only once the welcome says
+  // the room has voice chat, so quiet rooms never show the permission prompt.
+  const micWanted = choice.kind === 'bench' || (choice.kind === 'create' && choice.voice);
+  if (voice && settings.micOn && micWanted && voice.micState !== 'on') void voice.startMic();
+  if (voice && choice.kind === 'create') voice.setRoomVoice(choice.voice);
   const clock = SharedClock.local();
   if (choice.kind === 'bench') {
     menu.close();
@@ -76,11 +86,16 @@ async function start(): Promise<void> {
   const net = trysteroTransport(code, (msg) => console.warn('Trystero:', msg));
   voice?.bind(net);
   const session = new Session(net, clock, choice.kind === 'create', profile);
+  if (choice.kind === 'create') session.setOpts({ voice: choice.voice });
   addEventListener('pagehide', () => session.leave());
   // Pings and hello retries keep running while the tab is in the background.
   setInterval(() => session.tick(), 50);
 
   const go = () => {
+    if (voice && choice.kind === 'join') {
+      voice.setRoomVoice(session.opts.voice);
+      if (session.opts.voice && settings.micOn && voice.micState !== 'on') void voice.startMic();
+    }
     menu.close();
     launch(clock, session, 'pov', code, voice);
   };
@@ -217,6 +232,96 @@ function launch(clock: SharedClock, session: Session | null, startCam: 'wagon' |
   const voicePos = new THREE.Vector3();
 
   if (session) connect(session, world, panel, pause, code, refreshSeats);
+
+  // Minigame "Wer bin ich?": over the room, or solo against bots on the other seats.
+  let bots: WhoamiBots | null = null;
+  let gameNet: GameNet;
+  if (session) gameNet = sessionNet(session);
+  else {
+    const members = players.people.map((p, i) => ({ id: i === players.active ? 'me' : `bot${i}`, seat: i, name: i === players.active ? profile.name : p.name }));
+    // The local player first: the first member is the host of the local room.
+    members.sort((a, b) => Number(b.id === 'me') - Number(a.id === 'me'));
+    const room = new LocalGameRoom(members);
+    gameNet = room.net('me');
+    bots = new WhoamiBots(room, members.slice(1).map((m) => m.id));
+  }
+  // Dev only: ?voteS=120 stretches votes, so slow test browsers don't run out of time.
+  const devVoteS = import.meta.env.DEV ? Number(params.get('voteS')) || undefined : undefined;
+  const whoami = new WhoamiGame(gameNet, devVoteS);
+  const wiUi = new WhoamiUi(document.body, whoami, () => gameNet.members(), {
+    isHost: () => gameNet.isHost(),
+    hostName: () => gameNet.members().find((m) => m.id === gameNet.hostId())?.name || 'der Host',
+    canStart: () => gameNet.members().length >= 2,
+    start: () => whoami.start(),
+    solo: !session,
+    micWarning: () => {
+      if (!voice || !voice.roomVoice) return null;
+      if (voice.micState !== 'on') return 'Dein Mikro ist aus: die anderen hören deine Frage nicht (Esc → Einstellungen).';
+      if (voice.muted) return 'Du bist stumm geschaltet: M drücken.';
+      return null;
+    },
+  });
+  const cards = new CardsView(document.body, players, world.camera, stage);
+  // Phase changes that need the screen: a new card to make or the end of round close the Esc menu.
+  let lastPhase = '';
+  whoami.onChange(() => {
+    const phase = whoami.state?.phase ?? '';
+    if (phase !== lastPhase && (phase === 'done' || phase === 'cards') && pause.isOpen) pause.close();
+    lastPhase = phase;
+    syncHint();
+  });
+  const cardOf = (seat: number): string | '?' | null => {
+    const s = whoami.state;
+    const id = gameNet.members().find((m) => m.seat === seat)?.id;
+    if (!s || s.phase === 'cards' || !id || !s.players.includes(id)) return null;
+    // Your own card stays a question mark until you have solved it.
+    if (id === gameNet.selfId) return whoami.cards.get(id) ?? '?';
+    return whoami.cards.get(id) ?? null;
+  };
+  pause.gameControls = () => {
+    const box = el('div', 'room-box');
+    box.append(el('span', 'eyebrow', 'Minigame'), el('strong', 'wi-title', 'Wer bin ich?'));
+    const s = whoami.state;
+    const running = !!s && s.phase !== 'done';
+    const row = el('div', 'row');
+    if (gameNet.isHost()) {
+      const enough = gameNet.members().length >= 2;
+      const b = el('button', 'btn big', running ? 'Runde beenden' : session ? 'Runde starten' : 'Testrunde mit Bots starten');
+      b.type = 'button';
+      b.disabled = !running && !enough;
+      b.addEventListener('click', () => {
+        if (running) whoami.end();
+        else whoami.start();
+        pause.onResume();
+      });
+      row.append(b);
+      if (!enough) row.append(el('span', 'note', 'Mindestens zwei Spieler.'));
+    } else row.append(el('span', 'note', running ? 'Eine Runde läuft.' : 'Der Host startet die Runde.'));
+    box.append(row);
+    return box;
+  };
+
+  // The Schaffner: the host listens for shouting in everyone's audio and calls him.
+  const schaffner = new SchaffnerFigure(world.coach.root);
+  const loud = new LoudTracker();
+  const callSchaffner = (id: string) => {
+    const m = gameNet.members().find((x) => x.id === id);
+    if (!m) return;
+    schaffner.show(m.seat, clock.now());
+    const fined = gameNet.isHost() ? whoami.penalize(id, SCHAFFNER.penalty) : whoami.state?.phase === 'play';
+    ambience?.announce(`Durchsage für ${m.name || 'Fahrgast'}: Etwas leiser bitte!${fined ? ' Das kostet einen Punkt.' : ''}`);
+    const mine = m.id === gameNet.selfId;
+    wiUi.flash(
+      mine ? 'Der Schaffner steht neben dir' : `Schaffner bei ${m.name || 'Fahrgast'}`,
+      fined ? '−1 Punkt' : 'Etwas leiser!',
+      'bad',
+      `${mine ? 'Du warst' : `${m.name || 'Jemand'} war`} zu lange zu laut.`,
+    );
+  };
+  gameNet.onMessage((type, data, from) => {
+    if (type === 'sf:call' && from === gameNet.hostId() && typeof (data as { id?: unknown })?.id === 'string') callSchaffner((data as { id: string }).id);
+  });
+  const loudLevels = new Map<string, number>();
   panel.setCam(startCam);
 
   function resize(): void {
@@ -242,6 +347,12 @@ function launch(clock: SharedClock, session: Session | null, startCam: 'wagon' |
     if (world.cam === 'pov' && !document.pointerLockElement) void stage.requestPointerLock();
   });
   let unlockedAt = -Infinity;
+  // A game dialog took the mouse on purpose (card maker, end of round): no pause menu then.
+  let quietUnlock = false;
+  addEventListener('ukhdk:release-mouse', () => {
+    quietUnlock = true;
+    document.exitPointerLock();
+  });
   document.addEventListener('pointerlockchange', () => {
     const locked = document.pointerLockElement === stage;
     document.body.classList.toggle('locked', locked);
@@ -249,14 +360,16 @@ function launch(clock: SharedClock, session: Session | null, startCam: 'wagon' |
     // In the benchmark the side panel is the menu: releasing the mouse just frees it for the panel.
     if (!locked && world.cam === 'pov') {
       unlockedAt = performance.now();
-      if (!bench) pause.open();
+      if (!bench && !quietUnlock) pause.open();
+      quietUnlock = false;
     }
     syncHint();
   });
   pause.onResume = () => {
     pause.close();
     syncHint();
-    if (world.cam === 'pov') void stage.requestPointerLock();
+    // A game dialog (card maker, end of round) needs the mouse; don't grab it back then.
+    if (world.cam === 'pov' && !document.body.classList.contains('wi-dialog')) void stage.requestPointerLock();
   };
   addEventListener('keydown', (e) => {
     if (e.key !== 'Escape' || world.cam !== 'pov') return;
@@ -322,7 +435,26 @@ function launch(clock: SharedClock, session: Session | null, startCam: 'wagon' |
 
     measureVoices();
     world.update(t, dt, settings);
-    tags.update(world.cam === 'pov', (i) => Math.max(0, levels[i]));
+    whoami.tick(now);
+    bots?.tick(now);
+    wiUi.tick();
+    players.showMarkers = !whoami.state || whoami.state.phase === 'done';
+    cards.update(cardOf, (seat) => players.people[seat].name, world.cam === 'pov');
+    // A card carries the name; the separate tag steps aside meanwhile.
+    tags.update(world.cam === 'pov', (i) => Math.max(0, levels[i]), (i) => cards.shown.has(i));
+    schaffner.update(t, dt);
+    if (gameNet.isHost() && voice) {
+      loudLevels.clear();
+      for (const m of gameNet.members()) {
+        const lv = m.id === gameNet.selfId ? voice.micLevel() : voice.hasPeer(m.id) ? voice.peerLevel(m.id) : 0;
+        loudLevels.set(m.id, lv);
+      }
+      const caught = loud.feed(loudLevels, dt, t);
+      if (caught) {
+        gameNet.send('sf:call', { id: caught });
+        callSchaffner(caught);
+      }
+    }
     micHud?.update(pause.isOpen || (!session && voice?.micState !== 'on'));
     ambience?.update(t, world.train.kmh, world.power);
     voice?.update(world.camera, (id) => {
@@ -342,7 +474,7 @@ function launch(clock: SharedClock, session: Session | null, startCam: 'wagon' |
 
   if (import.meta.env.DEV) {
     // Hook for Playwright checks; not shipped in the production bundle.
-    Object.assign(window, { __hyper: { world, panel, pipeline, clock, session, pause, voice, ambience } });
+    Object.assign(window, { __hyper: { world, panel, pipeline, clock, session, pause, voice, ambience, whoami, callSchaffner } });
   }
 }
 
@@ -355,7 +487,9 @@ function connect(session: Session, world: World, panel: DebugPanel, pause: Pause
       role: session.role,
       rttMs: world.clock.rttMs,
       players: [...session.roster.values()].map((e) => ({ id: e.id, name: e.state.name, seat: e.seat, me: e.id === session.selfId, host: e.id === session.hostId })),
+      voice: session.opts.voice,
     });
+  pause.onRoomVoice = (on) => session.setOpts({ ...session.opts, voice: on });
   const roster = (includeMe: boolean) => {
     players.applyRoster([...session.roster.values()], session.mySeat, includeMe);
     panel.setNetRole(session.role);
@@ -377,6 +511,10 @@ function connect(session: Session, world: World, panel: DebugPanel, pause: Pause
       panel.showTempo(t.kmh);
     },
     blackout: (at) => (world.forcedBlackoutAt = at),
+    opts: (o) => {
+      getVoice()?.setRoomVoice(o.voice);
+      roomInfo();
+    },
   });
   setInterval(roomInfo, 2000);
 }

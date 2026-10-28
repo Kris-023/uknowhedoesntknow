@@ -161,3 +161,21 @@ describe('room code', async () => {
     expect(normalizeRoomCode('abcd-efg0')).toBeNull();
   });
 });
+
+describe('room settings', () => {
+  it('a quiet room tells joiners in the welcome and later changes reach everyone', () => {
+    const hub = new MemoryHub();
+    const a = peer(hub, 'a', true);
+    a.s.setOpts({ voice: false });
+    const b = peer(hub, 'b', false);
+    hub.flush();
+    expect(b.s.opts.voice).toBe(false);
+    a.s.setOpts({ voice: true });
+    hub.flush();
+    expect(b.s.opts.voice).toBe(true);
+    // Only the host decides.
+    b.s.setOpts({ voice: false });
+    hub.flush();
+    expect(a.s.opts.voice).toBe(true);
+  });
+});

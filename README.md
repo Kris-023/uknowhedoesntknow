@@ -4,10 +4,10 @@ Browser-Partyspiel für 2 bis 4 Freunde: Ihr sitzt euch in einem viel zu schnell
 gegenüber, draußen rast der Tunnel vorbei, drinnen flackert das Neon, und die Mitreisenden vom Kotti
 starren aufs Handy. Der Wagen heißt „Hypertrain“ und ist die erste Map. Darin laufen Minigames wie „Wer bin ich?“. Nur PC, nur Browser, nur private Lobbys.
 
-**Stand: M5 (NPCs und Stimmung).** Bis zu vier Leute treffen sich per Raumcode im selben Wagen, mit eigenem Namen und
+**Stand: M6 („Wer bin ich?“).** Bis zu vier Leute treffen sich per Raumcode im selben Wagen, mit eigenem Namen und
 eigener Figur, Kopfdrehung live und Sprachchat: Die Stimme kommt vom Kopf der Person, und der Mund klappt beim Sprechen auf.
 Zehn Mitreisende beschäftigen sich mit Handy, Zeitung und Bier oder schlafen, Pfandflaschen rollen, Gegenzüge knallen vorbei,
-vor jedem Halt gongt es. Als Nächstes kommt das erste Minigame (Roadmap in `teamlead/SUPERDOC.md`).
+vor jedem Halt gongt es. Das erste Minigame „Wer bin ich?“ ist spielbar (Roadmap in `teamlead/SUPERDOC.md`).
 
 ## Spielen
 
@@ -17,8 +17,18 @@ Name, Figur und Einstellungen merkt sich der Browser.
 2. Wer den Link öffnet, hat den Code schon im Feld und klickt **Beitreten**. Das Verbinden dauert ein paar Sekunden.
 3. Wer den Raum erstellt hat, ist Host. Geht der Host, übernimmt automatisch, wer am längsten dabei ist.
 
+Seid ihr schon im TeamSpeak oder Discord, setzt beim Erstellen den Haken „Raum ohne Sprachchat“; der Host kann den
+Sprachchat auch später im Esc-Menü für alle abschalten.
+
+**Wer bin ich?** Der Host startet die Runde mit <kbd>G</kbd> (oben wird angezeigt, wenn es losgehen kann). Jeder sucht ein Bild für den Nachbarn (Link, Strg+V, reinziehen
+oder Datei). Die Karte schwebt über dem Kopf, nur man selbst sieht die eigene nicht. Reihum laut eine Ja/Nein-Frage stellen
+(<kbd>F</kbd>), die anderen stimmen geheim ab (<kbd>1</kbd> Ja, <kbd>2</kbd> Nein, <kbd>3</kbd> Weiß nicht), bei Ja darf man
+weiterfragen. <kbd>R</kbd> heißt „Ich rate“. Wer zu laut wird, bekommt Besuch vom Schaffner und einen Punkt abgezogen.
+Bilder bleiben im Speicher und gehen nur an die Mitspieler.
+
 Ohne Namen bekommst du einen Zufallsnamen. Unter **Einstellungen → Benchmark starten** fährst du allein mit drei
-simulierten Mitreisenden und siehst FPS, während du Grafik und Maus live anpasst. Mehrere Tabs auf einem Rechner
+simulierten Mitreisenden und siehst FPS, während du Grafik und Maus live anpasst. Dort startet Esc → „Testrunde mit Bots“
+eine Runde „Wer bin ich?“ gegen Bots. Mehrere Tabs auf einem Rechner
 funktionieren auch als Mitspieler.
 
 Im Spiel: ins Bild klicken und mit der Maus umsehen, rechte Maustaste zoomt, <kbd>M</kbd> schaltet stumm,

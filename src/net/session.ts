@@ -7,8 +7,10 @@ import {
   parseRoster,
   parseState,
   parseTrain,
+  parseOpts,
   parseWelcome,
   trainDistance,
+  type RoomOpts,
   type RosterEntry,
   type Train,
   type Welcome,
@@ -23,6 +25,8 @@ export interface SessionEvents {
   roster(): void;
   train(t: Train): void;
   blackout(at: number): void;
+  /** Room settings changed (host decision). */
+  opts(o: RoomOpts): void;
   /** Host role changed (migration) or the room was full. */
   status(s: 'host' | 'full'): void;
 }
@@ -44,6 +48,7 @@ export class Session {
   private peers = new Set<string>();
   train: Train = { kmh: 0, t0: 0, d0: 0 };
   blackoutAt: number | null = null;
+  opts: RoomOpts = { voice: true };
   private lastHello = -Infinity;
   private nextPing = 0;
   private pingsSent = 0;
@@ -89,9 +94,31 @@ export class Session {
       this.blackoutAt = d;
       this.ev.blackout?.(d);
     });
+    net.on('opts', (d, from) => {
+      if (from !== this.hostId) return;
+      this.opts = parseOpts(d);
+      this.ev.opts?.(this.opts);
+    });
     net.on('full', (_d, from) => {
       if (!this.welcomed && from !== this.net.selfId) this.ev.status?.('full');
     });
+    // Minigame traffic: one channel, typed inside. Only from players in the room.
+    net.on('mg', (d, from) => {
+      if (!this.roster.has(from) || typeof d !== 'object' || d === null) return;
+      const { t, d: data } = d as { t?: unknown; d?: unknown };
+      if (typeof t === 'string' && t.length < 40) for (const h of this.gameHandlers) h(t, data, from);
+    });
+  }
+
+  private gameHandlers: ((type: string, data: unknown, from: string) => void)[] = [];
+
+  /** Minigame message to one player or everyone else. */
+  sendGame(type: string, data: unknown, to?: string): void {
+    this.net.send('mg', { t: type, d: data }, to);
+  }
+
+  onGame(h: (type: string, data: unknown, from: string) => void): void {
+    this.gameHandlers.push(h);
   }
 
   get selfId(): string {
@@ -156,6 +183,14 @@ export class Session {
     this.train = { kmh, t0: t, d0: trainDistance(this.train, t) };
     this.net.send('train', this.train);
     this.ev.train?.(this.train);
+  }
+
+  /** Host only: change room settings for everyone. */
+  setOpts(o: RoomOpts): void {
+    if (this.role !== 'host') return;
+    this.opts = o;
+    this.net.send('opts', o);
+    this.ev.opts?.(o);
   }
 
   /** Host only: debug blackout for everyone. */
@@ -248,6 +283,7 @@ export class Session {
       roster: [...this.roster.values()],
       train: this.train,
       blackoutAt: this.blackoutAt,
+      opts: this.opts,
     };
   }
 
@@ -261,6 +297,7 @@ export class Session {
     this.applyRoster(w.roster);
     this.train = w.train;
     this.blackoutAt = w.blackoutAt;
+    this.opts = w.opts;
     if (first) {
       this.clock.seed = w.seed;
       this.clock.startMs = w.startMs;

@@ -21,6 +21,16 @@ export interface RosterEntry {
   state: PersonState;
 }
 
+/** Room settings the host decides for everyone. */
+export interface RoomOpts {
+  /** Voice chat in this room; off for groups already sitting in TeamSpeak/Discord. */
+  voice: boolean;
+}
+
+export function parseOpts(v: unknown): RoomOpts {
+  return { voice: !(isObj(v) && v.voice === false) };
+}
+
 export interface Welcome {
   seed: number;
   startMs: number;
@@ -29,6 +39,7 @@ export interface Welcome {
   roster: RosterEntry[];
   train: Train;
   blackoutAt: number | null;
+  opts: RoomOpts;
 }
 
 export const trainDistance = (t: Train, now: number): number => t.d0 + (t.kmh / 3.6) * (now - t.t0);
@@ -107,7 +118,7 @@ export function parseWelcome(v: unknown): Welcome | null {
   // A broken blackout time only loses the blackout, not the whole welcome.
   const blackoutAt = num(v.blackoutAt, -1e9, 1e9);
   if (seed === null || startMs === null || hostMs === null || !roster || !train) return null;
-  return { seed: seed | 0, startMs, hostMs, roster, train, blackoutAt };
+  return { seed: seed | 0, startMs, hostMs, roster, train, blackoutAt, opts: parseOpts(v.opts) };
 }
 
 /** Pose on the wire: [yaw, pitch], rounded to keep packets tiny. */

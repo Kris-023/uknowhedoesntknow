@@ -29,14 +29,14 @@ export class NameTags {
   }
 
   /** `level(i)`: current voice level of seat i, to highlight who is speaking. */
-  update(pov: boolean, level: (i: number) => number): void {
+  update(pov: boolean, level: (i: number) => number, hide: (i: number) => boolean = () => false): void {
     const w = this.stage.clientWidth;
     const h = this.stage.clientHeight;
     this.players.people.forEach((p, i) => {
       const t = this.tags[i];
       const self = pov && i === this.players.active;
       const name = p.name;
-      if (!this.players.occupied[i] || self || !name) {
+      if (!this.players.occupied[i] || self || !name || hide(i)) {
         t.hidden = true;
         return;
       }
