@@ -1,7 +1,8 @@
 import * as THREE from 'three';
+import { Ambience } from './audio/ambience';
 import { getVoice, type Voice } from './audio/voice';
 import type { PersonState } from './characters/person';
-import { CAMERA, HEAD, LIGHT_PRESETS, LIGHTS, NET, VOICE } from './config';
+import { AMBIENCE, CAMERA, HEAD, LIGHT_PRESETS, LIGHTS, NET, VOICE } from './config';
 import { SharedClock } from './core/clock';
 import { DebugPanel } from './debug/panel';
 import { sceneTree } from './debug/sceneTree';
@@ -169,6 +170,14 @@ function launch(clock: SharedClock, session: Session | null, startCam: 'wagon' |
   if (bench) document.body.classList.add('benching');
   const tags = new NameTags(document.body, players, world.camera, stage);
   const micHud = voice ? new MicHud(document.body, voice) : null;
+  const ambience = voice ? new Ambience(voice, clock.seed) : null;
+  // Quiet start: no crackle while the world settles in (see Voice.holdOutput).
+  voice?.holdOutput();
+  let smooth = 0;
+  let held = !!voice;
+  const launchedAt = performance.now();
+  // Compile shaders in the background where the browser supports it, so the first frames hitch less.
+  if (pipeline) void pipeline.renderer.compileAsync(world.scene, world.camera).catch(() => {});
 
   // Voice levels: measured once per frame, read by mouths and name tags.
   const levels = [0, 0, 0, 0];
@@ -285,6 +294,13 @@ function launch(clock: SharedClock, session: Session | null, startCam: 'wagon' |
     const rawMs = now - last;
     const dt = Math.min(0.05, Math.max(0.001, rawMs / 1000));
     last = now;
+    if (held) {
+      smooth = rawMs < AMBIENCE.stableFrameMs ? smooth + 1 : 0;
+      if (smooth >= AMBIENCE.stableFrames || now - launchedAt > AMBIENCE.maxHoldS * 1000) {
+        held = false;
+        voice?.releaseOutput();
+      }
+    }
     fps = fps * 0.92 + (1 / dt) * 0.08;
     const t = clock.now();
     panel.tick();
@@ -308,6 +324,7 @@ function launch(clock: SharedClock, session: Session | null, startCam: 'wagon' |
     world.update(t, dt, settings);
     tags.update(world.cam === 'pov', (i) => Math.max(0, levels[i]));
     micHud?.update(pause.isOpen || (!session && voice?.micState !== 'on'));
+    ambience?.update(t, world.train.kmh, world.power);
     voice?.update(world.camera, (id) => {
       const seat = idToSeat.get(id);
       return seat === undefined ? null : players.headPos(seat, voicePos);
@@ -325,7 +342,7 @@ function launch(clock: SharedClock, session: Session | null, startCam: 'wagon' |
 
   if (import.meta.env.DEV) {
     // Hook for Playwright checks; not shipped in the production bundle.
-    Object.assign(window, { __hyper: { world, panel, pipeline, clock, session, pause, voice } });
+    Object.assign(window, { __hyper: { world, panel, pipeline, clock, session, pause, voice, ambience } });
   }
 }
 

@@ -14,7 +14,13 @@ export interface Neighbours {
  * draw calls instead of 150). Neon flickers per copy as a whole, and copies never black out:
  * the outage belongs to the player coach only.
  */
-export function buildNeighbours(scene: THREE.Scene, coach: THREE.Object3D, poweredMaterials: THREE.Material[]): Neighbours {
+export function buildNeighbours(
+  scene: THREE.Scene,
+  coach: THREE.Object3D,
+  poweredMaterials: THREE.Material[],
+  /** Baked passengers (one mesh each), spread over the nearer copies. */
+  crowds: { geos: THREE.BufferGeometry[]; material: THREE.Material; upTo: number } | null = null,
+): Neighbours {
   const root = group('neighbours', scene);
   coach.updateMatrixWorld(true);
   const powered = new Map(poweredMaterials.map((m) => [m, m.clone()]));
@@ -57,6 +63,8 @@ export function buildNeighbours(scene: THREE.Scene, coach: THREE.Object3D, power
         const mat = b.mat === 'tube' ? tube : b.mat === 'halo' ? halo : b.mat;
         copy.add(tag(new THREE.Mesh(b.geo, mat), b.role));
       }
+      // The far copies vanish in the fog; passengers there would only cost triangles.
+      if (crowds && k <= crowds.upTo) copy.add(tag(new THREE.Mesh(crowds.geos[n % crowds.geos.length], crowds.material), 'npc'));
       copies.push({ tube, halo, seed: 31.7 + dir * 7.3 + k * 2.9 });
     }
   }

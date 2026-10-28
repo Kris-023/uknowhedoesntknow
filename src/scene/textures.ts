@@ -1,4 +1,5 @@
 import * as THREE from 'three';
+import { STATIONS } from '../config';
 import { TEXTURE_SEED } from '../config';
 import { mulberry32 } from '../core/rng';
 
@@ -106,30 +107,34 @@ export function makeCoachTextures(): CoachTextures {
     x.fillRect(0, 0, w, h);
   });
 
-  const line = canvasTex(280, 80, (x, w) => {
+  // Drawn at double resolution in 280×80 layout units; seven long names need small, alternating labels.
+  const line = canvasTex(560, 160, (x) => {
+    x.scale(2, 2);
+    const w = 280;
     x.fillStyle = '#08142e';
     x.fillRect(0, 0, w, 80);
     x.fillStyle = '#3a7bff';
-    x.fillRect(14, 38, w - 28, 5);
-    const names = ['Nordtor', 'Kreuzung', 'Kotti', 'Ring', 'Süd'];
-    x.font = 'bold 12px Arial, sans-serif';
+    x.fillRect(16, 43, w - 32, 4);
+    x.font = 'bold 7.5px Arial, sans-serif';
     x.textAlign = 'center';
-    names.forEach((name, i) => {
-      const px = 30 + i * 55;
+    const step = (w - 56) / (STATIONS.length - 1);
+    STATIONS.forEach((name, i) => {
+      const px = 28 + i * step;
       x.fillStyle = '#08142e';
       x.beginPath();
-      x.arc(px, 40.5, 8, 0, Math.PI * 2);
+      x.arc(px, 45, 5, 0, Math.PI * 2);
       x.fill();
-      x.lineWidth = 3;
+      x.lineWidth = 2.5;
       x.strokeStyle = '#bcd0ff';
       x.stroke();
       x.fillStyle = '#bcd0ff';
-      x.fillText(name, px, 66);
+      // Every other name above the line, so neighbours don't overlap.
+      x.fillText(name, px, i % 2 ? 33 : 64);
     });
     x.textAlign = 'left';
-    x.font = 'bold 16px Arial, sans-serif';
+    x.font = 'bold 11px Arial, sans-serif';
     x.fillStyle = '#ffffff';
-    x.fillText('LINIE 7', 14, 22);
+    x.fillText('LINIE 7', 8, 13);
   });
 
   return { grain, floor: panel('#5b5f67', false), wall: panel('#30353c', true), vent, frame, glow, line };
@@ -150,7 +155,7 @@ export class HaltDisplay {
     this.texture.colorSpace = THREE.SRGBColorSpace;
   }
 
-  draw(secondsLeft: number): void {
+  draw(secondsLeft: number, station: string): void {
     if (secondsLeft === this.shown) return;
     this.shown = secondsLeft;
     const x = this.ctx;
@@ -159,10 +164,10 @@ export class HaltDisplay {
     x.fillStyle = '#08142e';
     x.fillRect(0, 0, 280, 80);
     x.fillStyle = '#6f8cff';
-    x.font = 'bold 13px Arial, sans-serif';
+    x.font = 'bold 12px Arial, sans-serif';
     x.textAlign = 'center';
     x.textBaseline = 'alphabetic';
-    x.fillText('NÄCHSTER HALT', 140, 24);
+    x.fillText(`NÄCHSTER HALT · ${station.toUpperCase()}`, 140, 24);
     x.fillStyle = '#ffffff';
     x.font = 'bold 34px ui-monospace, Menlo, Consolas, monospace';
     x.textBaseline = 'middle';

@@ -94,3 +94,26 @@ export function windowFlash(t: number, sf: number, side: 0 | 1): number {
 export function haltCountdown(t: number, cycle: number): number {
   return cycle - Math.floor(((t % cycle) + cycle) % cycle);
 }
+
+/** An oncoming train passing one side of the coach, or null. Pure function of the shared clock. */
+export interface Oncoming {
+  /** Index of the event, to fire its sound exactly once. */
+  id: number;
+  /** 0..1 through the pass. */
+  phase: number;
+  side: -1 | 1;
+}
+
+export function oncoming(t: number, seed: number, w: { windowS: number; chance: number; durationS: number }): Oncoming | null {
+  const idx = Math.floor(t / w.windowS);
+  if (hash01(seed, idx, 71) > w.chance) return null;
+  const start = idx * w.windowS + 2 + hash01(seed, idx, 72) * (w.windowS - w.durationS - 4);
+  const ph = (t - start) / w.durationS;
+  if (ph < 0 || ph > 1) return null;
+  return { id: idx, phase: ph, side: hash01(seed, idx, 73) < 0.5 ? -1 : 1 };
+}
+
+/** Index of the stop the halt countdown is currently counting down to. */
+export function nextStopIndex(t: number, cycle: number, stops: number): number {
+  return ((Math.floor(t / cycle) % stops) + stops) % stops;
+}

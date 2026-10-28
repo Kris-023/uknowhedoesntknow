@@ -110,6 +110,8 @@ kbd { font: inherit; border: 1px solid var(--line); padding: 1px 5px; color: var
 .btn.ghost { color: var(--fg2); border-color: var(--line); }
 .btn.ghost:hover { border-color: var(--muted); background: rgba(255, 255, 255, .04); }
 .btn.danger:hover { color: #ff8a7a; border-color: #ff8a7a; }
+.btn.big.leave { background: transparent; color: #ff8a7a; border-color: #ff8a7a; }
+.btn.big.leave:hover { background: rgba(255, 138, 122, .14); }
 .btn:disabled, .btn.big:disabled { opacity: .4; cursor: not-allowed; }
 .row { display: flex; flex-wrap: wrap; gap: 8px 12px; align-items: center; }
 .row.end { justify-content: flex-end; }

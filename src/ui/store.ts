@@ -59,6 +59,10 @@ export interface Settings {
   micGain: number;
   /** Volume of all voices. */
   voiceVolume: number;
+  /** Train sounds (rumble, rail joints, oncoming trains, gong). */
+  ambientVolume: number;
+  /** Spoken stop announcements (browser speech). */
+  announcements: boolean;
 }
 
 function defaults(): Settings {
@@ -78,6 +82,8 @@ function defaults(): Settings {
     vadLevel: VOICE.vadDefault,
     micGain: 1,
     voiceVolume: 1,
+    ambientVolume: 0.7,
+    announcements: true,
   };
 }
 
@@ -103,6 +109,8 @@ function loadSettings(): Settings {
     vadLevel: num(o.vadLevel, 0.05, 0.95, d.vadLevel),
     micGain: num(o.micGain, 0.25, 3, d.micGain),
     voiceVolume: num(o.voiceVolume, 0, 1.5, d.voiceVolume),
+    ambientVolume: num(o.ambientVolume, 0, 1.5, d.ambientVolume),
+    announcements: bool(o.announcements, d.announcements),
   };
 }
 

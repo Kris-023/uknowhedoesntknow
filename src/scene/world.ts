@@ -1,10 +1,13 @@
 import * as THREE from 'three';
-import { BLACKOUT, CAMERA, COLORS, HALT_CYCLE_S, RENDER, SPEED } from '../config';
+import { BLACKOUT, CAMERA, COLORS, HALT_CYCLE_S, RENDER, SPEED, STATIONS, TRAIN } from '../config';
 import type { SharedClock } from '../core/clock';
-import { coachPower, haltCountdown, noise1, shake } from '../core/motion';
+import { coachPower, haltCountdown, nextStopIndex, noise1, shake } from '../core/motion';
+import { bakeCrowd, crowdMaterial } from '../game/crowd';
+import { Npcs } from '../game/npcs';
 import { Players } from '../game/players';
 import { trainDistance, type Train } from '../net/protocol';
 import { buildCoach, type Coach } from './coach';
+import { buildJunk, type Junk } from './junk';
 import { buildLighting, type Lighting } from './lighting';
 import { buildNeighbours, type Neighbours } from './neighbours';
 import { makeCoachTextures } from './textures';
@@ -33,6 +36,8 @@ export class World {
   power = 1;
 
   readonly players: Players;
+  readonly npcs: Npcs;
+  private junk: Junk;
   cam: CamMode = 'wagon';
   /** Speed profile from the host (or the local slider when solo); distance is its integral over the clock. */
   train: Train = { kmh: 0, t0: 0, d0: 0 };
@@ -51,9 +56,16 @@ export class World {
     this.lighting = buildLighting(this.scene, this.coach.root, tex, clock.seed);
     this.tunnel = buildTunnel(this.scene, clock.seed);
     // Baked after lighting, so the neon tubes are part of every neighbour copy.
-    this.neighbours = buildNeighbours(this.scene, this.coach.root, this.coach.poweredMaterials);
+    const crowds = Array.from({ length: TRAIN.crowdVariants }, (_, i) => bakeCrowd(clock.seed + i * 101));
+    this.neighbours = buildNeighbours(this.scene, this.coach.root, this.coach.poweredMaterials, {
+      geos: crowds,
+      material: crowdMaterial,
+      upTo: TRAIN.crowdedPerSide,
+    });
     // Players come after the bake: people are not part of the neighbour copies.
     this.players = new Players(this.coach.root, clock.seed);
+    this.npcs = new Npcs(this.coach.root, clock.seed);
+    this.junk = buildJunk(this.coach.root, clock.seed);
     this.update(0, 0, { shakeMm: 0, shakeOn: false });
   }
 
@@ -66,8 +78,10 @@ export class World {
     this.lighting.update(t, sf, this.power);
     this.coach.setPower(this.power);
     this.neighbours.update(t);
-    this.coach.halt.draw(haltCountdown(t, HALT_CYCLE_S));
+    this.coach.halt.draw(haltCountdown(t, HALT_CYCLE_S), STATIONS[nextStopIndex(t, HALT_CYCLE_S, STATIONS.length)]);
     this.players.update(t, dt, this.cam === 'pov');
+    this.npcs.update(t, dt, p.shakeOn ? p.shakeMm / 1000 : 0);
+    this.junk.update(t);
     this.zoomK += ((this.cam === 'pov' ? this.zoom : 0) - this.zoomK) * (1 - Math.exp(-dt * CAMERA.zoomRate));
     this.updateCamera(t, p.shakeOn ? p.shakeMm / 1000 : 0, sf);
   }

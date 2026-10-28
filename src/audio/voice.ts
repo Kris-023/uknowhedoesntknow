@@ -46,8 +46,8 @@ interface Peer {
 }
 
 /** Decaying stereo noise: a cheap, convincing room echo without an audio file. */
-function impulse(ctx: AudioContext): AudioBuffer {
-  const len = Math.floor(ctx.sampleRate * VOICE.reverbS);
+export function impulse(ctx: AudioContext, seconds: number = VOICE.reverbS): AudioBuffer {
+  const len = Math.floor(ctx.sampleRate * seconds);
   const buf = ctx.createBuffer(2, len, ctx.sampleRate);
   for (let c = 0; c < 2; c++) {
     const d = buf.getChannelData(c);
@@ -70,9 +70,10 @@ const rmsOf = (a: AnalyserNode, buf: Float32Array<ArrayBuffer>): number => {
  */
 export class Voice {
   readonly ctx = new AudioContext();
+  /** Everything audible ends here (voices, train sounds, test tone): one output. */
+  readonly bus: GainNode;
   private master: GainNode;
   private reverb: ConvolverNode;
-  private outEl = new Audio();
   /** raw: the device stream; send: after our gain, this is what peers get. */
   private mic: { raw: MediaStream; send: MediaStream; gain: GainNode; delay: DelayNode; analyser: AnalyserNode } | null = null;
   /** Voice activation state (only used in 'auto' mode). */
@@ -85,20 +86,35 @@ export class Voice {
   private net: Transport | null = null;
   private listeners = new Set<() => void>();
   micState: MicState = 'off';
+  /** Browser's reason when the mic failed (error name and message), for the settings status. */
+  micError = '';
   muted = false;
   pttHeld = false;
 
   constructor() {
+    this.bus = this.ctx.createGain();
     this.master = this.ctx.createGain();
     this.master.gain.value = settings.voiceVolume;
+    this.master.connect(this.bus);
     this.reverb = this.ctx.createConvolver();
     this.reverb.buffer = impulse(this.ctx);
     this.reverb.connect(this.master);
-    // Output through a media element instead of ctx.destination: Chrome's echo cancellation only
-    // knows audio played that way, so without headphones the voices don't loop back into the mic.
-    const out = this.ctx.createMediaStreamDestination();
-    this.master.connect(out);
-    this.outEl.srcObject = out.stream;
+    // Straight to the speakers. Routing through MediaStream + <audio> was meant to let Chrome's echo
+    // canceller see our output, but Chrome only cancels real WebRTC peer audio played that way, and
+    // the detour crackled under load. Firefox cancels Web Audio output anyway; in Chrome: headphones.
+    this.bus.connect(this.ctx.destination);
+
+    // Chrome often parks the permission question as a chip in the address bar and rejects the first
+    // request; granting it there later ("Diesmal erlauben") only fires this event. Then we try again.
+    void navigator.permissions
+      ?.query({ name: 'microphone' as PermissionName })
+      .then((status) => {
+        status.addEventListener('change', () => {
+          if (status.state === 'granted' && settings.micOn && this.micState !== 'on' && this.micState !== 'starting') void this.startMic();
+          else if (status.state === 'denied' && this.mic) this.stopMic();
+        });
+      })
+      .catch(() => {});
 
     let last = { ...settings };
     onSettings(() => {
@@ -117,10 +133,25 @@ export class Voice {
     });
   }
 
+  /**
+   * Silence the output while the game starts: building the world and compiling shaders blocks the
+   * main thread for a few seconds, and sound started in that window stutters. `releaseOutput` fades in.
+   */
+  holdOutput(): void {
+    this.bus.gain.cancelScheduledValues(this.ctx.currentTime);
+    this.bus.gain.setValueAtTime(0, this.ctx.currentTime);
+  }
+
+  releaseOutput(fadeS = 1.5): void {
+    const t = this.ctx.currentTime;
+    this.bus.gain.cancelScheduledValues(t);
+    this.bus.gain.setValueAtTime(this.bus.gain.value, t);
+    this.bus.gain.linearRampToValueAtTime(1, t + fadeS);
+  }
+
   /** Must run inside a click or key press: browsers only start audio after a user gesture. */
   resume(): void {
     void this.ctx.resume();
-    void this.outEl.play().catch(() => {});
   }
 
   onChange(f: () => void): () => void {
@@ -181,6 +212,7 @@ export class Voice {
       gain.connect(delay).connect(dest);
       this.mic = { raw: stream, send: dest.stream, gain, delay, analyser };
       this.micState = 'on';
+      this.micError = '';
       this.applyLookahead();
       this.applyTransmit();
       // Own timer instead of the render loop: the gate must keep working in a background tab.
@@ -190,6 +222,8 @@ export class Voice {
     } catch (e) {
       const name = (e as DOMException).name;
       this.micState = name === 'NotAllowedError' || name === 'SecurityError' ? 'blocked' : name === 'NotFoundError' ? 'missing' : 'error';
+      this.micError = `${name}: ${(e as Error).message}`;
+      console.warn('Mikrofon:', this.micError);
     }
     this.emit();
   }

@@ -1,6 +1,6 @@
 import * as THREE from 'three';
-import { COLORS, LIGHT_SCALE, LIGHTS, POINT_LIGHT_SCALE } from '../config';
-import { flick, windowFlash } from '../core/motion';
+import { COLORS, LIGHT_SCALE, LIGHTS, ONCOMING, POINT_LIGHT_SCALE } from '../config';
+import { flick, oncoming, windowFlash } from '../core/motion';
 import { at, basic, boxGeo, group, tag } from './build';
 import type { CoachTextures } from './textures';
 
@@ -31,6 +31,9 @@ export function buildLighting(scene: THREE.Scene, coach: THREE.Object3D, tex: Co
   const winL = at(new THREE.PointLight(0x6f8cff, 0, 7, 2), -2.6, 1.4, 0.5);
   const winR = at(new THREE.PointLight(0xbcd0ff, 0, 7, 2), 2.6, 1.4, 0.5);
   scene.add(winL, winR);
+  // Oncoming train: its lit windows race past ours, a cold light sweeping along one side of the coach.
+  const passLight = at(new THREE.PointLight(0xdfe8ff, 0, 5, 1.6), 0, 1.45, 0);
+  scene.add(passLight);
 
   const neonGroup = group('neon', coach);
   const segments: NeonSegment[] = [];
@@ -76,6 +79,13 @@ export function buildLighting(scene: THREE.Scene, coach: THREE.Object3D, tex: Co
     update(t, sf, power) {
       winL.intensity = windowFlash(t, sf, 0) * LIGHTS.window * POINT_LIGHT_SCALE;
       winR.intensity = windowFlash(t, sf, 1) * LIGHTS.window * POINT_LIGHT_SCALE;
+      const on = oncoming(t, lobbySeed, ONCOMING);
+      if (on) {
+        // Strobing (window, gap, window …) and sweeping front to back while the train passes.
+        const strobe = Math.sin(t * 70) > -0.3 ? 1 : 0.15;
+        passLight.position.set(on.side * 1.35, 1.45, -6 + 12 * on.phase);
+        passLight.intensity = 9 * Math.sin(on.phase * Math.PI) * strobe * POINT_LIGHT_SCALE;
+      } else passLight.intensity = 0;
       // Hemisphere keeps a sliver during blackout: the tunnel and neighbour coaches still glow in.
       hemi.intensity = LIGHTS.hemi * LIGHT_SCALE * (0.35 + 0.65 * power);
       for (const w of whites) w.intensity = LIGHTS.ceilingWhite * POINT_LIGHT_SCALE * power;

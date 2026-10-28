@@ -4,9 +4,10 @@ Browser-Partyspiel für 2 bis 4 Freunde: Ihr sitzt euch in einem viel zu schnell
 gegenüber, draußen rast der Tunnel vorbei, drinnen flackert das Neon, und die Mitreisenden vom Kotti
 starren aufs Handy. Der Wagen heißt „Hypertrain“ und ist die erste Map. Darin laufen Minigames wie „Wer bin ich?“. Nur PC, nur Browser, nur private Lobbys.
 
-**Stand: M4 (Voice).** Bis zu vier Leute treffen sich per Raumcode im selben Wagen, mit eigenem Namen und eigener Figur,
-Kopfdrehung live und Sprachchat: Die Stimme kommt vom Kopf der Person, und der Mund klappt beim Sprechen auf.
-NPCs und Minigames folgen (Roadmap in `teamlead/SUPERDOC.md`).
+**Stand: M5 (NPCs und Stimmung).** Bis zu vier Leute treffen sich per Raumcode im selben Wagen, mit eigenem Namen und
+eigener Figur, Kopfdrehung live und Sprachchat: Die Stimme kommt vom Kopf der Person, und der Mund klappt beim Sprechen auf.
+Zehn Mitreisende beschäftigen sich mit Handy, Zeitung und Bier oder schlafen, Pfandflaschen rollen, Gegenzüge knallen vorbei,
+vor jedem Halt gongt es. Als Nächstes kommt das erste Minigame (Roadmap in `teamlead/SUPERDOC.md`).
 
 ## Spielen
 

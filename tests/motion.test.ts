@@ -72,3 +72,29 @@ describe('shared-clock determinism', () => {
     expect(coachPower(101.5, 4242, BLACKOUT, 100)).toBe(0);
   });
 });
+
+describe('oncoming trains and stops', async () => {
+  const { oncoming, nextStopIndex } = await import('../src/core/motion');
+  const { ONCOMING } = await import('../src/config');
+  it('are the same on every peer and come with a side', () => {
+    const seen = new Set<number>();
+    for (let t = 0; t < 600; t += 0.05) {
+      const a = oncoming(t, 42, ONCOMING);
+      expect(a).toEqual(oncoming(t, 42, ONCOMING));
+      if (a) {
+        seen.add(a.id);
+        expect(a.phase).toBeGreaterThanOrEqual(0);
+        expect(a.phase).toBeLessThanOrEqual(1);
+        expect([-1, 1]).toContain(a.side);
+      }
+    }
+    // Rare but present: roughly `chance` of the windows in 10 minutes.
+    expect(seen.size).toBeGreaterThan(4);
+    expect(seen.size).toBeLessThan(21);
+  });
+
+  it('counts down to the stops in order and wraps', () => {
+    expect([0, 90, 180, 270, 360, 450].map((t) => nextStopIndex(t + 1, 90, 5))).toEqual([0, 1, 2, 3, 4, 0]);
+    expect(nextStopIndex(-1, 90, 5)).toBe(4);
+  });
+});

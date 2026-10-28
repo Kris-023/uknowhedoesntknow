@@ -4,7 +4,7 @@ import { el } from './dom';
 import { onSettings, settings, updateSettings, type Settings } from './store';
 
 type Section = 'voice' | 'gfx' | 'input';
-type SliderKey = 'shakeMm' | 'mouseSens' | 'voiceVolume' | 'micGain' | 'bloomStrength' | 'renderScale' | 'vadLevel';
+type SliderKey = 'shakeMm' | 'mouseSens' | 'voiceVolume' | 'micGain' | 'bloomStrength' | 'renderScale' | 'vadLevel' | 'ambientVolume';
 
 /** Mouth/meter level range that normal speech should reach: loud enough to open the mouth, not clipping. */
 const TARGET = { from: 0.5, to: 0.85 };
@@ -22,7 +22,16 @@ export class SettingsView {
   private raf = 0;
 
   constructor(extra: HTMLElement | null = null, sections: Section[] = ['voice', 'gfx', 'input']) {
-    if (sections.includes('voice')) this.root.append(this.voice());
+    if (sections.includes('voice')) {
+      this.root.append(this.voice());
+      const sound = el('fieldset', 'group');
+      sound.append(
+        el('legend', 'group-title', 'Ton'),
+        this.slider('Zug', 'ambientVolume', 0, 1.5, 0.05, pct, undefined, 'Dröhnen, Motor, Gong.'),
+        this.toggle('Durchsagen', 'announcements', 'Vor jedem Halt, mit der Sprachausgabe des Browsers.'),
+      );
+      this.root.append(sound);
+    }
     if (sections.includes('gfx')) {
       const gfx = el('fieldset', 'group');
       gfx.append(
@@ -132,9 +141,9 @@ export class SettingsView {
       off: 'Mikro ist aus.',
       starting: 'Warte auf Freigabe …',
       on: 'Sprich normal: Die Spitze sollte im grünen Bereich landen. Sonst Mikro-Pegel anpassen. Bei Automatisch wird der Balken grau, solange du nicht gehört wirst.',
-      blocked: 'Blockiert. Im Browser über das Schloss neben der Adresse erlauben.',
+      blocked: 'Nicht erlaubt. Über das Symbol links neben der Adresse erlauben, dann startet es von selbst, sonst „Mikro testen“.',
       missing: 'Kein Mikrofon gefunden.',
-      error: 'Mikrofon konnte nicht gestartet werden.',
+      error: 'Mikrofon konnte nicht gestartet werden, vielleicht nutzt es gerade ein anderes Programm.',
     };
     // The voice engine may appear (first click) or change state any time; the meter loop watches it.
     let lastState: MicState | null | undefined;
@@ -147,6 +156,8 @@ export class SettingsView {
       if (st !== lastState) {
         lastState = st;
         status.textContent = st ? STATUS[st] : 'Noch nicht getestet.';
+        // The browser's own reason helps when something odd blocks the mic (device busy, policy, …).
+        if (v?.micError && st !== 'on') status.textContent += ` (${v.micError})`;
         start.hidden = st === 'on';
         // Device names only become visible after the mic permission.
         if (st === 'on') void fill();
@@ -199,7 +210,7 @@ export class SettingsView {
     return this.field(label, seg, hint);
   }
 
-  private toggle(label: string, key: 'bloom' | 'shakeOn' | 'invertY', hint?: string): HTMLElement {
+  private toggle(label: string, key: 'bloom' | 'shakeOn' | 'invertY' | 'announcements', hint?: string): HTMLElement {
     const b = el('button', 'btn toggle');
     b.type = 'button';
     b.addEventListener('click', () => updateSettings({ [key]: !settings[key] }));

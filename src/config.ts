@@ -109,6 +109,9 @@ export const TRAIN = {
   period: 11.6,
   gangwayLength: 0.8,
   neighboursPerSide: 3,
+  /** Neighbour coaches up to this distance (per side) carry baked passengers; two crowd variants alternate. */
+  crowdedPerSide: 2,
+  crowdVariants: 2,
 } as const;
 
 /** Rare total power failure of the player coach only (neighbours and tunnel keep going). */
@@ -244,3 +247,40 @@ export const VOICE = {
   pttKey: 'KeyV',
   muteKey: 'KeyM',
 } as const;
+
+/** Stops of line 7 as on the line display; the halt countdown cycles through them. */
+export const STATIONS = ['Offenbach', 'Kaiserslautern', 'Oranienburg', 'Alt Schauerberg', 'KitKat', 'Kreuzberg', 'Alfteller', 'Gutach'] as const;
+
+/** Oncoming train: a light sweeping along one window side, rare and hashed from the clock. */
+export const ONCOMING = {
+  windowS: 29,
+  chance: 0.55,
+  durationS: 1.5,
+} as const;
+
+/** Synthetic train sounds and announcements. */
+export const AMBIENCE = {
+  /**
+   * Startup: sound stays muted until this many frames in a row came in under `stableFrameMs`
+   * (or `maxHoldS` passed), then fades in. Covers the shader compile and world build hiccups.
+   */
+  stableFrames: 40,
+  stableFrameMs: 40,
+  maxHoldS: 8,
+  /** Announcement this many seconds before the halt countdown reaches zero. */
+  announceAt: 12,
+} as const;
+
+/** Mitreisende: 7 seated (seat index on a side), 3 standing in the back (z <= -2.5, out of the players' way). */
+export const NPC_DEFS = [
+  { seat: { side: -1, z: -3.15 }, act: 'phone' },
+  { seat: { side: -1, z: -1.35 }, act: 'paper' },
+  { seat: { side: -1, z: 2.25 }, act: 'beer' },
+  { seat: { side: -1, z: -2.25 }, act: 'sleep' },
+  { seat: { side: 1, z: -2.25 }, act: 'beer', can: true },
+  { seat: { side: 1, z: 1.35 }, act: 'phone' },
+  { seat: { side: 1, z: 2.25 }, act: 'paper' },
+  { stand: { x: -0.4, z: -4.4, yaw: 0.25 }, act: 'phone' },
+  { stand: { x: 0.5, z: -3.4, yaw: -0.6 }, act: 'beer' },
+  { stand: { x: -0.45, z: -2.9, yaw: 0.35 }, act: 'paper' },
+] as const;

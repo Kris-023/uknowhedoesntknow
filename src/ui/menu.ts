@@ -350,14 +350,21 @@ export class PauseMenu extends MenuShell {
   }
 
   protected renderPlay(): void {
+    const r = this.room;
     const resume = el('button', 'btn big', 'Zurück ins Spiel');
     resume.type = 'button';
     resume.addEventListener('click', () => this.onResume());
+    // Leaving sits right next to resuming, same size: the two things you come to this menu for.
+    const leave = el('button', 'btn big leave', r ? 'Raum verlassen' : 'Zum Hauptmenü');
+    leave.type = 'button';
+    leave.addEventListener('click', () => {
+      history.replaceState(null, '', location.pathname + location.search);
+      location.reload();
+    });
     const top = el('div', 'row');
-    top.append(resume);
+    top.append(resume, leave);
     this.panel.append(top);
 
-    const r = this.room;
     const sec = el('div', 'room-box');
     if (r) {
       const copy = el('button', 'btn', 'Link kopieren');
@@ -399,15 +406,6 @@ export class PauseMenu extends MenuShell {
     for (const [k, v] of keys) help.append(el('dt', '', k), el('dd', '', v));
     this.panel.append(help);
 
-    const leave = el('button', 'btn ghost danger', r ? 'Raum verlassen' : 'Zum Hauptmenü');
-    leave.type = 'button';
-    leave.addEventListener('click', () => {
-      history.replaceState(null, '', location.pathname + location.search);
-      location.reload();
-    });
-    const bottom = el('div', 'row end');
-    bottom.append(leave);
-    this.panel.append(bottom);
   }
 }
 

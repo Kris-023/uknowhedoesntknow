@@ -224,3 +224,55 @@ export const ITEM_IDS = Object.keys(ITEMS) as ItemId[];
 export const SLOTS: Slot[] = ['head', 'hand', 'arm', 'hip'];
 export const SLOT_LABEL: Record<Slot, string> = { head: 'Kopf', hand: 'Hand', arm: 'Arm', hip: 'Hose' };
 
+
+// Props for the passengers' activities. Not items: nobody picks them, the NPC's behaviour brings them.
+
+/** Beer bottle (or can), held upright; also lies on the floor as a deposit bottle. */
+export function buildBottle(can = false): THREE.Group {
+  const g = new THREE.Group();
+  if (can) {
+    pp(g, UCYL, am(0xb8bcc4, { metalness: 0.7, roughness: 0.3 }), 0, -0.06, 0, 0.032, 0.13, 0.032);
+    pp(g, UCYL, am(0xc2362f, { roughness: 0.5 }), 0, -0.02, 0, 0.0335, 0.045, 0.0335);
+    return g;
+  }
+  const glass = am(0x5b3213, { roughness: 0.2, metalness: 0.1 });
+  pp(g, UCYL, glass, 0, -0.06, 0, 0.032, 0.13, 0.032);
+  pp(g, USPH, glass, 0, 0.07, 0, 0.027, 0.03, 0.027);
+  pp(g, UCYL, glass, 0, 0.075, 0, 0.012, 0.09, 0.012);
+  pp(g, UCYL, am(0xd4a82a, { metalness: 0.6, roughness: 0.3 }), 0, 0.163, 0, 0.015, 0.012, 0.015);
+  // Plain label, no brand.
+  pp(g, UCYL, am(0xe8dcb0, { roughness: 0.8 }), 0, -0.04, 0, 0.0335, 0.05, 0.0335);
+  return g;
+}
+
+const screenGeo = new THREE.PlaneGeometry(0.06, 0.128);
+/** Phone with a lit screen facing the holder; in the dark coach the screen glow lights the face a little. */
+export function buildPhone(): THREE.Group {
+  const g = new THREE.Group();
+  pp(g, UBOX, am(0x101216, { roughness: 0.3 }), 0, 0.06, 0, 0.07, 0.145, 0.012);
+  const sc = part(g, screenGeo, new THREE.MeshBasicMaterial({ color: 0x5f8fb8 }), 0, 0.06, -0.0075, undefined, undefined, undefined, 'light');
+  sc.rotation.y = Math.PI;
+  return g;
+}
+
+/** Newspaper held open in front of the chest. Fake columns, no masthead. */
+export function buildNewspaper(): THREE.Group {
+  const tex = texOnce('news', () =>
+    canvasTex(128, 96, (x, w, h) => {
+      x.fillStyle = '#d8d3c3';
+      x.fillRect(0, 0, w, h);
+      x.fillStyle = '#26262a';
+      x.fillRect(6, 6, w - 12, 14);
+      x.fillStyle = '#8c8878';
+      x.fillRect(6, 24, 52, 38);
+      x.fillStyle = '#3a3a40';
+      for (let i = 0; i < 9; i++) x.fillRect(62, 26 + i * 4.2, 58, 1.6);
+      for (let j = 0; j < 7; j++) x.fillRect(6, 66 + j * 3.8, w - 12, 1.4);
+    }),
+  );
+  const g = new THREE.Group();
+  pp(g, UBOX, am(0xffffff, { map: tex, roughness: 0.95, metalness: 0 }), 0, 0, 0, 0.5, 0.36, 0.008);
+  g.position.set(0, 0.66, 0.5);
+  g.rotation.x = -0.12;
+  return g;
+}
