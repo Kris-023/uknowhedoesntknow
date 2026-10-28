@@ -3,6 +3,7 @@ import { BLACKOUT, CAMERA, COLORS, HALT_CYCLE_S, RENDER, SPEED } from '../config
 import type { SharedClock } from '../core/clock';
 import { coachPower, haltCountdown, noise1, shake } from '../core/motion';
 import { Players } from '../game/players';
+import { trainDistance, type Train } from '../net/protocol';
 import { buildCoach, type Coach } from './coach';
 import { buildLighting, type Lighting } from './lighting';
 import { buildNeighbours, type Neighbours } from './neighbours';
@@ -13,7 +14,6 @@ import { buildTunnel, type Tunnel } from './tunnel';
 export type CamMode = 'wagon' | 'pov';
 
 export interface WorldParams {
-  kmh: number;
   shakeMm: number;
   shakeOn: boolean;
 }
@@ -34,10 +34,8 @@ export class World {
 
   readonly players: Players;
   cam: CamMode = 'wagon';
-  /**
-   * Distance travelled, integrated locally from the speed slider. Once speed comes from the
-   * host (M3) this becomes a function of the shared clock as well.
-   */
+  /** Speed profile from the host (or the local slider when solo); distance is its integral over the clock. */
+  train: Train = { kmh: 0, t0: 0, d0: 0 };
   distance = 0;
   /** Right-mouse zoom in POV: target 0/1 and its smoothed value. */
   zoom = 0;
@@ -56,14 +54,15 @@ export class World {
     this.neighbours = buildNeighbours(this.scene, this.coach.root, this.coach.poweredMaterials);
     // Players come after the bake: people are not part of the neighbour copies.
     this.players = new Players(this.coach.root, clock.seed);
-    this.update(0, 0, { kmh: 0, shakeMm: 0, shakeOn: false });
+    this.update(0, 0, { shakeMm: 0, shakeOn: false });
   }
 
   update(t: number, dt: number, p: WorldParams): void {
-    const sf = p.kmh / SPEED.maxKmh;
-    this.distance += (p.kmh / 3.6) * SPEED.visualScale * dt;
+    const kmh = this.train.kmh;
+    const sf = kmh / SPEED.maxKmh;
+    this.distance = trainDistance(this.train, t) * SPEED.visualScale;
     this.power = coachPower(t, this.clock.seed, BLACKOUT, this.forcedBlackoutAt);
-    this.tunnel.update(t, this.distance, p.kmh);
+    this.tunnel.update(t, this.distance, kmh);
     this.lighting.update(t, sf, this.power);
     this.coach.setPower(this.power);
     this.neighbours.update(t);

@@ -180,3 +180,32 @@ export const MOUTH = {
 export const HALT_CYCLE_S = 90;
 
 export const TEXTURE_SEED = 7311;
+
+/** Multiplayer over Trystero (WebRTC P2P, public Nostr relays only for the handshake). */
+export const NET = {
+  /** Namespace on the relays; the room code is the room inside it. */
+  appId: 'uknowhedoesntknow',
+  maxPlayers: 4,
+  /** Seat fill order: the first two sit face to face (0 and 2 are opposite each other), not side by side. */
+  seatOrder: [0, 2, 1, 3] as readonly number[],
+  /** Room code length (without the dash). 31 symbols, 8 chars ≈ 40 bits: the code is the only secret. */
+  codeLength: 8,
+  /** Head pose send rate; plus a keep-alive when the head is still. */
+  poseHz: 20,
+  poseKeepAliveMs: 1000,
+  /** Smaller head changes are not worth a packet. */
+  poseEpsilon: 0.002,
+  /** Smoothing rate for remote heads; together with ~50 ms send interval stays well under 150 ms. */
+  remoteRate: 18,
+  /** Joiner repeats its hello until a host answers (host may still be connecting). */
+  helloRetryMs: 2000,
+  /** Quick pings right after joining for a good clock offset, then occasional ones. */
+  pingFastMs: 250,
+  pingFastCount: 8,
+  pingSlowMs: 1000,
+  /**
+   * Without a host after this long, offer to reopen the room yourself. Nostr signaling alone can take
+   * ~10 s, and taking over too early would split the room in two.
+   */
+  orphanMs: 20000,
+} as const;

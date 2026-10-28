@@ -6,6 +6,7 @@ Assets im Repo.
 | Was | Quelle | Lizenz |
 |-----|--------|--------|
 | 3D-Engine | [three.js](https://threejs.org) | MIT |
+| P2P-Netzwerk | [Trystero](https://github.com/dmotz/trystero) | MIT |
 | Schriften (per Google Fonts geladen) | Big Shoulders Display, Instrument Sans, JetBrains Mono | SIL OFL 1.1 |
 | Proportionen der Menschenfigur (ab M2, nur als Vorbild, keine Dateien) | Quaternius „Universal Base Characters“ | CC0 |
 

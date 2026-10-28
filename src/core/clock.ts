@@ -33,6 +33,24 @@ export class SharedClock {
     this.offsetMs = hostMs + rtt / 2 - recvLocal;
   }
 
+  /**
+   * First guess from a single host timestamp without a round trip (e.g. the welcome message), so
+   * ambience is roughly in step before the first pong. Doesn't count as a sample.
+   */
+  roughSync(hostMs: number, recvLocal: number): void {
+    if (this.bestRtt === Infinity) this.offsetMs = hostMs - recvLocal;
+  }
+
+  /** Forget samples (new host after migration); the old offset stays until a better one arrives. */
+  resetSamples(): void {
+    this.bestRtt = Infinity;
+  }
+
+  /** Current time in the host's frame, which pongs report. */
+  hostMs(local = localMs()): number {
+    return local + this.offsetMs;
+  }
+
   get rttMs(): number {
     return this.bestRtt;
   }

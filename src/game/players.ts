@@ -1,9 +1,9 @@
 import * as THREE from 'three';
-import { CAMERA, COLORS, HEAD, LIGHTS, PLAYER_SEATS, SEAT_X } from '../config';
+import { CAMERA, COLORS, HEAD, LIGHTS, NET, PLAYER_SEATS, SEAT_X } from '../config';
 import { mulberry32, type Rand } from '../core/rng';
 import { ITEMS, ITEM_IDS, SLOTS, type ItemId } from '../characters/accessories';
 import { makeLook, type Look } from '../characters/look';
-import { Person } from '../characters/person';
+import { Person, type PersonState } from '../characters/person';
 import { basic, group, tag } from '../scene/build';
 import { fakePeer } from './fakePeers';
 
@@ -18,10 +18,26 @@ const START_ITEMS: ItemId[][] = [['schlaeger'], ['gurke'], ['huhn'], ['jute']];
 /** Height of the head centre above the seat root (torso 0.62 + head 0.19). */
 const HEAD_Y = 0.81;
 
+/** A random person for joining a room: random look, some random items. */
+export function randomState(r: Rand): PersonState {
+  const items: PersonState['items'] = {};
+  for (const s of SLOTS) {
+    if (r() >= (s === 'hip' ? 0.25 : 0.5)) continue;
+    const ids = ITEM_IDS.filter((id) => ITEMS[id].slot === s);
+    items[s] = ids[Math.floor(r() * ids.length) % ids.length];
+  }
+  return { look: makeLook(r), items };
+}
+
+/** Where the other seats get their heads from: scripted fake peers, or real players over the network. */
+export type PlayerMode = 'fake' | 'net';
+
+export type RemotePose = (seat: number) => { yaw: number; pitch: number } | null;
+
 /**
  * The four players on their seats. One is "me" (`active`): its head follows `look`
- * (mouse in POV, slider/demo otherwise). The others are fake peers until M3 replaces
- * them with real remote players.
+ * (mouse in POV, slider/demo otherwise). The others are fake peers (solo test) or remote
+ * players; in a network room, empty seats stay empty.
  */
 export class Players {
   readonly people: Person[] = [];
@@ -36,6 +52,12 @@ export class Players {
   /** Debug: everyone talks at once, to inspect the mouth. */
   talkTest = false;
   private markerColors: THREE.Color[] = [];
+  mode: PlayerMode = 'fake';
+  remotePose: RemotePose = () => null;
+  /** Seats with a player in them; all four in fake mode. */
+  readonly occupied = [true, true, true, true];
+  /** Last applied roster state per seat, to skip rebuilding bodies when nothing changed. */
+  private applied: string[] = [];
 
   constructor(
     parent: THREE.Object3D,
@@ -80,14 +102,48 @@ export class Players {
     return this.people[this.active];
   }
 
+  /** Whether this client may change the person (own player, or anyone in fake mode). */
+  isLocal(i: number): boolean {
+    return this.mode === 'fake' || i === this.active;
+  }
+
+  /**
+   * Network roster -> seats. Own look and items are only taken once (seat colour from the host);
+   * after that the local state is the truth and a stale roster must not undo a fresh change.
+   */
+  applyRoster(entries: { seat: number; state: PersonState }[], mySeat: number, includeMe: boolean): void {
+    this.mode = 'net';
+    if (mySeat >= 0) this.active = mySeat;
+    this.occupied.fill(false);
+    for (const e of entries) {
+      this.occupied[e.seat] = true;
+      if (e.seat === mySeat && !includeMe) continue;
+      const key = JSON.stringify(e.state);
+      if (this.applied[e.seat] === key) continue;
+      this.applied[e.seat] = key;
+      const p = this.people[e.seat];
+      p.setLook(e.state.look);
+      for (const s of SLOTS) p.unequip(s);
+      for (const id of Object.values(e.state.items)) p.equip(id);
+    }
+  }
+
   update(t: number, dt: number, pov: boolean): void {
     const n = this.people.length;
     this.people.forEach((p, i) => {
+      p.root.visible = this.occupied[i];
+      if (!this.occupied[i]) return;
       const fake = fakePeer(t, i, this.seed, (j) => this.yawTable[i][j], n);
+      // Voice comes with M4; until then only fake peers and the debug toggle move mouths.
+      if (this.mode === 'net') fake.level = 0;
       if (this.talkTest) fake.level = (0.5 + 0.5 * Math.sin(t * 14 + i)) * (0.6 + 0.4 * Math.sin(t * 4.3 + i));
       if (i === this.active) {
         const rate = this.instant ? CAMERA.povRate : HEAD.slowRate;
         p.update(dt, t, this.look.yaw, this.look.pitch, rate, fake.level);
+      } else if (this.mode === 'net') {
+        // Remote heads: the pose arrives ~20x per second; smoothing turns the steps into motion.
+        const r = this.remotePose(i);
+        p.update(dt, t, r?.yaw ?? p.yaw, r?.pitch ?? p.pitch, NET.remoteRate, fake.level);
       } else {
         // Slow turn: the head creeping towards a neighbour is the visual punchline.
         p.update(dt, t, fake.yaw, fake.pitch, 1.6, fake.level);

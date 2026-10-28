@@ -6,6 +6,7 @@ import type { CamMode, WorldParams } from '../scene/world';
 import { ROLE_COLORS } from './sight';
 
 export interface PanelState extends WorldParams {
+  kmh: number;
   sight: boolean;
   bloom: boolean;
   cam: CamMode;
@@ -25,6 +26,8 @@ interface PanelHooks {
   onCam(cam: CamMode): void;
   onBloom(on: boolean): void;
   onBlackout(): void;
+  /** Own look or items changed (to sync them). */
+  onLocalChange(): void;
   tree(): string;
 }
 
@@ -64,6 +67,9 @@ export class DebugPanel {
   private accWho!: HTMLElement;
   private yawInput!: HTMLInputElement;
   private yawOut!: HTMLOutputElement;
+  private tempo!: { input: HTMLInputElement; out: HTMLOutputElement };
+  private blackoutBtn!: HTMLButtonElement;
+  private netRole: 'host' | 'client' | null = null;
   private demoStart: number | null = null;
 
   constructor(
@@ -124,7 +130,9 @@ export class DebugPanel {
     this.root.append(legend);
 
     // Train
-    this.root.append(this.slider('Tempo', 0, SPEED.maxKmh, 10, this.state.kmh, (v) => `${v} km/h`, (v) => (this.state.kmh = v)).row);
+    const tempo = this.slider('Tempo', 0, SPEED.maxKmh, 10, this.state.kmh, (v) => `${v} km/h`, (v) => (this.state.kmh = v));
+    this.tempo = tempo;
+    this.root.append(tempo.row);
     const shake = this.slider('Wackeln', 0, SHAKE.maxMm, 1, this.state.shakeMm, (v) => `${v} mm`, (v) => (this.state.shakeMm = v));
     shake.row.append(this.toggle(() => this.state.shakeOn, (on) => (this.state.shakeOn = on)));
     this.root.append(shake.row);
@@ -139,7 +147,7 @@ export class DebugPanel {
         },
         'Bloom',
       ),
-      this.button('Ausfall testen', () => this.hooks.onBlackout()),
+      (this.blackoutBtn = this.button('Ausfall testen', () => this.hooks.onBlackout())),
     );
     this.root.append(fx);
     const lightSeg = el('div', 'seg');
@@ -192,7 +200,9 @@ export class DebugPanel {
       this.button('Würfeln', () => this.players.randomItems(this.players.me, Math.random, true)),
       this.button('Ablegen', () => SLOTS.forEach((s) => this.players.me.unequip(s))),
       this.button('Look würfeln', () => this.players.randomLook(this.players.active, Math.random)),
-      this.button('Alle würfeln', () => this.players.people.forEach((p) => this.players.randomItems(p, Math.random, true))),
+      this.button('Alle würfeln', () =>
+        this.players.people.forEach((p, i) => this.players.isLocal(i) && this.players.randomItems(p, Math.random, true)),
+      ),
     );
     for (const b of dice.querySelectorAll('button')) b.addEventListener('click', () => this.afterChange());
     acc.append(dice);
@@ -260,6 +270,25 @@ export class DebugPanel {
     this.afterChange();
   }
 
+  /**
+   * In a room the seat comes from the host, and train speed and blackout are the host's call;
+   * clients see those controls but can't use them.
+   */
+  setNetRole(role: 'host' | 'client' | null): void {
+    this.netRole = role;
+    for (const b of this.playerBtns) b.disabled = role !== null;
+    this.tempo.input.disabled = role === 'client';
+    this.blackoutBtn.disabled = role === 'client';
+    this.syncButtons();
+  }
+
+  /** Speed set by the host. */
+  showTempo(kmh: number): void {
+    this.state.kmh = kmh;
+    this.tempo.input.value = String(kmh);
+    this.tempo.out.textContent = `${kmh} km/h`;
+  }
+
   showStats(s: PanelStats): void {
     if (this.root.hidden) return;
     this.statEls.calls.textContent = String(s.calls);
@@ -276,6 +305,7 @@ export class DebugPanel {
   private afterChange(): void {
     this.syncButtons();
     this.refreshTree();
+    this.hooks.onLocalChange();
   }
 
   private syncButtons(): void {
@@ -284,7 +314,7 @@ export class DebugPanel {
     this.playerBtns.forEach((b, i) => b.setAttribute('aria-pressed', String(i === this.players.active)));
     const me = this.players.me;
     for (const id of ITEM_IDS) this.itemBtns.get(id)!.setAttribute('aria-pressed', String(me.items[ITEMS[id].slot] === id));
-    this.accWho.textContent = `Spieler ${this.players.active + 1}`;
+    this.accWho.textContent = `Spieler ${this.players.active + 1}${this.netRole ? ' (ich)' : ''}`;
   }
 
   private segButton(label: string, onClick: () => void): HTMLButtonElement {

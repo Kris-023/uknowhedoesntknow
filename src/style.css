@@ -69,3 +69,34 @@ kbd { font: inherit; border: 1px solid var(--line); padding: 1px 5px; color: var
 .tree { margin: 0; font: 11px/1.5 var(--font-mono); background: #0e131c; border: 1px solid var(--line); padding: 10px; overflow-x: auto; white-space: pre; color: var(--fg2); }
 
 @media (max-width: 700px) { .panel { top: auto; height: 55vh; width: auto; left: 12px; } }
+.seg button:disabled, .btn:disabled, .ctl input:disabled { opacity: .4; cursor: not-allowed; }
+
+/* Lobby: start screen over the empty stage. */
+.lobby { position: fixed; inset: 0; display: grid; place-items: center; padding: 16px; z-index: 5;
+  background:
+    linear-gradient(180deg, transparent 38%, rgba(58, 91, 255, .16) 38.3%, transparent 39%),
+    linear-gradient(180deg, transparent 61%, rgba(255, 178, 36, .12) 61.2%, transparent 61.8%),
+    radial-gradient(ellipse at 50% 40%, #0b1226 0%, var(--stage) 70%); }
+.lobby-card { width: min(440px, 100%); background: var(--panel); border: 1px solid var(--line); padding: 24px;
+  display: flex; flex-direction: column; gap: 14px; backdrop-filter: blur(6px); }
+.lobby-title { margin: 0 0 6px; font: 800 clamp(2rem, 7vw, 2.8rem)/1 var(--font-display); letter-spacing: .01em; }
+.btn.big { padding: 13px 16px; font-size: 13px; background: var(--amber); color: var(--on-amber); }
+.btn.big:hover { background: #ffc24f; }
+.btn.ghost { color: var(--fg2); border-color: var(--line); }
+.lobby-or { font: 500 10.5px/1 var(--font-mono); letter-spacing: .12em; text-transform: uppercase; color: var(--muted); text-align: center; }
+.lobby-join { display: flex; flex-wrap: wrap; gap: 8px 10px; align-items: center; }
+.lobby-join input { flex: 1; min-width: 140px; background: #0e131c; color: var(--fg); border: 1px solid var(--line); padding: 9px 10px;
+  font: 500 14px/1 var(--font-mono); letter-spacing: .12em; text-transform: uppercase; }
+.lobby-err { margin: -6px 0 0; min-height: 1em; font-size: 12.5px; color: #ff8a7a; }
+.lobby-err:empty { display: none; }
+.lobby-solo { display: flex; flex-wrap: wrap; gap: 8px 12px; align-items: center; }
+.lobby-note { font-size: 12.5px; color: var(--muted); }
+.lobby-status { margin: 0; font-size: 14px; line-height: 1.5; color: var(--fg2); }
+.lobby-foot { margin: 4px 0 0; padding-top: 12px; border-top: 1px solid var(--line); font-size: 12px; line-height: 1.5; color: var(--muted); }
+
+/* Room badge in the top-left corner while playing. */
+.room { position: fixed; top: 12px; left: 16px; display: flex; flex-wrap: wrap; align-items: center; gap: 8px 10px;
+  background: var(--panel); border: 1px solid var(--line); padding: 8px 10px; max-width: calc(100vw - 32px); }
+.room-code { font: 500 13px/1 var(--font-mono); letter-spacing: .12em; color: var(--amber); }
+.room-info { font: 500 11px/1 var(--font-mono); color: var(--fg2); letter-spacing: .04em; }
+body.locked .room { opacity: .35; }
