@@ -4,8 +4,8 @@ Browser-Partyspiel für 2 bis 4 Freunde: Ihr sitzt euch in einem viel zu schnell
 gegenüber, draußen rast der Tunnel vorbei, drinnen flackert das Neon, und die Mitreisenden vom Kotti
 starren aufs Handy. Der Wagen heißt „Hypertrain“ und ist die erste Map. Darin laufen Minigames wie „Wer bin ich?“. Nur PC, nur Browser, nur private Lobbys.
 
-**Stand: M1 (Gerüst).** Wagen, Tunnel, Neon, Wackeln und Debug-Panel laufen. Figuren, Netzwerk,
-Voice und Minigames folgen (Roadmap in `teamlead/SUPERDOC.md`).
+**Stand: M2 (Figuren).** Wagen, Tunnel, Neon, Wackeln, vier Figuren mit Accessoires, POV und Debug-Panel
+laufen, die Mitspieler sind noch simuliert. Netzwerk, Voice und Minigames folgen (Roadmap in `teamlead/SUPERDOC.md`).
 
 ## Starten
 
@@ -17,7 +17,8 @@ npm run build      # Bundle nach dist/
 ```
 
 Im Spiel: Taste <kbd>`</kbd> (bzw. <kbd>^</kbd> auf deutscher Tastatur) blendet das Debug-Panel ein und aus.
-Dort gibt es Kamera (Wagen, Sitz 1–4, mit der Maus umsehen), „Meine Sicht“ (Wireframe nach Rolle),
+Dort gibt es Kamera (Wagen oder POV: einmal ins Bild klicken, dann dreht die Maus den Kopf, Esc lässt los),
+„Ich bin“ (Spieler 1–4), Kopf-Regler und „Seitenblick“, Accessoires und Würfeln, „Meine Sicht“ (Wireframe nach Rolle),
 Tempo, Wackeln, Draw-Calls, Dreiecke, FPS und den Szenengraphen. `?seed=1234` in der URL fixiert den Seed.
 
 ## Deploy

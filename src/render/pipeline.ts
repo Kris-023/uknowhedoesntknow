@@ -3,7 +3,7 @@ import { EffectComposer } from 'three/examples/jsm/postprocessing/EffectComposer
 import { OutputPass } from 'three/examples/jsm/postprocessing/OutputPass.js';
 import { RenderPass } from 'three/examples/jsm/postprocessing/RenderPass.js';
 import { UnrealBloomPass } from 'three/examples/jsm/postprocessing/UnrealBloomPass.js';
-import { BLOOM, RENDER } from '../config';
+import { BLOOM, LIGHTS, RENDER } from '../config';
 
 /**
  * Renderer plus optional bloom. With bloom on, the scene renders into an HDR target, bloom adds
@@ -23,7 +23,6 @@ export class Pipeline {
     const r = new THREE.WebGLRenderer({ antialias: true, powerPreference: 'high-performance' });
     r.outputColorSpace = THREE.SRGBColorSpace;
     r.toneMapping = THREE.ACESFilmicToneMapping;
-    r.toneMappingExposure = RENDER.exposure;
     r.setPixelRatio(Math.min(devicePixelRatio || 1, RENDER.maxPixelRatio));
     // The composer renders several passes per frame; stats should count the whole frame.
     r.info.autoReset = false;
@@ -32,7 +31,7 @@ export class Pipeline {
 
     this.composer = new EffectComposer(r);
     this.composer.addPass(new RenderPass(scene, camera));
-    this.bloom = new UnrealBloomPass(new THREE.Vector2(256, 256), BLOOM.strength, BLOOM.radius, BLOOM.threshold);
+    this.bloom = new UnrealBloomPass(new THREE.Vector2(256, 256), BLOOM.strength, BLOOM.radius, LIGHTS.bloomThreshold);
     this.composer.addPass(this.bloom);
     this.composer.addPass(new OutputPass());
   }
@@ -45,6 +44,9 @@ export class Pipeline {
 
   render(): void {
     this.renderer.info.reset();
+    // Follow the active light preset.
+    this.renderer.toneMappingExposure = LIGHTS.exposure;
+    this.bloom.threshold = LIGHTS.bloomThreshold;
     if (this.bloomOn) this.composer.render();
     else this.renderer.render(this.scene, this.camera);
   }

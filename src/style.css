@@ -53,6 +53,9 @@ kbd { font: inherit; border: 1px solid var(--line); padding: 1px 5px; color: var
 .btn { background: transparent; color: var(--amber); border: 1px solid var(--amber); padding: 7px 10px; font: 500 11px/1 var(--font-mono); letter-spacing: .06em; text-transform: uppercase; cursor: pointer; }
 .btn:hover { background: rgba(255, 178, 36, .12); }
 .btn.toggle[aria-pressed="false"] { color: var(--muted); border-color: var(--line); }
+.seg button.swatch::before { content: ""; display: inline-block; width: 8px; height: 8px; margin-right: 6px; background: var(--c); }
+.acc { display: flex; flex-direction: column; gap: 8px; padding-top: 10px; border-top: 1px solid var(--line); }
+.acc .treehead b { color: var(--amber); font-weight: 500; }
 .legend { display: flex; flex-wrap: wrap; gap: 6px 12px; font: 500 10.5px/1 var(--font-mono); color: var(--muted); }
 .legend span { display: inline-flex; align-items: center; gap: 5px; }
 .legend span::before { content: ""; width: 8px; height: 8px; background: var(--c); }

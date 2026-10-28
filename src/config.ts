@@ -46,23 +46,36 @@ export const COLORS = {
 export const LIGHT_SCALE = Math.PI;
 export const POINT_LIGHT_SCALE = 0.9;
 
-/**
- * Night-train lighting: the neon strips carry the room, everything else is a faint fill.
- * Values are in prototype units (scaled by LIGHT_SCALE / POINT_LIGHT_SCALE).
- */
-export const LIGHTS = {
-  hemi: 0.04,
-  ceilingWhite: 0.06,
-  neonBlue: 0.9,
+/** One lighting look. Values are in prototype units (scaled by LIGHT_SCALE / POINT_LIGHT_SCALE). */
+export interface LightPreset {
+  hemi: number;
+  ceilingWhite: number;
+  neonBlue: number;
+  window: number;
   /** Tube colour multiplier above 1 (HDR): only the tubes cross the bloom threshold, not the walls they light. */
-  neonTubeHdr: 1.9,
-  window: 0.8,
-  /** Leuchtrahmen in the ceiling: dimmed so they read as night lighting, not as daylight panels. */
-  frameOpacity: 0.28,
-} as const;
+  neonTubeHdr: number;
+  /** Leuchtrahmen in the ceiling. */
+  frameOpacity: number;
+  exposure: number;
+  /** Bloom luminance threshold in linear HDR; must sit above the brightest lit wall. */
+  bloomThreshold: number;
+}
+
+export const LIGHT_PRESETS = {
+  /** Night train: the neon strips carry the room, everything else is a faint fill. */
+  nacht: { hemi: 0.04, ceilingWhite: 0.06, neonBlue: 0.9, window: 0.8, neonTubeHdr: 1.9, frameOpacity: 0.28, exposure: 0.85, bloomThreshold: 0.28 },
+  /** The brighter M1 look (as in the prototype), with bloom kept by lifting tubes and threshold together. */
+  hell: { hemi: 0.5, ceilingWhite: 0.45, neonBlue: 1.5, window: 1.0, neonTubeHdr: 3.2, frameOpacity: 0.7, exposure: 1.15, bloomThreshold: 0.62 },
+} satisfies Record<string, LightPreset>;
+export type LightPresetName = keyof typeof LIGHT_PRESETS;
+
+/**
+ * The active lighting values. Mutable on purpose: every lighting consumer reads it per frame,
+ * so switching presets is a single Object.assign with no plumbing through the scene.
+ */
+export const LIGHTS: LightPreset = { ...LIGHT_PRESETS.nacht };
 
 export const RENDER = {
-  exposure: 0.85,
   maxPixelRatio: 2,
   fogNear: 4,
   fogFar: 40,
@@ -72,8 +85,6 @@ export const RENDER = {
 export const BLOOM = {
   strength: 0.8,
   radius: 0.45,
-  /** Luminance threshold in linear HDR. Lit walls stay below it; HDR tubes, screens and streaks exceed it. */
-  threshold: 0.28,
 } as const;
 
 export const SPEED = {
@@ -128,11 +139,41 @@ export const CAMERA = {
   wagonLook: [0, 1.3, -3] as const,
   wagonFov: 62,
   seatFov: 74,
-  /** Eye height above floor for a seated player (seat 0.525 + torso 0.62 + head 0.2). */
-  seatEyeY: 1.345,
-  /** Head yaw limit; slightly beyond 90 degrees so both coach ends are fully visible from a seat. */
-  maxYaw: 1.75,
   mouseSensitivity: 0.0025,
+  /** Local POV head follows the mouse almost instantly; others see it smoothed (network, M3). */
+  povRate: 20,
+  /** Right mouse in POV zooms to this share of the normal field of view (read cards on heads). */
+  zoomFovFactor: 0.38,
+  zoomRate: 10,
+} as const;
+
+/** Head and torso behaviour shared by all characters. */
+export const HEAD = {
+  /** Total yaw limit (head + torso); a bit beyond 90 degrees so both coach ends are visible from a seat. */
+  maxYaw: 1.75,
+  minPitch: -0.7,
+  maxPitch: 0.9,
+  /** Beyond this head yaw (rad) the torso starts to turn along ... */
+  torsoFollowFrom: 0.52,
+  /** ... by this share of the excess, capped, and with its own lag. */
+  torsoShare: 0.45,
+  torsoMax: 0.45,
+  torsoRate: 2,
+  /** Smoothing rate for the slider/demo, slow enough that the turn itself is the joke. */
+  slowRate: 2.4,
+} as const;
+
+/**
+ * Talking: the skull flips open by voice level. Fast attack and fast release, so it snaps open on
+ * every syllable and shuts the moment someone stops.
+ */
+export const MOUTH = {
+  /** Fully open angle in rad at level 1. */
+  maxOpen: 0.6,
+  /** Level curve exponent < 1: quiet speech already opens visibly. */
+  curve: 0.6,
+  attack: 35,
+  release: 22,
 } as const;
 
 /** Halt countdown cycles with the shared clock so every peer shows the same number. */

@@ -1,5 +1,5 @@
 import * as THREE from 'three';
-import { CAMERA } from './config';
+import { CAMERA, HEAD } from './config';
 import { SharedClock } from './core/clock';
 import { DebugPanel } from './debug/panel';
 import { sceneTree } from './debug/sceneTree';
@@ -29,10 +29,10 @@ try {
   stage.prepend(msg);
 }
 
-const HINT_SEAT = 'Klicken zum Umsehen · Esc lässt los · Debug: Taste ^';
+const HINT_POV = 'Klicken zum Umsehen · rechte Maustaste zoomt · Esc lässt los · Debug: Taste ^';
 const HINT_WAGON = 'Debug: Taste ^';
 
-const panel = new DebugPanel(document.body, {
+const panel = new DebugPanel(document.body, world.players, {
   onSight: (on) => {
     setSightMode(world.scene, on);
     if (pipeline) pipeline.bloomOn = !on && panel.state.bloom;
@@ -42,11 +42,10 @@ const panel = new DebugPanel(document.body, {
   },
   onCam: (cam) => {
     world.cam = cam;
-    world.seatYaw = 0;
-    world.seatPitch = -0.12;
-    stage.classList.toggle('look', cam.kind === 'seat');
-    hint.textContent = cam.kind === 'seat' ? HINT_SEAT : HINT_WAGON;
-    if (cam.kind !== 'seat' && document.pointerLockElement) document.exitPointerLock();
+    world.players.instant = cam === 'pov';
+    stage.classList.toggle('look', cam === 'pov');
+    hint.textContent = cam === 'pov' ? HINT_POV : HINT_WAGON;
+    if (cam !== 'pov' && document.pointerLockElement) document.exitPointerLock();
   },
   onBlackout: () => (world.forcedBlackoutAt = clock.now()),
   tree: () => sceneTree(world.scene),
@@ -63,18 +62,27 @@ function resize(): void {
 new ResizeObserver(resize).observe(stage);
 resize();
 
-// Click into the scene to look around with the mouse (pointer lock), like the head POV will work in M2.
+// Click into the scene to look around: the mouse turns your character's head (pointer lock).
 stage.addEventListener('click', () => {
-  if (world.cam.kind === 'seat' && !document.pointerLockElement) stage.requestPointerLock();
+  if (world.cam === 'pov' && !document.pointerLockElement) stage.requestPointerLock();
 });
 document.addEventListener('pointerlockchange', () => {
   document.body.classList.toggle('locked', document.pointerLockElement === stage);
 });
+// Hold the right mouse button in POV to zoom, e.g. to read the card on someone's head.
+stage.addEventListener('contextmenu', (e) => e.preventDefault());
+stage.addEventListener('mousedown', (e) => {
+  if (e.button === 2 && world.cam === 'pov') world.zoom = 1;
+});
+addEventListener('mouseup', (e) => {
+  if (e.button === 2) world.zoom = 0;
+});
 document.addEventListener('mousemove', (e) => {
   if (document.pointerLockElement !== stage) return;
-  const k = CAMERA.mouseSensitivity;
-  world.seatYaw = Math.max(-CAMERA.maxYaw, Math.min(CAMERA.maxYaw, world.seatYaw - e.movementX * k));
-  world.seatPitch = Math.max(-0.9, Math.min(0.7, world.seatPitch - e.movementY * k));
+  const k = CAMERA.mouseSensitivity * world.fovFactor;
+  const look = world.players.look;
+  look.yaw = Math.max(-HEAD.maxYaw, Math.min(HEAD.maxYaw, look.yaw - e.movementX * k));
+  look.pitch = Math.max(HEAD.minPitch, Math.min(HEAD.maxPitch, look.pitch + e.movementY * k));
 });
 
 let last = performance.now();
@@ -87,6 +95,7 @@ function frame(now: number): void {
   last = now;
   fps = fps * 0.92 + (1 / dt) * 0.08;
   const t = clock.now();
+  panel.tick();
   world.update(t, dt, panel.state);
   if (!pipeline) return;
   pipeline.render();
