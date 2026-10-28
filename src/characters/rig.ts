@@ -34,6 +34,8 @@ export interface Arm {
   z: number;
   /** Extra elbow offset for small motions (thumb scrolling). */
   bob: number;
+  /** Extra abduction from the body build, so heavy arms clear the belly. */
+  spread: number;
   /** 'free' keeps the hand level with gravity; 'fixed' holds `base` (bottles tilt with the arm). */
   mode: 'free' | 'fixed';
   base: number;

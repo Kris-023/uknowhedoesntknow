@@ -209,3 +209,38 @@ export const NET = {
    */
   orphanMs: 20000,
 } as const;
+
+/** Voice chat: WebRTC audio mesh, positioned with Web Audio so voices come from the heads. */
+export const VOICE = {
+  /** Mic level window for the mouth: below `gateDb` the mouth stays shut, at `fullDb` it's wide open. */
+  gateDb: -50,
+  fullDb: -18,
+  /** Panner: full volume up to refDistance (m), then inverse falloff. Seats are 0.9–2.4 m apart. */
+  refDistance: 1.2,
+  rolloff: 1,
+  /**
+   * Beyond `nearM` a voice gets duller (lowpass) and more echo (reverb send), fully at `farM`.
+   * In the coach everyone is near; it kicks in when someone walks away or flies out.
+   */
+  nearM: 3,
+  farM: 10,
+  lowpassNearHz: 16000,
+  lowpassFarHz: 900,
+  wetNear: 0.06,
+  wetFar: 0.65,
+  /** Generated impulse response: length (s) and decay, a tiled tunnel rather than a cathedral. */
+  reverbS: 1.6,
+  reverbDecay: 3.2,
+  /**
+   * Voice activation ("Automatisch"): the gate opens at the threshold, stays open `vadHangMs` after the
+   * last loud moment so word endings aren't cut, and the sent audio runs `vadLookaheadS` behind the
+   * gate so the first syllable isn't swallowed either.
+   */
+  vadDefault: 0.5,
+  vadHangMs: 450,
+  vadLookaheadS: 0.05,
+  vadPollMs: 15,
+  /** Push-to-talk key (KeyboardEvent.code) and mute toggle. */
+  pttKey: 'KeyV',
+  muteKey: 'KeyM',
+} as const;

@@ -13,10 +13,8 @@
   </head>
   <body>
     <main id="stage" class="stage" aria-label="Hypertrain-Wagen"></main>
-    <div class="hud">
-      <span class="eyebrow">Linie 7 · Hypertrain</span>
-      <span class="hint" id="hint">Debug: Taste ^</span>
-    </div>
+    <!-- Shown until the script has built the menu; inline styles so it looks right before the CSS bundle. -->
+    <div id="boot" style="position:fixed;inset:0;display:grid;place-items:center;background:#03050c;color:#8b95a9;font:500 12px/1 monospace;letter-spacing:.12em;text-transform:uppercase">Lädt …</div>
     <script type="module" src="/src/main.ts"></script>
   </body>
 </html>

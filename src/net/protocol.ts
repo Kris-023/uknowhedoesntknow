@@ -1,8 +1,8 @@
 import { ITEMS, SLOTS, type ItemId } from '../characters/accessories';
-import { HAIRSTYLES, type Look } from '../characters/look';
+import { BUILDS, HAIRSTYLES, type Look } from '../characters/look';
 import type { PersonState } from '../characters/person';
 import type { Slot } from '../characters/rig';
-import { COLORS, HEAD, NET } from '../config';
+import { HEAD, NET } from '../config';
 
 // Wire format. Only IDs and numbers travel, never geometry. Everything received is validated,
 // because a peer is just another browser that could send anything.
@@ -33,8 +33,16 @@ export interface Welcome {
 
 export const trainDistance = (t: Train, now: number): number => t.d0 + (t.kmh / 3.6) * (now - t.t0);
 
-/** Shirt colour follows the seat, so players are told apart by colour like their markers. */
-export const withSeatColor = (s: PersonState, seat: number): PersonState => ({ ...s, look: { ...s.look, top: COLORS.players[seat] } });
+export const NAME_MAX = 16;
+
+/** Trimmed, no control characters, at most NAME_MAX characters; null if nothing is left. */
+export function parseName(v: unknown): string | null {
+  if (typeof v !== 'string') return null;
+  const clean = v.replace(/[\u0000-\u001f\u007f-\u009f]/g, '').replace(/\s+/g, ' ').trim();
+  // Spread counts code points, so an emoji is never cut in half.
+  const s = [...clean].slice(0, NAME_MAX).join('').trim();
+  return s || null;
+}
 
 const isObj = (v: unknown): v is Record<string, unknown> => typeof v === 'object' && v !== null && !Array.isArray(v);
 const num = (v: unknown, min: number, max: number): number | null =>
@@ -49,7 +57,9 @@ export function parseLook(v: unknown): Look | null {
   if (!hair || cols.some((c) => c === null) || flags.some((f) => typeof f !== 'boolean')) return null;
   const [skin, hairCol, top, pants, shoes, hat] = cols as number[];
   const [female, glasses, beard, short] = flags as boolean[];
-  return { female, skin, hair, hairCol, top, pants, shoes, hat, glasses, beard, short };
+  // Profiles saved before builds existed have none: they keep the old normal body.
+  const build = BUILDS.find((b) => b === v.build) ?? 'normal';
+  return { female, build, skin, hair, hairCol, top, pants, shoes, hat, glasses, beard, short };
 }
 
 export function parseState(v: unknown): PersonState | null {
@@ -62,7 +72,8 @@ export function parseState(v: unknown): PersonState | null {
     // Only known items, and only in their own slot.
     if (typeof id === 'string' && id in ITEMS && ITEMS[id as ItemId].slot === s) items[s] = id as ItemId;
   }
-  return { look, items };
+  // A missing or broken name doesn't drop the player, they just show up unnamed.
+  return { name: parseName(v.name) ?? '', look, items };
 }
 
 export function parseRoster(v: unknown): RosterEntry[] | null {

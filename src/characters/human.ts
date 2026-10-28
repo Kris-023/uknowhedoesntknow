@@ -1,7 +1,7 @@
 import * as THREE from 'three';
 import { group } from '../scene/build';
 import { canvasTex } from '../scene/textures';
-import type { Look } from './look';
+import type { Build, Look } from './look';
 import { bone, cm, darken, HCAP, part, UBOX, UCYL, USPH, V } from './parts';
 import { ARMPOSE, type Arm, type ArmSide, type Rig } from './rig';
 
@@ -126,9 +126,22 @@ function addHair(S: THREE.Group, H: THREE.Group, L: Look): void {
 
 export type BodyPose = 'sit' | 'stand';
 
+/**
+ * Body proportions per build, as factors on the normal body. w/d: torso width/depth, limb: arm
+ * thickness, leg: leg thickness (spacing grows with it), belly: 0 none .. 1 the big one that hangs
+ * over the lap, spread: arms held away from the body (rad) so they clear torso and belly.
+ */
+const BUILD: Record<Build, { w: number; d: number; limb: number; shoulder: number; hip: number; leg: number; neck: number; belly: number; spread: number }> = {
+  duenn: { w: 0.74, d: 0.78, limb: 0.7, shoulder: 0.86, hip: 0.82, leg: 0.78, neck: 0.85, belly: 0, spread: -0.03 },
+  normal: { w: 1, d: 1, limb: 1, shoulder: 1, hip: 1, leg: 1, neck: 1, belly: 0, spread: 0 },
+  kraeftig: { w: 1.2, d: 1.25, limb: 1.3, shoulder: 1.12, hip: 1.15, leg: 1.25, neck: 1.25, belly: 0.45, spread: 0.1 },
+  xxl: { w: 1.9, d: 1.95, limb: 1.9, shoulder: 1.55, hip: 2.1, leg: 1.95, neck: 1.8, belly: 1, spread: 0.5 },
+};
+
 export function rigHuman(root: THREE.Object3D, L: Look, pose: BodyPose): Rig {
   const sit = pose === 'sit';
   const f = L.female;
+  const B = BUILD[L.build] ?? BUILD.normal;
   const T = group('torso', root);
   const H = group('head', T);
   H.position.set(0, 0.62, 0);
@@ -139,11 +152,22 @@ export function rigHuman(root: THREE.Object3D, L: Look, pose: BodyPose): Rig {
   const shoe = cm(L.shoes, 0.55);
   const dark = cm(0x0b0d12, 0.4);
 
-  // Trunk, pelvis, neck.
-  part(T, torsoGeo(f), cm(L.top, 0.85, true), 0, 0, 0);
-  part(T, USPH, pants, 0, 0.03, 0, f ? 0.2 : 0.185, 0.12, 0.14);
+  // Trunk, pelvis, neck. The torso narrows towards the neck, so scaling it keeps the head joint.
+  part(T, torsoGeo(f), cm(L.top, 0.85, true), 0, 0, 0, B.w, 1, B.d);
+  part(T, USPH, pants, 0, 0.03, 0, (f ? 0.2 : 0.185) * B.hip, 0.12 * (0.8 + 0.2 * B.hip), 0.14 * B.hip);
+  if (B.belly > 0) {
+    // Belly in shirt colour: sits forward and low, the big one droops over the lap past the seat edge.
+    const k = B.belly;
+    if (k < 1) part(T, USPH, top, 0, 0.24 - 0.07 * k, 0.03 + 0.08 * k, 0.17 + 0.12 * k, 0.15 + 0.09 * k, 0.12 + 0.09 * k);
+    else {
+      // Low, wide belly resting on the thighs, a chest roll above it, and hips wider than the seat.
+      part(T, USPH, top, 0, 0.14, 0.24, 0.4, 0.3, 0.36);
+      part(T, USPH, top, 0, 0.4, 0.12, 0.36, 0.16, 0.3);
+      for (const sx of [-1, 1]) part(T, USPH, top, sx * 0.3, 0.12, 0.02, 0.16, 0.16, 0.22);
+    }
+  }
   // Neck ends inside the head but below the jaw bowl, otherwise it pokes into the open mouth.
-  part(H, UCYL, skin, 0, -0.03, 0, 0.052, 0.06, 0.052);
+  part(H, UCYL, skin, 0, -0.03, 0, 0.052 * B.neck, 0.06, 0.052 * B.neck);
 
   // Jaw (stays) and skull (hinged at the back, opens with the voice). `S` is the skull in head
   // coordinates, so everything above the mouth line keeps its usual position.
@@ -181,41 +205,46 @@ export function rigHuman(root: THREE.Object3D, L: Look, pose: BodyPose): Rig {
   for (const n of ['L', 'R'] as const) {
     const sd = n === 'L' ? 1 : -1;
     const sh = group(`arm_${n}`, T);
-    sh.position.set(sd * (f ? 0.205 : 0.225), 0.5, 0);
-    part(sh, USPH, top, 0, 0, 0, 0.06, 0.06, 0.06);
-    bone(sh, V(0, 0, 0), V(0, -0.28, 0), 0.05, top);
+    sh.position.set(sd * (f ? 0.205 : 0.225) * B.shoulder, 0.5, 0);
+    const lr = B.limb;
+    part(sh, USPH, top, 0, 0, 0, 0.06 * lr, 0.06 * lr, 0.06 * lr);
+    bone(sh, V(0, 0, 0), V(0, -0.28, 0), 0.05 * lr, top);
     const el = group('forearm', sh);
     el.position.set(0, -0.28, 0);
-    part(el, USPH, top, 0, 0, 0, 0.046, 0.046, 0.046);
-    bone(el, V(0, 0, 0), V(0, -0.26, 0), 0.042, L.short ? skin : top);
-    part(el, USPH, skin, 0, -0.29, 0, 0.04, 0.045, 0.035);
+    part(el, USPH, top, 0, 0, 0, 0.046 * lr, 0.046 * lr, 0.046 * lr);
+    bone(el, V(0, 0, 0), V(0, -0.26, 0), 0.042 * lr, L.short ? skin : top);
+    const hr = 0.85 + 0.15 * lr;
+    part(el, USPH, skin, 0, -0.29, 0, 0.04 * hr, 0.045 * hr, 0.035 * hr);
     const hand = group('hand', el);
     hand.position.set(0, -0.3, 0);
     const bag = group('bagpt', el);
     bag.position.set(0, -0.13, 0);
     const P = ARMPOSE[sit ? 'lap' : 'hang'];
-    sh.rotation.set(P.s, 0, sd * P.z);
+    sh.rotation.set(P.s, 0, sd * (P.z + B.spread));
     el.rotation.x = P.e;
-    arms[n] = { shoulder: sh, elbow: el, hand, bag, sd, s: P.s, e: P.e, z: P.z, bob: 0, mode: 'free', base: 0 };
+    arms[n] = { shoulder: sh, elbow: el, hand, bag, sd, s: P.s, e: P.e, z: P.z, bob: 0, spread: B.spread, mode: 'free', base: 0 };
   }
 
   // Legs: on the seat or standing.
+  const lg = B.leg;
+  // Thicker legs need more room between them; the shoes follow the knees.
+  const legX = 0.095 * (1 + (lg - 1) * 0.75);
   for (const sx of [-1, 1]) {
-    const x = sx * 0.095;
+    const x = sx * legX;
     if (sit) {
-      const knee = V(x, 0.1, 0.42);
+      const knee = V(x, 0.1 + 0.03 * (lg - 1), 0.42);
       const ankle = V(x, -0.455, 0.46);
-      bone(root, V(x, 0.08, 0), knee, 0.078, pants);
-      bone(root, knee, ankle, 0.064, pants);
-      part(root, USPH, pants, x, 0.1, 0.42, 0.07, 0.07, 0.07);
-      part(root, UBOX, shoe, x, -0.49, 0.53, 0.095, 0.07, 0.24);
+      bone(root, V(x, 0.08, 0), knee, 0.078 * lg, pants);
+      bone(root, knee, ankle, 0.064 * lg, pants);
+      part(root, USPH, pants, knee.x, knee.y, knee.z, 0.07 * lg, 0.07 * lg, 0.07 * lg);
+      part(root, UBOX, shoe, x, -0.49, 0.53, 0.095 * (0.9 + 0.1 * lg), 0.07, 0.24);
     } else {
       const knee = V(x, -0.43, 0.03);
       const ankle = V(x, -0.85, 0);
-      bone(root, V(x, 0, 0), knee, 0.078, pants);
-      bone(root, knee, ankle, 0.064, pants);
-      part(root, USPH, pants, x, -0.43, 0.03, 0.07, 0.07, 0.07);
-      part(root, UBOX, shoe, x, -0.865, 0.06, 0.095, 0.07, 0.24);
+      bone(root, V(x, 0, 0), knee, 0.078 * lg, pants);
+      bone(root, knee, ankle, 0.064 * lg, pants);
+      part(root, USPH, pants, x, -0.43, 0.03, 0.07 * lg, 0.07 * lg, 0.07 * lg);
+      part(root, UBOX, shoe, x, -0.865, 0.06, 0.095 * (0.9 + 0.1 * lg), 0.07, 0.24);
     }
   }
 
@@ -224,10 +253,10 @@ export function rigHuman(root: THREE.Object3D, L: Look, pose: BodyPose): Rig {
   headAnchor.position.set(0, L.hair === 'muetze' ? 0.42 : 0.36, 0);
   const hip = group('a_hip', root);
   if (sit) {
-    hip.position.set(0.215, 0.14, 0.1);
+    hip.position.set(0.215 * B.hip, 0.14, 0.1);
     hip.rotation.x = -1.0;
   } else {
-    hip.position.set(0.215, 0.04, 0.02);
+    hip.position.set(0.215 * B.hip, 0.04, 0.02);
     hip.rotation.z = 0.05;
   }
 

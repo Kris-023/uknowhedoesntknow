@@ -1,14 +1,13 @@
 import { describe, expect, it } from 'vitest';
 import { makeLook } from '../src/characters/look';
 import type { PersonState } from '../src/characters/person';
-import { COLORS } from '../src/config';
 import { SharedClock } from '../src/core/clock';
 import { mulberry32 } from '../src/core/rng';
 import { parseState, parseWelcome, trainDistance } from '../src/net/protocol';
 import { Session } from '../src/net/session';
 import { MemoryHub } from '../src/net/transport';
 
-const state = (n: number): PersonState => ({ look: makeLook(mulberry32(n)), items: { head: 'gurke' } });
+const state = (n: number): PersonState => ({ name: `P${n}`, look: makeLook(mulberry32(n)), items: { head: 'gurke' } });
 
 /** A fake wall clock per peer, with a fixed skew against the host. */
 function peer(hub: MemoryHub, id: string, host: boolean, skewMs = 0, t = { ms: 1_000_000 }) {
@@ -21,7 +20,7 @@ function peer(hub: MemoryHub, id: string, host: boolean, skewMs = 0, t = { ms: 1
 }
 
 describe('Session', () => {
-  it('host welcomes joiners, assigns seats and seat colours', () => {
+  it('host welcomes joiners and assigns seats', () => {
     const hub = new MemoryHub();
     const t = { ms: 1_000_000 };
     const a = peer(hub, 'a', true, 0, t);
@@ -32,10 +31,10 @@ describe('Session', () => {
     expect(c.events).toContain('welcome');
     expect([a.s.mySeat, b.s.mySeat, c.s.mySeat]).toEqual([0, 2, 1]);
     expect(b.clock.seed).toBe(42);
-    // Everyone has the same roster, with shirts in the seat colour.
+    // Everyone has the same roster, names included.
     for (const p of [a, b, c]) {
       expect(p.s.roster.size).toBe(3);
-      expect(p.s.roster.get('ccc')!.state.look.top).toBe(COLORS.players[1]);
+      expect(p.s.roster.get('ccc')!.state.name).toBe('P3');
     }
   });
 
@@ -82,7 +81,7 @@ describe('Session', () => {
     b.s.setState({ ...state(9), items: { hand: 'huhn' } });
     hub.flush();
     expect(c.s.roster.get('b')!.state.items).toEqual({ hand: 'huhn' });
-    expect(a.s.roster.get('b')!.state.look.top).toBe(COLORS.players[2]);
+    expect(a.s.roster.get('b')!.state.name).toBe('P9');
   });
 
   it('when the host leaves, the longest-present player takes over and keeps the clock', () => {
@@ -136,6 +135,14 @@ describe('protocol validation', () => {
   it('drops unknown items and items in the wrong slot', () => {
     const s = parseState({ look: makeLook(mulberry32(3)), items: { head: 'huhn', hand: 'ente', hip: 'rakete' } });
     expect(s?.items).toEqual({ hand: 'ente' });
+  });
+
+  it('cleans names', async () => {
+    const { parseName } = await import('../src/net/protocol');
+    expect(parseName('  Kalle \u0007 der   Große  ')).toBe('Kalle der Große');
+    expect(parseName('x'.repeat(40))).toHaveLength(16);
+    expect(parseName('   ')).toBeNull();
+    expect(parseName(42)).toBeNull();
   });
 
   it('rejects broken looks and welcomes', () => {

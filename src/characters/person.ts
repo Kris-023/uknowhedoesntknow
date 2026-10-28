@@ -7,6 +7,8 @@ import { ARMPOSE, type ArmPoseName, type ArmSide, type Rig, type Slot } from './
 
 /** What gets synced per person in M3: only IDs and numbers, never geometry. */
 export interface PersonState {
+  /** Display name, shown above the head (players only; NPCs leave it empty). */
+  name: string;
   look: Look;
   items: Partial<Record<Slot, ItemId>>;
 }
@@ -31,6 +33,7 @@ export class Person {
   lean = 0;
   /** Smoothed mouth opening 0..1. */
   private open = 0;
+  name = '';
 
   constructor(
     readonly root: THREE.Group,
@@ -140,7 +143,7 @@ export class Person {
       a.e += (P.e - a.e) * k;
       a.z += (P.z - a.z) * k;
       a.shoulder.rotation.x = a.s;
-      a.shoulder.rotation.z = a.sd * a.z;
+      a.shoulder.rotation.z = a.sd * (a.z + a.spread);
       a.elbow.rotation.x = a.e + a.bob;
       // Counter-rotate so held items stay upright regardless of the arm angle.
       const level = -(tx + a.s + a.e + a.bob);
@@ -155,6 +158,6 @@ export class Person {
   }
 
   state(): PersonState {
-    return { look: { ...this.look }, items: { ...this.items } };
+    return { name: this.name, look: { ...this.look }, items: { ...this.items } };
   }
 }

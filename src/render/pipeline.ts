@@ -14,6 +14,10 @@ export class Pipeline {
   private composer: EffectComposer;
   private bloom: UnrealBloomPass;
   bloomOn = true;
+  /** Multiplier on BLOOM.strength (player setting). */
+  bloomStrength = 1;
+  private renderScale = 1;
+  private size = { w: 1, h: 1 };
 
   constructor(
     host: HTMLElement,
@@ -36,7 +40,27 @@ export class Pipeline {
     this.composer.addPass(new OutputPass());
   }
 
+  /** Device pixels per CSS pixel actually rendered: screen density, capped, times the quality setting. */
+  private pixelRatio(): number {
+    return Math.min(devicePixelRatio || 1, RENDER.maxPixelRatio) * this.renderScale;
+  }
+
+  /** Lower render resolution; the canvas still fills the window (the browser upscales). */
+  setRenderScale(k: number): void {
+    if (k === this.renderScale) return;
+    this.renderScale = k;
+    this.setSize(this.size.w, this.size.h);
+  }
+
+  /** Rendered size in device pixels, for the benchmark readout. */
+  get renderSize(): { w: number; h: number } {
+    const k = this.pixelRatio();
+    return { w: Math.round(this.size.w * k), h: Math.round(this.size.h * k) };
+  }
+
   setSize(w: number, h: number): void {
+    this.size = { w, h };
+    this.renderer.setPixelRatio(this.pixelRatio());
     this.renderer.setSize(w, h, false);
     this.composer.setPixelRatio(this.renderer.getPixelRatio());
     this.composer.setSize(w, h);
@@ -47,6 +71,7 @@ export class Pipeline {
     // Follow the active light preset.
     this.renderer.toneMappingExposure = LIGHTS.exposure;
     this.bloom.threshold = LIGHTS.bloomThreshold;
+    this.bloom.strength = BLOOM.strength * this.bloomStrength;
     if (this.bloomOn) this.composer.render();
     else this.renderer.render(this.scene, this.camera);
   }

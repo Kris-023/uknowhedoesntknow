@@ -1,14 +1,14 @@
-import { COLORS, HALT_CYCLE_S, LIGHT_PRESETS, LIGHTS, SHAKE, SPEED, type LightPresetName } from '../config';
+import { COLORS, HALT_CYCLE_S, SHAKE, SPEED, type LightPresetName } from '../config';
 import { ITEMS, ITEM_IDS, SLOT_LABEL, SLOTS } from '../characters/accessories';
 import { haltCountdown, smoothstep } from '../core/motion';
 import type { Players } from '../game/players';
-import type { CamMode, WorldParams } from '../scene/world';
+import type { CamMode } from '../scene/world';
+import { onSettings, settings, updateSettings } from '../ui/store';
 import { ROLE_COLORS } from './sight';
 
-export interface PanelState extends WorldParams {
+export interface PanelState {
   kmh: number;
   sight: boolean;
-  bloom: boolean;
   cam: CamMode;
 }
 
@@ -24,7 +24,6 @@ export interface PanelStats {
 interface PanelHooks {
   onSight(on: boolean): void;
   onCam(cam: CamMode): void;
-  onBloom(on: boolean): void;
   onBlackout(): void;
   /** Own look or items changed (to sync them). */
   onLocalChange(): void;
@@ -76,18 +75,19 @@ export class DebugPanel {
     host: HTMLElement,
     private players: Players,
     private hooks: PanelHooks,
+    /** Without it (production) the panel only holds state and never shows. */
+    enabled = true,
   ) {
     const reduce = matchMedia('(prefers-reduced-motion: reduce)').matches;
     this.state = {
       kmh: reduce ? 300 : SPEED.defaultKmh,
-      shakeMm: SHAKE.defaultMm,
-      shakeOn: !reduce,
       sight: false,
-      bloom: true,
       cam: 'wagon',
     };
 
     this.root = el('aside', 'panel');
+    // Developer tool: starts closed, ^ opens it.
+    this.root.hidden = true;
     this.root.setAttribute('aria-label', 'Debug');
     const head = el('header', 'panel-head');
     head.append(el('h2', '', 'Debug'), el('span', 'kbd', '^'));
@@ -133,34 +133,32 @@ export class DebugPanel {
     const tempo = this.slider('Tempo', 0, SPEED.maxKmh, 10, this.state.kmh, (v) => `${v} km/h`, (v) => (this.state.kmh = v));
     this.tempo = tempo;
     this.root.append(tempo.row);
-    const shake = this.slider('Wackeln', 0, SHAKE.maxMm, 1, this.state.shakeMm, (v) => `${v} mm`, (v) => (this.state.shakeMm = v));
-    shake.row.append(this.toggle(() => this.state.shakeOn, (on) => (this.state.shakeOn = on)));
+    // Shake, bloom and light are player settings (Esc menu); the panel edits the same values.
+    const shake = this.slider('Wackeln', 0, SHAKE.maxMm, 1, settings.shakeMm, (v) => `${v} mm`, (v) => updateSettings({ shakeMm: v }));
+    shake.row.append(this.toggle(() => settings.shakeOn, (on) => updateSettings({ shakeOn: on })));
     this.root.append(shake.row);
     const fx = el('div', 'ctl');
     fx.append(
       el('span', 'ctl-label', 'Effekte'),
-      this.toggle(
-        () => this.state.bloom,
-        (on) => {
-          this.state.bloom = on;
-          this.hooks.onBloom(on);
-        },
-        'Bloom',
-      ),
+      this.toggle(() => settings.bloom, (on) => updateSettings({ bloom: on }), 'Bloom'),
       (this.blackoutBtn = this.button('Ausfall testen', () => this.hooks.onBlackout())),
     );
     this.root.append(fx);
     const lightSeg = el('div', 'seg');
     const lightBtns: HTMLButtonElement[] = [];
     for (const [label, name] of [['Nacht', 'nacht'], ['Hell', 'hell']] as const satisfies readonly (readonly [string, LightPresetName])[]) {
-      const b = this.segButton(label, () => {
-        Object.assign(LIGHTS, LIGHT_PRESETS[name]);
-        lightBtns.forEach((x) => x.setAttribute('aria-pressed', String(x === b)));
-      });
-      b.setAttribute('aria-pressed', String(name === 'nacht'));
+      const b = this.segButton(label, () => updateSettings({ light: name }));
+      b.dataset.light = name;
       lightBtns.push(b);
       lightSeg.append(b);
     }
+    const syncLight = () => lightBtns.forEach((x) => x.setAttribute('aria-pressed', String(x.dataset.light === settings.light)));
+    syncLight();
+    onSettings(() => {
+      syncLight();
+      shake.input.value = String(settings.shakeMm);
+      shake.out.textContent = `${settings.shakeMm} mm`;
+    });
     this.root.append(this.row('Licht', lightSeg));
 
     // Head turn test tools
@@ -231,11 +229,11 @@ export class DebugPanel {
     this.treeEl = el('pre', 'tree');
     this.root.append(treeHead, this.treeEl);
 
-    host.append(this.root);
+    if (enabled) host.append(this.root);
     this.syncButtons();
     this.refreshTree();
 
-    addEventListener('keydown', (e) => {
+    if (enabled) addEventListener('keydown', (e) => {
       if (e.key === '`' || e.key === '^' || e.code === 'Backquote') this.root.hidden = !this.root.hidden;
     });
   }
@@ -344,6 +342,8 @@ export class DebugPanel {
       sync();
     });
     sync();
+    // Settings can also change from the Esc menu.
+    onSettings(sync);
     return b;
   }
 

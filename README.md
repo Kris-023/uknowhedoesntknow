@@ -4,29 +4,37 @@ Browser-Partyspiel für 2 bis 4 Freunde: Ihr sitzt euch in einem viel zu schnell
 gegenüber, draußen rast der Tunnel vorbei, drinnen flackert das Neon, und die Mitreisenden vom Kotti
 starren aufs Handy. Der Wagen heißt „Hypertrain“ und ist die erste Map. Darin laufen Minigames wie „Wer bin ich?“. Nur PC, nur Browser, nur private Lobbys.
 
-**Stand: M3 (Netzwerk).** Wagen, Tunnel, Neon, Wackeln, Figuren mit Accessoires und POV laufen, und bis zu vier
-Leute treffen sich per Raumcode im selben Wagen: Kopfdrehung live, Looks und Accessoires synchron. Voice und
-Minigames folgen (Roadmap in `teamlead/SUPERDOC.md`).
+**Stand: M4 (Voice).** Bis zu vier Leute treffen sich per Raumcode im selben Wagen, mit eigenem Namen und eigener Figur,
+Kopfdrehung live und Sprachchat: Die Stimme kommt vom Kopf der Person, und der Mund klappt beim Sprechen auf.
+NPCs und Minigames folgen (Roadmap in `teamlead/SUPERDOC.md`).
 
 ## Spielen
 
-1. Eine Person klickt **Raum erstellen** und schickt den Link (Knopf **Link kopieren** oben links) an die anderen.
+Name, Figur und Einstellungen merkt sich der Browser.
+
+1. Eine Person klickt **Raum erstellen** und schickt den Link an die anderen (im Spiel: Esc → **Link kopieren**).
 2. Wer den Link öffnet, hat den Code schon im Feld und klickt **Beitreten**. Das Verbinden dauert ein paar Sekunden.
 3. Wer den Raum erstellt hat, ist Host. Geht der Host, übernimmt automatisch, wer am längsten dabei ist.
 
-**Allein testen** startet ohne Netzwerk mit drei simulierten Mitreisenden. Mehrere Tabs auf einem Rechner
+Ohne Namen bekommst du einen Zufallsnamen. Unter **Einstellungen → Benchmark starten** fährst du allein mit drei
+simulierten Mitreisenden und siehst FPS, während du Grafik und Maus live anpasst. Mehrere Tabs auf einem Rechner
 funktionieren auch als Mitspieler.
+
+Im Spiel: ins Bild klicken und mit der Maus umsehen, rechte Maustaste zoomt, <kbd>M</kbd> schaltet stumm,
+<kbd>V</kbd> ist Push-to-talk; in den Einstellungen wählbar: Offen, Automatisch (sendet erst ab einer Schwelle) oder Push-to-talk, <kbd>Esc</kbd> öffnet das Menü mit Raum, Charakter
+und Einstellungen. Kopfhörer sind am besten.
 
 ## Starten
 
 ```bash
 npm install
 npm run dev        # http://localhost:5190
+npm run dev:lan    # https://<LAN-IP>:5190, für Tests mit anderen Rechnern (Zertifikatswarnung einmal bestätigen)
 npm test           # Unit-Tests (Determinismus von Uhr, Flackern, Wackeln)
 npm run build      # Bundle nach dist/
 ```
 
-Im Spiel: Taste <kbd>`</kbd> (bzw. <kbd>^</kbd> auf deutscher Tastatur) blendet das Debug-Panel ein und aus.
+Nur im Dev-Server oder mit `?debug`: Taste <kbd>`</kbd> (bzw. <kbd>^</kbd> auf deutscher Tastatur) blendet das Debug-Panel ein und aus.
 Dort gibt es Kamera (Wagen oder POV: einmal ins Bild klicken, dann dreht die Maus den Kopf, Esc lässt los),
 „Ich bin“ (Spieler 1–4), Kopf-Regler und „Seitenblick“, Accessoires und Würfeln, „Meine Sicht“ (Wireframe nach Rolle),
 Tempo, Wackeln, Draw-Calls, Dreiecke, FPS und den Szenengraphen. Im Raum bestimmt nur der Host Tempo und Ausfall,

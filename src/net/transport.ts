@@ -13,6 +13,10 @@ export interface Transport {
   onJoin(h: (id: string) => void): void;
   onLeave(h: (id: string) => void): void;
   leave(): void;
+  /** Media (voice). Optional: the in-memory test network has none. */
+  addStream?(stream: MediaStream, to?: string): void;
+  removeStream?(stream: MediaStream): void;
+  onStream?(h: (stream: MediaStream, from: string) => void): void;
 }
 
 interface Packet {

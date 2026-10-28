@@ -9,7 +9,6 @@ import {
   parseTrain,
   parseWelcome,
   trainDistance,
-  withSeatColor,
   type RosterEntry,
   type Train,
   type Welcome,
@@ -60,7 +59,7 @@ export class Session {
     this.role = host ? 'host' : 'client';
     this.hostId = host ? net.selfId : null;
     this.welcomed = host;
-    if (host) this.roster.set(net.selfId, { id: net.selfId, seat: 0, state: withSeatColor(myState, 0) });
+    if (host) this.roster.set(net.selfId, { id: net.selfId, seat: 0, state: myState });
 
     net.onJoin((id) => this.onJoin(id));
     net.onLeave((id) => this.onLeave(id));
@@ -144,7 +143,7 @@ export class Session {
     this.myState = s;
     if (this.role === 'host') {
       const e = this.roster.get(this.net.selfId);
-      if (e) e.state = withSeatColor(s, e.seat);
+      if (e) e.state = s;
       this.broadcastRoster();
     } else if (this.hostId) {
       this.net.send('state', s, this.hostId);
@@ -214,7 +213,7 @@ export class Session {
   private becomeHost(): void {
     this.role = 'host';
     this.hostId = this.net.selfId;
-    if (!this.roster.has(this.net.selfId)) this.roster.set(this.net.selfId, { id: this.net.selfId, seat: 0, state: withSeatColor(this.myState, 0) });
+    if (!this.roster.has(this.net.selfId)) this.roster.set(this.net.selfId, { id: this.net.selfId, seat: 0, state: this.myState });
     for (const id of this.roster.keys()) if (id !== this.net.selfId && !this.peers.has(id)) this.roster.delete(id);
     const first = !this.welcomed;
     this.welcomed = true;
@@ -235,7 +234,7 @@ export class Session {
         this.net.send('full', null, from);
         return;
       }
-      this.roster.set(from, { id: from, seat, state: withSeatColor(state, seat) });
+      this.roster.set(from, { id: from, seat, state });
     }
     this.net.send('welcome', this.welcomeMsg(), from);
     this.broadcastRoster();
@@ -281,7 +280,7 @@ export class Session {
     const e = this.roster.get(from);
     const s = parseState(d);
     if (!e || !s) return;
-    e.state = withSeatColor(s, e.seat);
+    e.state = s;
     this.broadcastRoster();
   }
 

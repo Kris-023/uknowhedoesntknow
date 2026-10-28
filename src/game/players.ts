@@ -14,9 +14,13 @@ const START_LOOKS: Partial<Look>[] = [
   { female: true, hair: 'dutt' },
 ];
 const START_ITEMS: ItemId[][] = [['schlaeger'], ['gurke'], ['huhn'], ['jute']];
+/** Names for the simulated passengers in solo mode. */
+const FAKE_NAMES = ['Kalle', 'Deniz', 'Mo', 'Sascha'];
 
 /** Height of the head centre above the seat root (torso 0.62 + head 0.19). */
 const HEAD_Y = 0.81;
+/** Name label sits between the head (with hats) and the marker diamond. */
+const LABEL_Y = 1.36;
 
 /** A random person for joining a room: random look, some random items. */
 export function randomState(r: Rand): PersonState {
@@ -26,7 +30,7 @@ export function randomState(r: Rand): PersonState {
     const ids = ITEM_IDS.filter((id) => ITEMS[id].slot === s);
     items[s] = ids[Math.floor(r() * ids.length) % ids.length];
   }
-  return { look: makeLook(r), items };
+  return { name: '', look: makeLook(r), items };
 }
 
 /** Where the other seats get their heads from: scripted fake peers, or real players over the network. */
@@ -54,6 +58,8 @@ export class Players {
   private markerColors: THREE.Color[] = [];
   mode: PlayerMode = 'fake';
   remotePose: RemotePose = () => null;
+  /** Real voice level per seat (mic or received audio); null = no voice there, use the script. */
+  voiceLevel: (seat: number) => number | null = () => null;
   /** Seats with a player in them; all four in fake mode. */
   readonly occupied = [true, true, true, true];
   /** Last applied roster state per seat, to skip rebuilding bodies when nothing changed. */
@@ -72,6 +78,7 @@ export class Players {
       root.rotation.y = seat.side === -1 ? Math.PI / 2 : -Math.PI / 2;
       const look = { ...makeLook(rand), ...START_LOOKS[i], top: COLORS.players[i], glasses: false, beard: false };
       const p = new Person(root, look, 'sit');
+      p.name = FAKE_NAMES[i];
       for (const id of START_ITEMS[i]) p.equip(id);
       p.settle();
       this.people.push(p);
@@ -118,14 +125,30 @@ export class Players {
     for (const e of entries) {
       this.occupied[e.seat] = true;
       if (e.seat === mySeat && !includeMe) continue;
-      const key = JSON.stringify(e.state);
-      if (this.applied[e.seat] === key) continue;
-      this.applied[e.seat] = key;
-      const p = this.people[e.seat];
-      p.setLook(e.state.look);
-      for (const s of SLOTS) p.unequip(s);
-      for (const id of Object.values(e.state.items)) p.equip(id);
+      this.applyState(e.seat, e.state);
     }
+  }
+
+  /** Put a full state (name, look, items) on a seat; skips the rebuild if nothing changed. */
+  applyState(seat: number, state: PersonState): void {
+    const key = JSON.stringify(state);
+    if (this.applied[seat] === key) return;
+    this.applied[seat] = key;
+    const p = this.people[seat];
+    p.name = state.name;
+    p.setLook(state.look);
+    for (const s of SLOTS) p.unequip(s);
+    for (const id of Object.values(state.items)) p.equip(id);
+  }
+
+  /** World position of the head of seat `i`, where that player's voice comes from. */
+  headPos(i: number, out: THREE.Vector3): THREE.Vector3 {
+    return this.people[i].rig.head.localToWorld(out.set(0, 0.12, 0.05));
+  }
+
+  /** World position for the name label of seat `i`. */
+  labelPos(i: number, out: THREE.Vector3): THREE.Vector3 {
+    return this.people[i].root.localToWorld(out.set(0, LABEL_Y, 0));
   }
 
   update(t: number, dt: number, pov: boolean): void {
@@ -134,8 +157,10 @@ export class Players {
       p.root.visible = this.occupied[i];
       if (!this.occupied[i]) return;
       const fake = fakePeer(t, i, this.seed, (j) => this.yawTable[i][j], n);
-      // Voice comes with M4; until then only fake peers and the debug toggle move mouths.
-      if (this.mode === 'net') fake.level = 0;
+      // Mouths follow real voices; in a room a silent seat stays silent, solo the script talks.
+      const voice = this.voiceLevel(i);
+      if (voice !== null) fake.level = voice;
+      else if (this.mode === 'net') fake.level = 0;
       if (this.talkTest) fake.level = (0.5 + 0.5 * Math.sin(t * 14 + i)) * (0.6 + 0.4 * Math.sin(t * 4.3 + i));
       if (i === this.active) {
         const rate = this.instant ? CAMERA.povRate : HEAD.slowRate;
