@@ -81,7 +81,7 @@ export function buildLighting(scene: THREE.Scene, coach: THREE.Object3D, tex: Co
   }
 
   if (lean) {
-    // Dev comparison (?lights=lean): 4 point lights instead of 11. The white fill goes into the
+    // 4 point lights instead of 11 (every point light costs every lit pixel; ~-24 % GPU). The white fill goes into the
     // hemisphere, each side's three blue lights become one longer-reaching light in the middle that
     // follows the average of their segments, and the oncoming train borrows the window light of its side.
     scene.remove(...whites, passLight);
@@ -147,8 +147,8 @@ export function buildLighting(scene: THREE.Scene, coach: THREE.Object3D, tex: Co
 /** Gains of the lean light set, tuned so the coach keeps roughly the same brightness. */
 const LEAN = { hemiGain: 1.15, blueGain: 1.7, blueDistance: 11 } as const;
 
-/** Dev-only: `?lights=lean` swaps in the 4-light set for a side-by-side comparison. */
+/** The lean 4-light set is the default; `?lights=full` (dev only) brings back the old 11 for comparison. */
 function leanLights(): boolean {
-  if (!import.meta.env.DEV || typeof location === 'undefined') return false;
-  return new URLSearchParams(location.search).get('lights') === 'lean';
+  if (!import.meta.env.DEV || typeof location === 'undefined') return true;
+  return new URLSearchParams(location.search).get('lights') !== 'full';
 }
