@@ -14,8 +14,9 @@ Nur PC, nur Browser, nur private Räume, kein Server.
 2. Wer den Link öffnet, hat den Code schon im Feld und klickt **Beitreten**. Das Verbinden dauert ein paar Sekunden.
 3. Figur und Accessoires im Tab **Charakter**, Ton und Grafik in **Einstellungen**. Der Browser merkt sich alles.
 
-Seid ihr schon im TeamSpeak oder Discord: beim Erstellen „Raum ohne Sprachchat“ anhaken. Der Host kann den Sprachchat
-auch später im Esc-Menü für alle abschalten.
+Neben „Raum erstellen“ liegen die **Raum-Einstellungen**: Sprachchat an/aus (aus, wenn ihr schon im TeamSpeak oder
+Discord seid), Schaffner aus / nur ermahnen / mit Punktabzug, Abstimmungszeit und Stromausfälle. Der Host kann sie im
+Esc-Menü jederzeit für alle ändern.
 
 ### Wer bin ich?
 

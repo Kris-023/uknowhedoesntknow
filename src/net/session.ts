@@ -50,7 +50,7 @@ export class Session {
   private peers = new Set<string>();
   train: Train = { kmh: 0, t0: 0, d0: 0 };
   blackoutAt: number | null = null;
-  opts: RoomOpts = { voice: true };
+  opts: RoomOpts = parseOpts(undefined);
   private lastHello = -Infinity;
   private nextPing = 0;
   private pingsSent = 0;

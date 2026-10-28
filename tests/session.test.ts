@@ -3,7 +3,7 @@ import { makeLook } from '../src/characters/look';
 import type { PersonState } from '../src/characters/person';
 import { SharedClock } from '../src/core/clock';
 import { mulberry32 } from '../src/core/rng';
-import { parseState, parseWelcome, trainDistance } from '../src/net/protocol';
+import { parseOpts, parseState, parseWelcome, trainDistance } from '../src/net/protocol';
 import { Session } from '../src/net/session';
 import { MemoryHub } from '../src/net/transport';
 
@@ -166,17 +166,22 @@ describe('room settings', () => {
   it('a quiet room tells joiners in the welcome and later changes reach everyone', () => {
     const hub = new MemoryHub();
     const a = peer(hub, 'a', true);
-    a.s.setOpts({ voice: false });
+    a.s.setOpts({ ...parseOpts(undefined), voice: false, schaffner: 'warn', voteS: 45, blackouts: false });
     const b = peer(hub, 'b', false);
     hub.flush();
-    expect(b.s.opts.voice).toBe(false);
-    a.s.setOpts({ voice: true });
+    expect(b.s.opts).toEqual({ voice: false, schaffner: 'warn', voteS: 45, blackouts: false });
+    a.s.setOpts({ ...a.s.opts, voice: true });
     hub.flush();
     expect(b.s.opts.voice).toBe(true);
     // Only the host decides.
-    b.s.setOpts({ voice: false });
+    b.s.setOpts({ ...b.s.opts, voice: false });
     hub.flush();
     expect(a.s.opts.voice).toBe(true);
+  });
+
+  it('settings from older peers or saves fall back to the defaults', () => {
+    expect(parseOpts({ voice: false })).toEqual({ voice: false, schaffner: 'fine', voteS: 20, blackouts: true });
+    expect(parseOpts({ schaffner: 'laut', voteS: 7, blackouts: 'nein' })).toEqual({ voice: true, schaffner: 'fine', voteS: 20, blackouts: true });
   });
 });
 

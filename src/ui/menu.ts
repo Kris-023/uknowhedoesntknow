@@ -1,14 +1,16 @@
 import type { PersonState } from '../characters/person';
 import { COLORS, NET } from '../config';
-import { parseName, NAME_MAX } from '../net/protocol';
+import { parseName, NAME_MAX, type RoomOpts } from '../net/protocol';
 import { formatRoomCode, newRoomCode, normalizeRoomCode } from '../net/roomCode';
 import { el } from './dom';
 import { CharacterEditor } from './editor';
 import { randomName } from './names';
 import { CharacterPreview } from './preview';
+import { openRoomDialog, roomSummary } from './roomDialog';
 import { SettingsView } from './settingsView';
+import { settings, updateSettings } from './store';
 
-export type LobbyChoice = { kind: 'create'; code: string; voice: boolean } | { kind: 'join'; code: string } | { kind: 'bench' };
+export type LobbyChoice = { kind: 'create'; code: string; opts: RoomOpts } | { kind: 'join'; code: string } | { kind: 'bench' };
 
 /** The one map so far. Kept as data so the menu already separates map, game and character. */
 export const MAP = { name: 'Hypertrain', line: 'Linie 7' };
@@ -153,8 +155,6 @@ export class MainMenu extends MenuShell {
   private resolve: ((c: LobbyChoice) => void) | null = null;
   private status: { text: string; actions: HTMLElement[] } | null = null;
   private orphanTimer = 0;
-  /** "Raum ohne Sprachchat": for groups already talking in TeamSpeak or Discord. */
-  private quiet = false;
 
   constructor(host: HTMLElement, profile: PersonState, onProfile: (p: PersonState) => void) {
     super(profile, onProfile, 'Spielen', el('h1', 'brand-name', 'uKnowHeDoesntKnow'));
@@ -211,13 +211,16 @@ export class MainMenu extends MenuShell {
 
     const create = el('button', invite ? 'btn ghost' : 'btn big', 'Raum erstellen');
     create.type = 'button';
-    create.addEventListener('click', () => this.pick({ kind: 'create', code: newRoomCode(), voice: !this.quiet }));
-    const quiet = el('label', 'check');
-    const cb = el('input');
-    cb.type = 'checkbox';
-    cb.checked = this.quiet;
-    cb.addEventListener('change', () => (this.quiet = cb.checked));
-    quiet.append(cb, el('span', '', 'Raum ohne Sprachchat'), el('span', 'note', 'wenn ihr schon im TeamSpeak oder Discord seid'));
+    create.addEventListener('click', () => this.pick({ kind: 'create', code: newRoomCode(), opts: settings.room }));
+    const roomSet = el('button', 'btn ghost', 'Raum-Einstellungen');
+    roomSet.type = 'button';
+    const summary = el('p', 'note room-summary', roomSummary(settings.room));
+    roomSet.addEventListener('click', () =>
+      openRoomDialog(document.body, settings.room, (o) => {
+        updateSettings({ room: o });
+        summary.textContent = roomSummary(o);
+      }),
+    );
 
     const form = el('form', 'join');
     // Placeholder shows the format; the label stays for screen readers only, the row is tight.
@@ -241,11 +244,13 @@ export class MainMenu extends MenuShell {
     const map = el('p', 'map-row');
     map.append(el('span', 'field-label', 'Map'), el('span', 'map-name', MAP.name));
 
-    // Create on the left, join by code on the right. With an invite link, joining is the highlighted one.
-    const actions = el('div', 'play-actions');
-    actions.append(create, el('span', 'or', 'oder'), form);
-    if (invite) col.append(nameRow, el('p', 'note', 'Du wurdest eingeladen, der Code ist schon eingetragen.'), actions, err, map);
-    else col.append(nameRow, actions, quiet, err, map);
+    // Create and its settings side by side, joining by code below. With an invite link, joining comes first.
+    const createRow = el('div', 'play-create');
+    createRow.append(create, roomSet);
+    const joinRow = el('div', 'play-join');
+    joinRow.append(el('span', 'or', 'oder mit Code beitreten'), form);
+    if (invite) col.append(nameRow, el('p', 'note', 'Du wurdest eingeladen, der Code ist schon eingetragen.'), joinRow, err, createRow, summary, map);
+    else col.append(nameRow, createRow, summary, joinRow, err, map);
     this.panel.append(col);
   }
 
@@ -293,8 +298,8 @@ export interface RoomInfo {
   role: 'host' | 'client';
   rttMs: number;
   players: { id: string; name: string; seat: number; me: boolean; host: boolean }[];
-  /** Voice chat for the whole room (host switch). */
-  voice: boolean;
+  /** The host's room settings. */
+  opts: RoomOpts;
 }
 
 /** Per-player voice volume, from the voice engine. */
@@ -308,8 +313,8 @@ export class PauseMenu extends MenuShell {
   private room: RoomInfo | null = null;
   onResume: () => void = () => {};
   volume: VolumeControl | null = null;
-  /** Host: switch the room's voice chat for everyone. */
-  onRoomVoice: ((on: boolean) => void) | null = null;
+  /** Host: change the room settings for everyone. */
+  onRoomOpts: ((o: RoomOpts) => void) | null = null;
   /** Minigame block in the game tab (start/end a round), built by the game. */
   gameControls: (() => HTMLElement | null) | null = null;
 
@@ -405,17 +410,17 @@ export class PauseMenu extends MenuShell {
       if (r.role === 'client' && Number.isFinite(r.rttMs)) meta.push(`Ping ${Math.round(r.rttMs)} ms`);
       sec.append(el('span', 'eyebrow', 'Raum'), codeRow, list, el('p', 'note', meta.join(' · ')));
       const vrow = el('div', 'row');
-      if (r.role === 'host' && this.onRoomVoice) {
-        const t = el('button', 'btn toggle', r.voice ? 'Sprachchat für alle: an' : 'Sprachchat für alle: aus');
+      if (r.role === 'host' && this.onRoomOpts) {
+        const t = el('button', 'btn', 'Raum-Einstellungen');
         t.type = 'button';
-        t.setAttribute('aria-pressed', String(r.voice));
         t.addEventListener('click', () => {
           // Focus inside the panel blocks the refresh (volume sliders); this button may refresh.
           t.blur();
-          this.onRoomVoice?.(!r.voice);
+          openRoomDialog(document.body, r.opts, (o) => this.onRoomOpts?.(o), 'Raum-Einstellungen (für alle)');
         });
-        vrow.append(t, el('span', 'note', 'Aus, wenn ihr schon im TeamSpeak oder Discord seid.'));
-      } else vrow.append(el('span', 'note', r.voice ? 'Sprachchat im Raum: an' : 'Sprachchat im Raum: aus (vom Host)'));
+        vrow.append(t);
+      }
+      vrow.append(el('span', 'note', roomSummary(r.opts)));
       sec.append(vrow);
     } else {
       sec.append(el('span', 'eyebrow', this.bench ? 'Benchmark' : 'Allein'), el('p', 'note', 'Ohne Netzwerk, die drei Mitreisenden sind simuliert.'));

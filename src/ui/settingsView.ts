@@ -4,7 +4,7 @@ import { el } from './dom';
 import { onSettings, settings, updateSettings, type Settings } from './store';
 
 type Section = 'voice' | 'gfx' | 'input';
-type SliderKey = 'shakeMm' | 'mouseSens' | 'voiceVolume' | 'micGain' | 'bloomStrength' | 'renderScale' | 'vadLevel' | 'ambientVolume';
+type SliderKey = 'shakeMm' | 'mouseSens' | 'voiceVolume' | 'micGain' | 'bloomStrength' | 'renderScale' | 'vadLevel' | 'ambientVolume' | 'cardScale';
 
 /** Mouth/meter level range that normal speech should reach: loud enough to open the mouth, not clipping. */
 const TARGET = { from: 0.5, to: 0.85 };
@@ -22,8 +22,33 @@ export class SettingsView {
   private raf = 0;
 
   constructor(extra: HTMLElement | null = null, sections: Section[] = ['voice', 'gfx', 'input']) {
+    // Most needed first: the benchmark entry, voice (has to work before anything else), graphics
+    // (fps), controls, and the train sound last.
+    if (extra) this.root.append(extra);
+    if (sections.includes('voice')) this.root.append(this.voice());
+    if (sections.includes('gfx')) {
+      const gfx = el('fieldset', 'group');
+      gfx.append(
+        el('legend', 'group-title', 'Grafik'),
+        this.slider('Auflösung', 'renderScale', 0.5, 1, 0.05, pct, undefined, 'Weniger rechnet schneller, vor allem auf 4K.'),
+        this.toggle('Leuchten', 'bloom', 'Glühen um Neon und Streifen (Bloom).'),
+        this.slider('Stärke', 'bloomStrength', 0, 2, 0.05, pct, () => settings.bloom),
+        this.slider('Karten', 'cardScale', 0.5, 2, 0.05, pct, undefined, 'Größe der Bilder über den Köpfen bei „Wer bin ich?“.'),
+        this.seg('Licht', [['Nacht', 'nacht'], ['Hell', 'hell']] as const, 'light', 'Nacht ist die gedachte Stimmung, Hell zeigt mehr.'),
+        this.toggle('Wackeln', 'shakeOn'),
+        this.slider('Stärke', 'shakeMm', 0, SHAKE.maxMm, 1, (v) => `${v} mm`, () => settings.shakeOn),
+      );
+      this.root.append(gfx);
+    }
+    if (sections.includes('input')) {
+      const input = el('fieldset', 'group');
+      input.append(el('legend', 'group-title', 'Steuerung'), this.slider('Maus', 'mouseSens', 0.2, 3, 0.1, (v) => `${v.toFixed(1)}×`));
+      // Only browsers that have the raw event get the switch.
+      if ('onpointerrawupdate' in window) input.append(this.toggle('Direkte Mauseingabe', 'mouseRaw', 'Liest die Maus ohne Umweg, reagiert direkter. Nur ausschalten, wenn die Maus damit spinnt.'));
+      input.append(this.toggle('Maus Y umkehren', 'invertY'));
+      this.root.append(input);
+    }
     if (sections.includes('voice')) {
-      this.root.append(this.voice());
       const sound = el('fieldset', 'group');
       sound.append(
         el('legend', 'group-title', 'Ton'),
@@ -32,31 +57,6 @@ export class SettingsView {
       );
       this.root.append(sound);
     }
-    if (sections.includes('gfx')) {
-      const gfx = el('fieldset', 'group');
-      gfx.append(
-        el('legend', 'group-title', 'Grafik'),
-        this.seg('Licht', [['Nacht', 'nacht'], ['Hell', 'hell']] as const, 'light', 'Nacht ist die gedachte Stimmung, Hell zeigt mehr.'),
-        this.toggle('Leuchten', 'bloom', 'Glühen um Neon und Streifen (Bloom).'),
-        this.slider('Stärke', 'bloomStrength', 0, 2, 0.05, pct, () => settings.bloom),
-        this.slider('Auflösung', 'renderScale', 0.5, 1, 0.05, pct, undefined, 'Weniger rechnet schneller, vor allem auf 4K.'),
-        this.toggle('Wackeln', 'shakeOn'),
-        this.slider('Stärke', 'shakeMm', 0, SHAKE.maxMm, 1, (v) => `${v} mm`, () => settings.shakeOn),
-      );
-      this.root.append(gfx);
-    }
-    if (sections.includes('input')) {
-      const input = el('fieldset', 'group');
-      input.append(
-        el('legend', 'group-title', 'Steuerung'),
-        this.slider('Maus', 'mouseSens', 0.2, 3, 0.1, (v) => `${v.toFixed(1)}×`),
-        this.toggle('Maus Y umkehren', 'invertY'),
-      );
-      // Only browsers that have the raw event get the switch.
-      if ('onpointerrawupdate' in window) input.append(this.toggle('Direkte Mauseingabe', 'mouseRaw', 'Liest die Maus ohne Umweg, reagiert direkter. Nur ausschalten, wenn die Maus damit spinnt.'));
-      this.root.append(input);
-    }
-    if (extra) this.root.append(extra);
     this.off = onSettings(() => this.sync());
     this.sync();
   }
@@ -73,6 +73,8 @@ export class SettingsView {
   private voice(): HTMLElement {
     const box = el('fieldset', 'group');
     box.append(el('legend', 'group-title', 'Stimme'));
+    // Order: get the mic going and the level right first; how you talk and the filters come after.
+    const later: HTMLElement[] = [];
 
     // Starting audio needs a click, so the voice engine is created here if the menu is the first place.
     const mic = el('button', 'btn toggle');
@@ -101,7 +103,7 @@ export class SettingsView {
     navigator.mediaDevices?.addEventListener?.('devicechange', () => void fill());
     select.addEventListener('change', () => updateSettings({ micDevice: select.value }));
     box.append(this.field('Gerät', select, undefined, () => settings.micOn));
-    box.append(
+    later.push(
       this.seg(
         'Sprechen',
         [['Offen', 'open'], ['Automatisch', 'auto'], ['Push-to-talk (V)', 'ptt']] as const,
@@ -109,9 +111,9 @@ export class SettingsView {
         'Automatisch sendet erst ab der Schwelle. M schaltet im Spiel stumm.',
       ),
     );
-    box.append(this.slider('Schwelle', 'vadLevel', 0.05, 0.95, 0.01, pct, () => settings.voiceMode === 'auto', 'Ab diesem Pegel wirst du gehört; im Test die weiße Linie.'));
-    box.append(this.slider('Mikro-Pegel', 'micGain', 0.25, 3, 0.05, pct, () => settings.micOn));
-    box.append(
+    later.push(this.slider('Schwelle', 'vadLevel', 0.05, 0.95, 0.01, pct, () => settings.voiceMode === 'auto', 'Ab diesem Pegel wirst du gehört; im Test die weiße Linie.'));
+    const gainRow = this.slider('Mikro-Pegel', 'micGain', 0.25, 3, 0.05, pct, () => settings.micOn);
+    later.push(
       this.seg(
         'Rauschfilter',
         [['KI', 'ki'], ['Browser', 'browser'], ['Aus', 'off']] as const,
@@ -119,8 +121,8 @@ export class SettingsView {
         'KI filtert auch Tippen, Lüfter und Straßenlärm heraus, Browser nur gleichmäßiges Rauschen.',
       ),
     );
-    box.append(this.toggle('Echofilter', 'echoCancel', 'Rechnet heraus, was aus deinen Lautsprechern kommt. Mit Kopfhörern egal.'));
-    box.append(this.toggle('Auto-Pegel', 'autoGain', 'Gleicht den Abstand zum Mikro aus, hebt in Pausen aber Rauschen an. Bei „Automatisch“ eher aus.'));
+    later.push(this.toggle('Echofilter', 'echoCancel', 'Rechnet heraus, was aus deinen Lautsprechern kommt. Mit Kopfhörern egal.'));
+    later.push(this.toggle('Auto-Pegel', 'autoGain', 'Gleicht den Abstand zum Mikro aus, hebt in Pausen aber Rauschen an. Bei „Automatisch“ eher aus.'));
 
     // Test meter: live level after the mic gain, the target band, and a peak marker that lingers.
     const test = el('div', 'meter-wrap');
@@ -184,14 +186,14 @@ export class SettingsView {
       meter.classList.toggle('gated', settings.voiceMode === 'auto' && !v?.gateIsOpen);
     };
     this.raf = requestAnimationFrame(tick);
-    box.append(this.field('Test', test));
+    box.append(this.field('Test', test), gainRow);
 
     const tone = el('button', 'btn ghost', 'Testton');
     tone.type = 'button';
     tone.addEventListener('click', () => getVoice(true)?.testTone());
     const vol = this.slider('Stimmen', 'voiceVolume', 0, 1.5, 0.05, pct, undefined, 'Lautstärke der anderen, mit dem Testton prüfen.');
     vol.querySelector('.slider')!.append(tone);
-    box.append(vol);
+    box.append(vol, ...later);
     return box;
   }
 

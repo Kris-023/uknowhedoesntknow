@@ -24,6 +24,8 @@ export interface WorldParams {
 const FORWARD = new THREE.Vector3(0, 0, 1);
 
 /** The whole hypertrain scene. Everything ambient is derived from the shared clock. */
+const NO_BLACKOUTS = { ...BLACKOUT, chance: -1 };
+
 export class World {
   readonly scene = new THREE.Scene();
   readonly camera = new THREE.PerspectiveCamera(CAMERA.wagonFov, 16 / 9, 0.05, 120);
@@ -34,6 +36,8 @@ export class World {
   /** Clock time of a debug-triggered blackout; -Infinity = none. */
   forcedBlackoutAt = -Infinity;
   power = 1;
+  /** Room setting: random power failures (a forced one from the debug panel still works). */
+  blackouts = true;
 
   readonly players: Players;
   readonly npcs: Npcs;
@@ -75,7 +79,7 @@ export class World {
     const kmh = this.train.kmh;
     const sf = kmh / SPEED.maxKmh;
     this.distance = trainDistance(this.train, t) * SPEED.visualScale;
-    this.power = coachPower(t, this.clock.seed, BLACKOUT, this.forcedBlackoutAt);
+    this.power = coachPower(t, this.clock.seed, this.blackouts ? BLACKOUT : NO_BLACKOUTS, this.forcedBlackoutAt);
     this.tunnel.update(t, this.distance, kmh);
     this.lighting.update(t, sf, this.power);
     this.coach.setPower(this.power);

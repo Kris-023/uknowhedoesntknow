@@ -1,3 +1,4 @@
+import { parseOpts, type RoomOpts } from '../net/protocol';
 import type { PersonState } from '../characters/person';
 import { LIGHT_PRESETS, SHAKE, VOICE, type LightPresetName } from '../config';
 import { parseName, parseState } from '../net/protocol';
@@ -50,6 +51,10 @@ export interface Settings {
   invertY: boolean;
   /** Read the mouse from pointerrawupdate instead of mousemove (device events, not one per frame). */
   mouseRaw: boolean;
+  /** Size of the "Wer bin ich?" cards over the heads, relative to WHOAMI.cardSizeM. */
+  cardScale: number;
+  /** Room settings for the next room you create (the dialog next to "Raum erstellen"). */
+  room: RoomOpts;
   /** Use the microphone in rooms (asked for when joining). */
   micOn: boolean;
   /** Input device id, '' = browser default. */
@@ -85,6 +90,8 @@ function defaults(): Settings {
     mouseSens: 1,
     invertY: false,
     mouseRaw: true,
+    cardScale: 1,
+    room: parseOpts(undefined),
     micOn: true,
     micDevice: '',
     voiceMode: 'open',
@@ -116,6 +123,8 @@ function loadSettings(): Settings {
     mouseSens: num(o.mouseSens, 0.2, 3, d.mouseSens),
     invertY: bool(o.invertY, d.invertY),
     mouseRaw: bool(o.mouseRaw, d.mouseRaw),
+    cardScale: num(o.cardScale, 0.5, 2, d.cardScale),
+    room: parseOpts(o.room),
     micOn: bool(o.micOn, d.micOn),
     micDevice: typeof o.micDevice === 'string' && o.micDevice.length < 300 ? o.micDevice : d.micDevice,
     voiceMode: o.voiceMode === 'ptt' || o.voiceMode === 'auto' ? o.voiceMode : 'open',

@@ -2,7 +2,7 @@ import { ITEMS, SLOTS, type ItemId } from '../characters/accessories';
 import { BEARDS, BUILDS, FACES, FOOTWEAR, HAIRSTYLES, TOPSTYLES, type Beard, type Look } from '../characters/look';
 import type { PersonState } from '../characters/person';
 import type { Slot } from '../characters/rig';
-import { HEAD, NET } from '../config';
+import { HEAD, NET, ROOM } from '../config';
 
 // Wire format. Only IDs and numbers travel, never geometry. Everything received is validated,
 // because a peer is just another browser that could send anything.
@@ -21,14 +21,30 @@ export interface RosterEntry {
   state: PersonState;
 }
 
+export const SCHAFFNER_MODES = ['off', 'warn', 'fine'] as const;
+export type SchaffnerMode = (typeof SCHAFFNER_MODES)[number];
+
 /** Room settings the host decides for everyone. */
 export interface RoomOpts {
   /** Voice chat in this room; off for groups already sitting in TeamSpeak/Discord. */
   voice: boolean;
+  /** The conductor: never, only a telling-off, or a telling-off plus a point off during a round. */
+  schaffner: SchaffnerMode;
+  /** Seconds a "Wer bin ich?" vote stays open. */
+  voteS: number;
+  /** Random power failures in the coach (the lights going out). */
+  blackouts: boolean;
 }
 
+/** Anything missing or broken falls back to the default, so older peers and saves still work. */
 export function parseOpts(v: unknown): RoomOpts {
-  return { voice: !(isObj(v) && v.voice === false) };
+  const o = isObj(v) ? v : {};
+  return {
+    voice: o.voice !== false,
+    schaffner: SCHAFFNER_MODES.includes(o.schaffner as SchaffnerMode) ? (o.schaffner as SchaffnerMode) : 'fine',
+    voteS: (ROOM.voteChoices as readonly number[]).includes(o.voteS as number) ? (o.voteS as number) : ROOM.voteDefault,
+    blackouts: o.blackouts !== false,
+  };
 }
 
 export interface Welcome {

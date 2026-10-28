@@ -351,3 +351,9 @@ export const LOOKS = {
   /** Stubble is a dotted decal over the jaw; at full opacity it reads as dirt. */
   stubbleOpacity: 0.85,
 } as const;
+
+/** Room settings dialog: the vote durations on offer. */
+export const ROOM = {
+  voteChoices: [10, 20, 30, 45],
+  voteDefault: WHOAMI.voteS,
+} as const;

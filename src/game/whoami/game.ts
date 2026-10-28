@@ -34,12 +34,19 @@ export class WhoamiGame implements Minigame {
   /** What I voted in the running vote (only here, never sent back), for "Deine Stimme: Ja ✓". */
   myVote: { key: string; v: Vote } | null = null;
 
+  /** Vote time from the room settings, read when a round starts; the dev override in the constructor wins. */
+  roomVoteS: () => number | undefined = () => undefined;
+
   constructor(
     private net: GameNet,
     /** Vote time override for tests (dev only). */
-    private voteS?: number,
+    private devVoteS?: number,
   ) {
     net.onMessage((t, d, f) => this.onMessage(t, d, f));
+  }
+
+  private get voteS(): number | undefined {
+    return this.devVoteS ?? this.roomVoteS();
   }
 
   get selfId(): string {

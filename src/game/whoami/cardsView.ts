@@ -2,6 +2,7 @@ import * as THREE from 'three';
 import { COLORS, WHOAMI } from '../../config';
 import { el } from '../../ui/dom';
 import { Placer, trackSize, type Size } from '../../ui/stageSize';
+import { settings } from '../../ui/store';
 import type { Players } from '../players';
 
 /** Very wide or tall pictures are clamped, so a card never turns into a strip. */
@@ -99,7 +100,7 @@ export class CardsView {
       const name = nameOf(seat);
       if (t.name.textContent !== name) t.name.textContent = name;
       // Same area for every aspect ratio, so no card looks more important than another.
-      const px = Math.max(28, (WHOAMI.cardSizeM * focal) / dist) * Math.sqrt(t.aspect);
+      const px = Math.max(28, (WHOAMI.cardSizeM * settings.cardScale * focal) / dist) * Math.sqrt(t.aspect);
       // Negated so the first frame (t.px still NaN) writes too.
       if (!(Math.abs(px - t.px) <= 0.5)) {
         t.px = px;

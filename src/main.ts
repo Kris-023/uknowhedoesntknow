@@ -8,7 +8,7 @@ import { DebugPanel } from './debug/panel';
 import { sceneTree } from './debug/sceneTree';
 import { setSightMode } from './debug/sight';
 import { randomState } from './game/players';
-import { parseName, trainDistance } from './net/protocol';
+import { parseName, trainDistance, type RoomOpts } from './net/protocol';
 import { Session } from './net/session';
 import { trysteroTransport } from './net/trystero';
 import { Pipeline } from './render/pipeline';
@@ -78,9 +78,9 @@ async function start(): Promise<void> {
   if (back) for (const ev of ['pointerdown', 'keydown'] as const) addEventListener(ev, () => voice?.resume(), { once: true });
   // Mic now for the benchmark and own rooms with voice; a joiner asks only once the welcome says
   // the room has voice chat, so quiet rooms never show the permission prompt.
-  const micWanted = choice.kind === 'bench' || (choice.kind === 'create' && choice.voice);
+  const micWanted = choice.kind === 'bench' || (choice.kind === 'create' && choice.opts.voice);
   if (voice && settings.micOn && micWanted && voice.micState !== 'on') void voice.startMic();
-  if (voice && choice.kind === 'create') voice.setRoomVoice(choice.voice);
+  if (voice && choice.kind === 'create') voice.setRoomVoice(choice.opts.voice);
   const clock = SharedClock.local();
   if (choice.kind === 'bench') {
     menu.close();
@@ -93,7 +93,7 @@ async function start(): Promise<void> {
   voice?.bind(net);
   const session = new Session(net, clock, choice.kind === 'create', profile, undefined, tabToken(code));
   markInRoom(code);
-  if (choice.kind === 'create') session.setOpts({ voice: choice.voice });
+  if (choice.kind === 'create') session.setOpts(choice.opts);
   addEventListener('pagehide', () => session.leave());
   // Pings and hello retries keep running while the tab is in the background.
   setInterval(() => session.tick(), 50);
@@ -267,6 +267,7 @@ function launch(clock: SharedClock, session: Session | null, startCam: 'wagon' |
   // Dev only: ?voteS=120 stretches votes, so slow test browsers don't run out of time.
   const devVoteS = import.meta.env.DEV ? Number(params.get('voteS')) || undefined : undefined;
   const whoami = new WhoamiGame(gameNet, devVoteS);
+  whoami.roomVoteS = () => session?.opts.voteS;
   // Someone reloaded and came back: they keep seat, points and their place in the round.
   session?.listen({ rejoin: (oldId, newId) => whoami.rejoin(oldId, newId) });
   const wiUi = new WhoamiUi(document.body, whoami, () => gameNet.members(), {
@@ -329,7 +330,9 @@ function launch(clock: SharedClock, session: Session | null, startCam: 'wagon' |
     const m = gameNet.members().find((x) => x.id === id);
     if (!m) return;
     schaffner.show(m.seat, clock.now());
-    const fined = gameNet.isHost() ? whoami.penalize(id, SCHAFFNER.penalty) : whoami.state?.phase === 'play';
+    // Room setting: 'warn' only tells off, 'fine' also costs a point (only while a round is played).
+    const fineOn = (session?.opts.schaffner ?? 'fine') === 'fine';
+    const fined = fineOn && (gameNet.isHost() ? whoami.penalize(id, SCHAFFNER.penalty) : whoami.state?.phase === 'play');
     ambience?.announce(`Durchsage für ${m.name || 'Fahrgast'}: Etwas leiser bitte!${fined ? ' Das kostet einen Punkt.' : ''}`);
     const mine = m.id === gameNet.selfId;
     wiUi.flash(
@@ -476,7 +479,7 @@ function launch(clock: SharedClock, session: Session | null, startCam: 'wagon' |
     // A card carries the name; the separate tag steps aside meanwhile.
     tags.update(world.cam === 'pov', (i) => Math.max(0, levels[i]), (i) => cards.shown.has(i));
     schaffner.update(t, dt);
-    if (gameNet.isHost() && voice) {
+    if (gameNet.isHost() && voice && session?.opts.schaffner !== 'off') {
       loudLevels.clear();
       for (const m of gameNet.members()) {
         const lv = m.id === gameNet.selfId ? voice.micLevel() : voice.hasPeer(m.id) ? voice.peerLevel(m.id) : 0;
@@ -538,9 +541,9 @@ function connect(session: Session, world: World, panel: DebugPanel, pause: Pause
       role: session.role,
       rttMs: world.clock.rttMs,
       players: [...session.roster.values()].map((e) => ({ id: e.id, name: e.state.name, seat: e.seat, me: e.id === session.selfId, host: e.id === session.hostId })),
-      voice: session.opts.voice,
+      opts: session.opts,
     });
-  pause.onRoomVoice = (on) => session.setOpts({ ...session.opts, voice: on });
+  pause.onRoomOpts = (o) => session.setOpts(o);
   const roster = (includeMe: boolean) => {
     players.applyRoster([...session.roster.values()], session.mySeat, includeMe);
     panel.setNetRole(session.role);
@@ -564,9 +567,14 @@ function connect(session: Session, world: World, panel: DebugPanel, pause: Pause
     blackout: (at) => (world.forcedBlackoutAt = at),
     opts: (o) => {
       getVoice()?.setRoomVoice(o.voice);
+      applyOpts(o);
       roomInfo();
     },
   });
+  applyOpts(session.opts);
+  function applyOpts(o: RoomOpts): void {
+    world.blackouts = o.blackouts;
+  }
   setInterval(roomInfo, 2000);
 }
 

@@ -191,7 +191,9 @@ export function rigHuman(root: THREE.Object3D, L: Look, pose: BodyPose, hat = fa
   // Pelvis runs straight from the shirt hem to the thighs: a ball here read as riding breeches.
   const hem = (f ? 0.17 : 0.18) * B.w;
   const thighs = 0.095 * (1 + (B.leg - 1) * 0.75) + 0.078 * B.leg;
-  part(T, pelvisGeo(hem, thighs), pants, 0, 0, 0, 1, 1, 0.62 * B.d);
+  // Same depth-to-width ratio as the torso hem (whose lathe is pre-squashed and then scaled by
+  // w/d); the radius here already contains B.w, so depth is scaled by d/w, not d.
+  part(T, pelvisGeo(hem, thighs), pants, 0, 0, 0, 1, 1, (0.62 * B.d) / B.w);
   if (B.belly > 0) {
     // Belly in shirt colour: sits forward and low, the big one droops over the lap past the seat edge.
     const k = B.belly;
