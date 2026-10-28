@@ -1,5 +1,6 @@
-import { ITEM_IDS, ITEMS, SLOT_LABEL, SLOTS } from '../characters/accessories';
-import { BUILDS, HAIRCOL, HAIRSTYLES, HATCOL, makeLook, PANTCOL, SHOECOL, SKIN, TOPCOL, type Build, type HairStyle, type Look } from '../characters/look';
+import { ITEM_IDS, ITEMS, OUTFITS, SLOT_LABEL, type ItemDef } from '../characters/accessories';
+import type { Slot } from '../characters/rig';
+import { ACCCOL, BEARDS, BUILDS, FACES, FOOTWEAR, HAIRCOL, HAIRSTYLES, HATCOL, makeLook, PANTCOL, SHOECOL, SKIN, TOPCOL, TOPSTYLES, type Beard, type Build, type FaceShape, type Footwear, type HairStyle, type Look, type TopStyle } from '../characters/look';
 import type { PersonState } from '../characters/person';
 import { randomState } from '../game/players';
 import { NAME_MAX } from '../net/protocol';
@@ -15,6 +16,44 @@ const HAIR_LABEL: Record<HairStyle, string> = {
 };
 
 const BUILD_LABEL: Record<Build, string> = { duenn: 'Dünn', normal: 'Normal', kraeftig: 'Kräftig', xxl: 'XXL' };
+
+const FACE_LABEL: Record<FaceShape, string> = {
+  oval: 'Oval',
+  rund: 'Rund',
+  kantig: 'Kantig',
+  herz: 'Herz',
+  gestreckt: 'Gestreckt',
+  laenglich: 'Länglich',
+  dorito: 'Dorito',
+};
+
+const BEARD_LABEL: Record<Beard, string> = {
+  none: 'Keiner',
+  stoppeln: 'Stoppeln',
+  schnurrbart: 'Schnurrbart',
+  kinnbart: 'Kinnbart',
+  vollbart: 'Vollbart',
+  zwirbel: 'Zwirbel',
+};
+
+const TOPSTYLE_LABEL: Record<TopStyle, string> = {
+  shirt: 'Shirt',
+  trainingsjacke: 'Trainingsjacke',
+  monogramm: 'Monogramm',
+  ringel: 'Ringel',
+  funktion: 'Funktionsjacke',
+};
+
+const FOOTWEAR_LABEL: Record<Footwear, string> = { sneaker: 'Sneaker', sandalen: 'Socken + Sandalen', schlappen: 'Badelatschen', hausschuhe: 'Hausschuhe' };
+
+/** Accessory categories as tabs, so the long item lists stay manageable. */
+const CATEGORIES: { label: string; slots: Slot[] }[] = [
+  { label: 'Outfits', slots: [] },
+  { label: 'Kopf', slots: ['head'] },
+  { label: 'Hände', slots: ['hand', 'arm'] },
+  { label: 'Körper', slots: ['neck', 'body'] },
+  { label: 'Boden', slots: ['floor'] },
+];
 
 const hex = (c: number) => `#${c.toString(16).padStart(6, '0')}`;
 
@@ -49,29 +88,43 @@ export class CharacterEditor {
       this.seg('Körper', [['Männlich', false], ['Weiblich', true]] as const, () => this.state.look.female, (v) => this.look({ female: v })),
       this.seg('Statur', BUILDS.map((b) => [BUILD_LABEL[b], b] as const), () => this.state.look.build, (v) => this.look({ build: v })),
       this.swatches('Haut', SKIN, () => this.state.look.skin, (c) => this.look({ skin: c })),
+      this.seg('Gesicht', FACES.map((v) => [FACE_LABEL[v], v] as const), () => this.state.look.face, (v) => this.look({ face: v })),
       this.seg('Frisur', HAIRSTYLES.map((h) => [HAIR_LABEL[h], h] as const), () => this.state.look.hair, (v) => this.look({ hair: v })),
+      // The female body has no beard geometry.
+      this.seg('Bart', BEARDS.map((v) => [BEARD_LABEL[v], v] as const), () => this.state.look.beard, (v) => this.look({ beard: v }), () => !this.state.look.female),
       this.swatches('Haarfarbe', HAIRCOL, () => this.state.look.hairCol, (c) => this.look({ hairCol: c }), () => this.state.look.hair !== 'muetze'),
-      this.swatches('Mütze', HATCOL, () => this.state.look.hat, (c) => this.look({ hat: c }), () => this.state.look.hair === 'muetze'),
+      this.swatches('Mütze/Hut', HATCOL, () => this.state.look.hat, (c) => this.look({ hat: c }), () => this.state.look.hair === 'muetze' || this.tinted('hat')),
       this.swatches('Oberteil', TOPCOL, () => this.state.look.top, (c) => this.look({ top: c })),
+      this.seg('Schnitt', TOPSTYLES.map((v) => [TOPSTYLE_LABEL[v], v] as const), () => this.state.look.topStyle, (v) => this.look({ topStyle: v })),
       this.swatches('Hose', PANTCOL, () => this.state.look.pants, (c) => this.look({ pants: c })),
       this.swatches('Schuhe', SHOECOL, () => this.state.look.shoes, (c) => this.look({ shoes: c })),
+      this.seg('Schuhwerk', FOOTWEAR.map((v) => [FOOTWEAR_LABEL[v], v] as const), () => this.state.look.footwear, (v) => this.look({ footwear: v })),
       this.toggles(),
     );
     this.root.append(look);
 
     const acc = el('fieldset', 'group');
     acc.append(el('legend', 'group-title', 'Accessoires'));
-    for (const slot of SLOTS) {
-      const opts = [['Nichts', ''] as const, ...ITEM_IDS.filter((id) => ITEMS[id].slot === slot).map((id) => [ITEMS[id].label, id] as const)];
-      acc.append(
-        this.seg(SLOT_LABEL[slot], opts, () => this.state.items[slot] ?? '', (id) => {
-          const items = { ...this.state.items };
-          if (id) items[slot] = id;
-          else delete items[slot];
-          this.change({ items });
-        }),
+    let cat = 0;
+    const tabs = this.seg('Kategorie', CATEGORIES.map((c, i) => [c.label, i] as const), () => cat, (i) => {
+      cat = i;
+      this.sync();
+    });
+    acc.append(tabs);
+    const outfits = el('div', 'row editor-outfits');
+    for (const o of OUTFITS) {
+      outfits.append(
+        this.button(o.label, () => this.change({ look: { ...this.state.look, topStyle: o.topStyle, footwear: o.footwear }, items: { ...o.items } })),
       );
     }
+    const outfitBox = el('div');
+    outfitBox.append(outfits, el('span', 'field-hint', 'Setzt Schnitt, Schuhwerk und Accessoires. Deine Farben bleiben.'));
+    acc.append(this.field('Outfit', outfitBox, () => cat === 0));
+    CATEGORIES.forEach((c, i) => {
+      for (const slot of c.slots) acc.append(this.slotRow(slot, () => cat === i));
+    });
+    // Bags, scarf, crate, dog collar and the like take this colour.
+    acc.append(this.swatches('Accessoire-Farbe', ACCCOL, () => this.state.look.acc, (c) => this.look({ acc: c }), () => this.tinted('acc') || cat === 0));
     this.root.append(acc);
 
     const dice = el('div', 'row');
@@ -96,6 +149,27 @@ export class CharacterEditor {
 
   get value(): PersonState {
     return structuredClone(this.state);
+  }
+
+  private slotRow(slot: Slot, visible: () => boolean): HTMLElement {
+    const opts = [['Nichts', ''] as const, ...ITEM_IDS.filter((id) => ITEMS[id].slot === slot).map((id) => [ITEMS[id].label, id] as const)];
+    return this.seg(
+      SLOT_LABEL[slot],
+      opts,
+      () => this.state.items[slot] ?? '',
+      (id) => {
+        const items = { ...this.state.items };
+        if (id) items[slot] = id;
+        else delete items[slot];
+        this.change({ items });
+      },
+      visible,
+    );
+  }
+
+  /** Is an equipped item tinted with this colour? Then its colour row shows. */
+  private tinted(t: 'hat' | 'acc'): boolean {
+    return Object.values(this.state.items).some((id) => id && (ITEMS[id] as ItemDef).tint === t);
   }
 
   private look(patch: Partial<Look>): void {
@@ -123,7 +197,7 @@ export class CharacterEditor {
     return row;
   }
 
-  private seg<T>(label: string, opts: readonly (readonly [string, T])[], get: () => T, set: (v: T) => void): HTMLElement {
+  private seg<T>(label: string, opts: readonly (readonly [string, T])[], get: () => T, set: (v: T) => void, visible?: () => boolean): HTMLElement {
     const seg = el('div', 'seg');
     seg.setAttribute('role', 'group');
     for (const [text, v] of opts) {
@@ -133,7 +207,7 @@ export class CharacterEditor {
       this.syncs.push(() => b.setAttribute('aria-pressed', String(get() === v)));
       seg.append(b);
     }
-    return this.field(label, seg);
+    return this.field(label, seg, visible);
   }
 
   private swatches(label: string, colors: readonly number[], get: () => number, set: (c: number) => void, visible?: () => boolean): HTMLElement {
@@ -153,7 +227,7 @@ export class CharacterEditor {
 
   private toggles(): HTMLElement {
     const box = el('div', 'row');
-    const flag = (text: string, key: 'glasses' | 'beard' | 'short', visible?: () => boolean) => {
+    const flag = (text: string, key: 'glasses' | 'short', visible?: () => boolean) => {
       const b = el('button', 'btn toggle', text);
       b.type = 'button';
       b.addEventListener('click', () => this.look({ [key]: !this.state.look[key] }));
@@ -164,8 +238,6 @@ export class CharacterEditor {
       box.append(b);
     };
     flag('Brille', 'glasses');
-    // The female body has no beard geometry.
-    flag('Bart', 'beard', () => !this.state.look.female);
     flag('Kurze Ärmel', 'short');
     return this.field('Extras', box);
   }

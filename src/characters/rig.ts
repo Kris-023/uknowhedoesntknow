@@ -1,8 +1,23 @@
 import type * as THREE from 'three';
 
 /** Anchor slots where accessories attach. Hand items go to the hand on `Person.handSide`. */
-export type Slot = 'head' | 'hand' | 'arm' | 'hip';
-export type AnchorName = 'head' | 'handL' | 'handR' | 'arm' | 'hip';
+export type Slot = 'head' | 'hand' | 'arm' | 'hip' | 'neck' | 'body' | 'floor';
+export type AnchorName = 'head' | 'handL' | 'handR' | 'arm' | 'hip' | 'neck' | 'body' | 'floor';
+
+/** Torso size at one height (torso space): half-width, front and back surface. */
+export interface Extent {
+  y: number;
+  x: number;
+  zf: number;
+  zb: number;
+}
+
+/** Body measurements for items that wrap the body (straps, chains, belts), per build and sex. */
+export interface Fit {
+  neck: Extent;
+  chest: Extent;
+  belly: Extent;
+}
 
 export type ArmSide = 'L' | 'R';
 export type ArmPoseName = 'hang' | 'lap' | 'hold' | 'phone' | 'paper' | 'beer' | 'drink';
@@ -57,4 +72,9 @@ export interface Rig {
   povHide: THREE.Object3D;
   /** Eye position in head space, for the POV camera. */
   eye: THREE.Vector3;
+  fit: Fit;
+  /** Face-shape warp of head space; hats go through it so they fit like the hair does. */
+  warp?: (p: THREE.Vector3) => THREE.Vector3;
+  /** Where hats are modelled to sit on the base (unwarped) head, in head space. */
+  hatBase?: THREE.Vector3;
 }

@@ -1,5 +1,5 @@
 import { joinRoom, selfId, type MessageAction } from 'trystero';
-import { NET } from '../config';
+import { NET, VOICE } from '../config';
 import type { Handler, Transport } from './transport';
 
 /**
@@ -39,7 +39,10 @@ export function trysteroTransport(code: string, onError: (msg: string) => void):
       leaves.push(h);
     },
     addStream(stream, to) {
-      void room.addStream(stream, to ? { target: to } : undefined);
+      const added = room.addStream(stream, to ? { target: to } : undefined);
+      // Chrome fills in the encodings only once negotiation is under way, so tune once added and again a bit later.
+      void Promise.allSettled(added).then(() => tuneVoice(room.getPeers(), stream, to));
+      setTimeout(() => tuneVoice(room.getPeers(), stream, to), 3000);
     },
     removeStream(stream) {
       room.removeStream(stream);
@@ -51,4 +54,21 @@ export function trysteroTransport(code: string, onError: (msg: string) => void):
       void room.leave();
     },
   };
+}
+
+/** More bitrate and network priority for our voice than the browser default. */
+function tuneVoice(peers: Record<string, RTCPeerConnection>, stream: MediaStream, to?: string): void {
+  const tracks = new Set<MediaStreamTrack>(stream.getAudioTracks());
+  for (const [id, pc] of Object.entries(peers)) {
+    if (to && id !== to) continue;
+    for (const sender of pc.getSenders()) {
+      if (!sender.track || !tracks.has(sender.track)) continue;
+      const p = sender.getParameters();
+      const e = p.encodings?.[0];
+      if (!e || e.maxBitrate === VOICE.bitrate) continue;
+      e.maxBitrate = VOICE.bitrate;
+      e.networkPriority = 'high';
+      void sender.setParameters(p).catch(() => {});
+    }
+  }
 }

@@ -1,7 +1,9 @@
 import * as THREE from 'three';
 import { HEAD, MOUTH } from '../config';
-import { ITEMS, SLOTS, type ItemId } from './accessories';
+import { ITEMS, SLOTS, type ItemDef, type ItemId } from './accessories';
 import { rigHuman, type BodyPose } from './human';
+import { warpMeshes } from './face';
+import { mergeStatic } from './merge';
 import type { Look } from './look';
 import { ARMPOSE, type ArmPoseName, type ArmSide, type Rig, type Slot } from './rig';
 
@@ -11,6 +13,20 @@ export interface PersonState {
   name: string;
   look: Look;
   items: Partial<Record<Slot, ItemId>>;
+}
+
+/**
+ * Free GPU buffers that belong to this one figure (merged and face-warped geometry, per-figure
+ * materials). Shared unit primitives and cached materials/textures carry no `owned` flag and stay.
+ */
+function disposeOwned(root: THREE.Object3D): void {
+  root.traverse((o) => {
+    const m = o as THREE.Mesh;
+    if (!m.isMesh) return;
+    if (m.geometry.userData.owned) m.geometry.dispose();
+    const mats = Array.isArray(m.material) ? m.material : [m.material];
+    for (const mat of mats) if (mat.userData.owned) mat.dispose();
+  });
 }
 
 /**
@@ -34,6 +50,8 @@ export class Person {
   /** Smoothed mouth opening 0..1. */
   private open = 0;
   name = '';
+  /** The body was built with hair styled for a hat. */
+  private hatHair = false;
 
   constructor(
     readonly root: THREE.Group,
@@ -45,8 +63,15 @@ export class Person {
 
   /** Rebuild the body (after a look change) and re-attach items to the new anchors. */
   rebuild(): void {
-    for (const c of [...this.root.children]) if (!c.userData.keep) this.root.remove(c);
-    this.rig = rigHuman(this.root, this.look, this.pose);
+    for (const c of [...this.root.children]) {
+      if (c.userData.keep) continue;
+      this.root.remove(c);
+      disposeOwned(c);
+    }
+    const head = this.items.head;
+    this.hatHair = !!head && !!(ITEMS[head] as ItemDef).underHat;
+    this.rig = rigHuman(this.root, this.look, this.pose, this.hatHair);
+    mergeStatic(this.root);
     this.itemObjs = {};
     for (const s of SLOTS) {
       const id = this.items[s];
@@ -61,20 +86,53 @@ export class Person {
   }
 
   equip(id: ItemId): void {
-    const def = ITEMS[id];
-    this.unequip(def.slot);
+    const def = ITEMS[id] as ItemDef | undefined;
+    // Callers that roll from an empty slot list (no hip items any more) hand in undefined.
+    if (!def) return;
+    // Hats need the hair styled to fit under them (and back when the hat comes off): rebuild then.
+    if (def.slot === 'head' && !!def.underHat !== this.hatHair) {
+      this.removeObj('head');
+      this.items.head = id;
+      this.rebuild();
+      return;
+    }
+    this.removeObj(def.slot);
     const anchor = this.anchorFor(def.slot);
     if (!anchor) return;
-    const obj = def.build();
+    const obj = def.build({ look: this.look, fit: this.rig.fit });
+    mergeStatic(obj);
     anchor.add(obj);
+    if (def.underHat) this.fitHat(obj);
     this.items[def.slot] = id;
     this.itemObjs[def.slot] = obj;
   }
 
   unequip(slot: Slot): void {
-    this.itemObjs[slot]?.removeFromParent();
-    delete this.itemObjs[slot];
+    this.removeObj(slot);
     delete this.items[slot];
+    if (slot === 'head' && this.hatHair) this.rebuild();
+  }
+
+  /**
+   * Bend a hat with the face-shape warp, exactly like the hair under it. Hats are modelled on the
+   * base head, so the item is first moved to the base anchor; the skull is closed meanwhile.
+   */
+  private fitHat(obj: THREE.Object3D): void {
+    const { warp, hatBase, head, mouth } = this.rig;
+    if (!warp || !hatBase) return;
+    const parent = obj.parent!;
+    obj.position.copy(hatBase).sub(parent.position);
+    const open = mouth.rotation.x;
+    mouth.rotation.x = 0;
+    warpMeshes(obj, warp, head);
+    mouth.rotation.x = open;
+  }
+
+  private removeObj(slot: Slot): void {
+    const obj = this.itemObjs[slot];
+    if (obj) disposeOwned(obj);
+    obj?.removeFromParent();
+    delete this.itemObjs[slot];
   }
 
   toggle(id: ItemId): void {

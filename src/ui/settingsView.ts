@@ -52,6 +52,8 @@ export class SettingsView {
         this.slider('Maus', 'mouseSens', 0.2, 3, 0.1, (v) => `${v.toFixed(1)}×`),
         this.toggle('Maus Y umkehren', 'invertY'),
       );
+      // Only browsers that have the raw event get the switch.
+      if ('onpointerrawupdate' in window) input.append(this.toggle('Direkte Mauseingabe', 'mouseRaw', 'Liest die Maus ohne Umweg, reagiert direkter. Nur ausschalten, wenn die Maus damit spinnt.'));
       this.root.append(input);
     }
     if (extra) this.root.append(extra);
@@ -109,6 +111,16 @@ export class SettingsView {
     );
     box.append(this.slider('Schwelle', 'vadLevel', 0.05, 0.95, 0.01, pct, () => settings.voiceMode === 'auto', 'Ab diesem Pegel wirst du gehört; im Test die weiße Linie.'));
     box.append(this.slider('Mikro-Pegel', 'micGain', 0.25, 3, 0.05, pct, () => settings.micOn));
+    box.append(
+      this.seg(
+        'Rauschfilter',
+        [['KI', 'ki'], ['Browser', 'browser'], ['Aus', 'off']] as const,
+        'micFilter',
+        'KI filtert auch Tippen, Lüfter und Straßenlärm heraus, Browser nur gleichmäßiges Rauschen.',
+      ),
+    );
+    box.append(this.toggle('Echofilter', 'echoCancel', 'Rechnet heraus, was aus deinen Lautsprechern kommt. Mit Kopfhörern egal.'));
+    box.append(this.toggle('Auto-Pegel', 'autoGain', 'Gleicht den Abstand zum Mikro aus, hebt in Pausen aber Rauschen an. Bei „Automatisch“ eher aus.'));
 
     // Test meter: live level after the mic gain, the target band, and a peak marker that lingers.
     const test = el('div', 'meter-wrap');
@@ -158,6 +170,7 @@ export class SettingsView {
         status.textContent = st ? STATUS[st] : 'Noch nicht getestet.';
         // The browser's own reason helps when something odd blocks the mic (device busy, policy, …).
         if (v?.micError && st !== 'on') status.textContent += ` (${v.micError})`;
+        if (st === 'on' && settings.micFilter === 'ki' && v?.micFilter !== 'ki') status.textContent += ' KI-Filter läuft hier nicht, der Browser-Filter springt ein.';
         start.hidden = st === 'on';
         // Device names only become visible after the mic permission.
         if (st === 'on') void fill();
@@ -210,7 +223,7 @@ export class SettingsView {
     return this.field(label, seg, hint);
   }
 
-  private toggle(label: string, key: 'bloom' | 'shakeOn' | 'invertY' | 'announcements', hint?: string): HTMLElement {
+  private toggle(label: string, key: 'bloom' | 'shakeOn' | 'invertY' | 'announcements' | 'echoCancel' | 'autoGain' | 'mouseRaw', hint?: string): HTMLElement {
     const b = el('button', 'btn toggle');
     b.type = 'button';
     b.addEventListener('click', () => updateSettings({ [key]: !settings[key] }));

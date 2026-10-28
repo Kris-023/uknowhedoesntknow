@@ -5,9 +5,28 @@ import { RenderPass } from 'three/examples/jsm/postprocessing/RenderPass.js';
 import { UnrealBloomPass } from 'three/examples/jsm/postprocessing/UnrealBloomPass.js';
 import { BLOOM, LIGHTS, RENDER } from '../config';
 
+/** UnrealBloomPass on a reduced grid: the composer hands it the full size, it works at a fraction. */
+class ScaledBloomPass extends UnrealBloomPass {
+  constructor(
+    private scale: number,
+    strength: number,
+    radius: number,
+    threshold: number,
+  ) {
+    super(new THREE.Vector2(256, 256), strength, radius, threshold);
+  }
+
+  override setSize(width: number, height: number): void {
+    super.setSize(Math.max(2, Math.round(width * this.scale)), Math.max(2, Math.round(height * this.scale)));
+  }
+}
+
 /**
- * Renderer plus optional bloom. With bloom on, the scene renders into an HDR target, bloom adds
- * glow to everything above the threshold, and OutputPass applies tone mapping + sRGB at the end.
+ * Renderer plus optional bloom. The scene always renders into an HDR target with MSAA; bloom
+ * (if on) adds glow above the threshold, and OutputPass applies tone mapping + sRGB at the end.
+ * Bloom off only skips the bloom pass, so both paths are antialiased and tone-mapped the same way.
+ * (The canvas used to carry the MSAA, but with post-processing only fullscreen quads reach it:
+ * the scene was not antialiased at all with bloom, and bloom off fell back to the costly MSAA canvas.)
  */
 export class Pipeline {
   readonly renderer: THREE.WebGLRenderer;
@@ -21,10 +40,10 @@ export class Pipeline {
 
   constructor(
     host: HTMLElement,
-    private scene: THREE.Scene,
-    private camera: THREE.Camera,
+    scene: THREE.Scene,
+    camera: THREE.Camera,
   ) {
-    const r = new THREE.WebGLRenderer({ antialias: true, powerPreference: 'high-performance' });
+    const r = new THREE.WebGLRenderer({ antialias: false, powerPreference: 'high-performance' });
     r.outputColorSpace = THREE.SRGBColorSpace;
     r.toneMapping = THREE.ACESFilmicToneMapping;
     r.setPixelRatio(Math.min(devicePixelRatio || 1, RENDER.maxPixelRatio));
@@ -33,9 +52,11 @@ export class Pipeline {
     host.prepend(r.domElement);
     this.renderer = r;
 
-    this.composer = new EffectComposer(r);
+    const samples = Math.min(RENDER.msaaSamples, r.capabilities.maxSamples);
+    const target = new THREE.WebGLRenderTarget(1, 1, { type: THREE.HalfFloatType, samples });
+    this.composer = new EffectComposer(r, target);
     this.composer.addPass(new RenderPass(scene, camera));
-    this.bloom = new UnrealBloomPass(new THREE.Vector2(256, 256), BLOOM.strength, BLOOM.radius, LIGHTS.bloomThreshold);
+    this.bloom = new ScaledBloomPass(BLOOM.resolutionScale, BLOOM.strength, BLOOM.radius, LIGHTS.bloomThreshold);
     this.composer.addPass(this.bloom);
     this.composer.addPass(new OutputPass());
   }
@@ -70,9 +91,9 @@ export class Pipeline {
     this.renderer.info.reset();
     // Follow the active light preset.
     this.renderer.toneMappingExposure = LIGHTS.exposure;
+    this.bloom.enabled = this.bloomOn;
     this.bloom.threshold = LIGHTS.bloomThreshold;
     this.bloom.strength = BLOOM.strength * this.bloomStrength;
-    if (this.bloomOn) this.composer.render();
-    else this.renderer.render(this.scene, this.camera);
+    this.composer.render();
   }
 }

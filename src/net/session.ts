@@ -27,6 +27,8 @@ export interface SessionEvents {
   blackout(at: number): void;
   /** Room settings changed (host decision). */
   opts(o: RoomOpts): void;
+  /** Host only: a player who had left came back under a new id (reload, reconnect). */
+  rejoin(oldId: string, newId: string): void;
   /** Host role changed (migration) or the room was full. */
   status(s: 'host' | 'full'): void;
 }
@@ -60,6 +62,11 @@ export class Session {
     host: boolean,
     private myState: PersonState,
     private now: () => number = localMs,
+    /**
+     * Per-tab secret that survives a reload (sessionStorage): lets the host recognise someone who
+     * comes back under a new peer id. Only the host ever sees it.
+     */
+    private token: string = Math.random().toString(36).slice(2),
   ) {
     this.role = host ? 'host' : 'client';
     this.hostId = host ? net.selfId : null;
@@ -150,7 +157,7 @@ export class Session {
     if (!this.welcomed) {
       if (this.peers.size && now - this.lastHello > NET.helloRetryMs) {
         this.lastHello = now;
-        this.net.send('hello', this.myState);
+        this.net.send('hello', this.helloMsg());
       }
       return;
     }
@@ -215,14 +222,25 @@ export class Session {
     this.peers.add(id);
     if (this.role === 'client' && !this.welcomed) {
       this.lastHello = this.now();
-      this.net.send('hello', this.myState, id);
+      this.net.send('hello', this.helloMsg(), id);
     }
   }
+
+  private helloMsg(): { s: PersonState; k: string } {
+    return { s: this.myState, k: this.token };
+  }
+
+  /** Host: peer id -> rejoin token, and the seats of those who left recently. */
+  private tokens = new Map<string, string>();
+  private gone = new Map<string, { id: string; seat: number; at: number }>();
 
   private onLeave(id: string): void {
     this.peers.delete(id);
     this.poses.delete(id);
     const wasHost = id === this.hostId;
+    const left = this.roster.get(id);
+    const token = this.tokens.get(id);
+    if (this.role === 'host' && left && token) this.gone.set(token, { id, seat: left.seat, at: this.now() });
     if (!this.roster.delete(id)) return;
     if (this.role === 'host') {
       this.broadcastRoster();
@@ -260,16 +278,30 @@ export class Session {
 
   private onHello(d: unknown, from: string): void {
     if (this.role !== 'host') return;
-    const state = parseState(d);
+    const o = (typeof d === 'object' && d !== null ? d : {}) as { s?: unknown; k?: unknown };
+    const state = parseState(o.s);
     if (!state) return;
+    const token = typeof o.k === 'string' && o.k.length <= 64 ? o.k : null;
     if (!this.roster.has(from)) {
       const used = new Set([...this.roster.values()].map((e) => e.seat));
+      // Back within the grace time: same seat, and the game learns who it was.
+      const back = token ? this.gone.get(token) : undefined;
+      if (back && token && this.now() - back.at < NET.rejoinMs && !used.has(back.seat)) {
+        this.gone.delete(token);
+        this.tokens.set(from, token);
+        this.roster.set(from, { id: from, seat: back.seat, state });
+        this.net.send('welcome', this.welcomeMsg(), from);
+        this.broadcastRoster();
+        this.ev.rejoin?.(back.id, from);
+        return;
+      }
       const seat = NET.seatOrder.find((s) => !used.has(s));
       if (seat === undefined) {
         this.net.send('full', null, from);
         return;
       }
       this.roster.set(from, { id: from, seat, state });
+      if (token) this.tokens.set(from, token);
     }
     this.net.send('welcome', this.welcomeMsg(), from);
     this.broadcastRoster();

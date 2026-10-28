@@ -1,74 +1,92 @@
 # uKnowHeDoesntKnow
 
-Browser-Partyspiel für 2 bis 4 Freunde: Ihr sitzt euch in einem viel zu schnellen U-Bahn-Wagen
-gegenüber, draußen rast der Tunnel vorbei, drinnen flackert das Neon, und die Mitreisenden vom Kotti
-starren aufs Handy. Der Wagen heißt „Hypertrain“ und ist die erste Map. Darin laufen Minigames wie „Wer bin ich?“. Nur PC, nur Browser, nur private Lobbys.
+Browser-Partyspiel für 2 bis 4 Freunde: Ihr sitzt euch in einem viel zu schnellen U-Bahn-Wagen gegenüber,
+draußen rast der Tunnel vorbei, drinnen flackert das Neon, und die Mitreisenden starren aufs Handy.
+Der Wagen heißt „Hypertrain“ und ist die erste Map, das erste Minigame ist „Wer bin ich?“.
+Nur PC, nur Browser, nur private Räume, kein Server.
 
-**Stand: M6 („Wer bin ich?“).** Bis zu vier Leute treffen sich per Raumcode im selben Wagen, mit eigenem Namen und
-eigener Figur, Kopfdrehung live und Sprachchat: Die Stimme kommt vom Kopf der Person, und der Mund klappt beim Sprechen auf.
-Zehn Mitreisende beschäftigen sich mit Handy, Zeitung und Bier oder schlafen, Pfandflaschen rollen, Gegenzüge knallen vorbei,
-vor jedem Halt gongt es. Das erste Minigame „Wer bin ich?“ ist spielbar (Roadmap in `teamlead/SUPERDOC.md`).
+**Stand: M7 (alle Meilensteine aus dem Auftrag umgesetzt).** Details und offene Fragen: `teamlead/SUPERDOC.md`.
 
 ## Spielen
 
-Name, Figur und Einstellungen merkt sich der Browser.
-
-1. Eine Person klickt **Raum erstellen** und schickt den Link an die anderen (im Spiel: Esc → **Link kopieren**).
+1. Name eintragen (oder leer lassen für einen Zufallsnamen), **Raum erstellen**, Link an die anderen schicken
+   (im Spiel: <kbd>Esc</kbd> → **Link kopieren**).
 2. Wer den Link öffnet, hat den Code schon im Feld und klickt **Beitreten**. Das Verbinden dauert ein paar Sekunden.
-3. Wer den Raum erstellt hat, ist Host. Geht der Host, übernimmt automatisch, wer am längsten dabei ist.
+3. Figur und Accessoires im Tab **Charakter**, Ton und Grafik in **Einstellungen**. Der Browser merkt sich alles.
 
-Seid ihr schon im TeamSpeak oder Discord, setzt beim Erstellen den Haken „Raum ohne Sprachchat“; der Host kann den
-Sprachchat auch später im Esc-Menü für alle abschalten.
+Seid ihr schon im TeamSpeak oder Discord: beim Erstellen „Raum ohne Sprachchat“ anhaken. Der Host kann den Sprachchat
+auch später im Esc-Menü für alle abschalten.
 
-**Wer bin ich?** Der Host startet die Runde mit <kbd>G</kbd> (oben wird angezeigt, wenn es losgehen kann). Jeder sucht ein Bild für den Nachbarn (Link, Strg+V, reinziehen
-oder Datei). Die Karte schwebt über dem Kopf, nur man selbst sieht die eigene nicht. Reihum laut eine Ja/Nein-Frage stellen
-(<kbd>F</kbd>), die anderen stimmen geheim ab (<kbd>1</kbd> Ja, <kbd>2</kbd> Nein, <kbd>3</kbd> Weiß nicht), bei Ja darf man
-weiterfragen. <kbd>R</kbd> heißt „Ich rate“. Wer zu laut wird, bekommt Besuch vom Schaffner und einen Punkt abgezogen.
-Bilder bleiben im Speicher und gehen nur an die Mitspieler.
+### Wer bin ich?
 
-Ohne Namen bekommst du einen Zufallsnamen. Unter **Einstellungen → Benchmark starten** fährst du allein mit drei
-simulierten Mitreisenden und siehst FPS, während du Grafik und Maus live anpasst. Dort startet Esc → „Testrunde mit Bots“
-eine Runde „Wer bin ich?“ gegen Bots. Mehrere Tabs auf einem Rechner
-funktionieren auch als Mitspieler.
+- Oben steht, ob es losgehen kann. Der Host startet mit <kbd>G</kbd>.
+- Jeder sucht ein Bild für den Nachbarn: Link, <kbd>Strg</kbd>+<kbd>V</kbd>, reinziehen oder Datei. Die Karte schwebt über
+  dessen Kopf; die eigene sieht man nicht.
+- Wer dran ist, stellt laut eine Ja/Nein-Frage und drückt <kbd>F</kbd>. Die anderen stimmen geheim ab:
+  <kbd>1</kbd> Ja, <kbd>2</kbd> Nein, <kbd>3</kbd> Weiß nicht. Bei Ja darf man weiterfragen, sonst ist der Nächste dran.
+- „Ich bin …“ sagen und <kbd>R</kbd> drücken: die anderen stimmen ab, ob es stimmt. <kbd>P</kbd> gibt den Zug weiter.
+- Wer zuerst errät, bekommt 3 Punkte, dann 2, dann 1. Wer zu lange zu laut ist, bekommt Besuch vom Schaffner: −1 Punkt.
+- Unten links stehen Phase, Reihenfolge, Punkte und wer schon abgestimmt hat.
 
-Im Spiel: ins Bild klicken und mit der Maus umsehen, rechte Maustaste zoomt, <kbd>M</kbd> schaltet stumm,
-<kbd>V</kbd> ist Push-to-talk; in den Einstellungen wählbar: Offen, Automatisch (sendet erst ab einer Schwelle) oder Push-to-talk, <kbd>Esc</kbd> öffnet das Menü mit Raum, Charakter
-und Einstellungen. Kopfhörer sind am besten.
+### Steuerung
 
-## Starten
+| Taste | Was |
+|---|---|
+| ins Bild klicken, Maus | umsehen |
+| rechte Maustaste halten | heranzoomen (Karten lesen) |
+| <kbd>M</kbd> | Mikro stumm |
+| <kbd>V</kbd> | Push-to-talk (wenn eingestellt; sonst Offen oder Automatisch ab Schwelle) |
+| <kbd>Esc</kbd> | Menü: Raum, Charakter, Einstellungen, Raum verlassen |
+
+Kopfhörer sind am besten. Chrome rechnet Spielton nicht aus dem Mikro heraus, Firefox schon.
+
+### Alleine ausprobieren
+
+**Einstellungen → Benchmark starten**: allein im Wagen mit simulierten Mitreisenden, FPS und Grafik live einstellen.
+<kbd>G</kbd> startet dort eine Testrunde „Wer bin ich?“ gegen Bots. Mehrere Tabs auf einem Rechner gehen auch als Mitspieler.
+
+### Wenn etwas hakt
+
+- **Neu geladen oder kurz raus:** Im selben Tab geht es automatisch zurück in den Raum, auf denselben Platz, mit Punkten
+  und Karten (innerhalb von 5 Minuten).
+- **Host weg:** Wer am längsten dabei ist, übernimmt, auch mitten in einer Runde.
+- **Mikro geht nicht:** Einstellungen → Stimme → Test zeigt den Grund des Browsers.
+- **Andere hören Tippen, Lüfter oder Rauschen:** Einstellungen → Stimme → Rauschfilter auf **KI** (Standard). Pumpt das
+  Rauschen in Sprechpausen hoch, Auto-Pegel ausschalten.
+- **Ruckelt:** Einstellungen → Grafik → Auflösung runter oder Leuchten aus; im Benchmark sieht man den Effekt sofort.
+
+## Entwickeln
 
 ```bash
 npm install
 npm run dev        # http://localhost:5190
-npm run dev:lan    # https://<LAN-IP>:5190, für Tests mit anderen Rechnern (Zertifikatswarnung einmal bestätigen)
-npm test           # Unit-Tests (Determinismus von Uhr, Flackern, Wackeln)
+npm run dev:lan    # https://<LAN-IP>:5190 für Tests mit anderen Rechnern (Zertifikatswarnung einmal bestätigen)
+npm test           # Unit-Tests: Uhr, Netz-Logik, Regeln, Geheimhaltung, Schaffner
 npm run build      # Bundle nach dist/
 ```
 
-Nur im Dev-Server oder mit `?debug`: Taste <kbd>`</kbd> (bzw. <kbd>^</kbd> auf deutscher Tastatur) blendet das Debug-Panel ein und aus.
-Dort gibt es Kamera (Wagen oder POV: einmal ins Bild klicken, dann dreht die Maus den Kopf, Esc lässt los),
-„Ich bin“ (Spieler 1–4), Kopf-Regler und „Seitenblick“, Accessoires und Würfeln, „Meine Sicht“ (Wireframe nach Rolle),
-Tempo, Wackeln, Draw-Calls, Dreiecke, FPS und den Szenengraphen. Im Raum bestimmt nur der Host Tempo und Ausfall,
-„Ich bin“ vergibt der Host. `?seed=1234` in der URL überspringt die Lobby und fixiert den Seed (Solo).
+Nur im Dev-Server oder mit `?debug`: <kbd>^</kbd> öffnet das Debug-Panel (Kamera, Sitzwahl, Kopf-Regler, Accessoires,
+„Meine Sicht“, Draw-Calls, Szenengraph). `?seed=1234` überspringt das Menü (deterministische Solo-Szene),
+`?voteS=300` verlängert Abstimmungen für langsame Testbrowser.
 
 ## Deploy
 
-Jeder Push auf `main` baut und veröffentlicht über GitHub Actions nach GitHub Pages
-(`.github/workflows/pages.yml`). Einmalig im Repo: *Settings → Pages → Source: GitHub Actions*.
+Jeder Push auf `main` baut und veröffentlicht über GitHub Actions nach GitHub Pages (`.github/workflows/pages.yml`).
+Einmalig im Repo: *Settings → Pages → Source: GitHub Actions*.
 
-## Zugang und Grenzen
+## Zugang, Datenschutz und Grenzen
 
-GitHub Pages ist öffentlich. Jeder mit dem Link kann die Seite laden. Eine Lobby betritt nur, wer den
-**Raumcode** kennt; er ist das einzige Geheimnis. Was das heißt:
+GitHub Pages ist öffentlich: Jeder mit dem Link kann die Seite laden. Einen Raum betritt nur, wer den **Raumcode** kennt.
 
-- Der Raumcode schützt nur, solange er nicht weitergegeben wird. Wer ihn kennt, ist drin.
-- Der Code steht im Link hinter `#`. Dieser Teil wird nicht an GitHub geschickt, landet aber im Browserverlauf.
-- Signaling läuft über öffentliche Nostr-Relays. Die sehen, dass sich Peers unter einem gehashten Raumnamen
-  treffen. Die Verbindungsdaten sind mit dem Raumcode verschlüsselt, und was ihr sprecht, sehen sie nicht. Ton und Daten laufen direkt
-  zwischen euch (WebRTC, verschlüsselt).
+- Der Code ist das einzige Geheimnis. Er steht im Link hinter `#`; dieser Teil geht nicht an GitHub, landet aber im Verlauf.
+- Signaling läuft über öffentliche Nostr-Relays. Sie sehen, dass sich Peers unter einem gehashten Raumnamen treffen;
+  die Verbindungsdaten sind mit dem Raumcode verschlüsselt. Ton, Bilder und Spieldaten laufen direkt zwischen euch (WebRTC).
 - Direkte Verbindungen zeigen euren Mitspielern eure öffentliche IP. Das ist bei P2P unvermeidbar.
-- Ein clientseitiges Passwort wäre nur eine Hürde, kein Schutz. Echten Zugangsschutz gäbe es erst mit
-  Cloudflare Access vor einem Cloudflare-Pages-Hosting.
+- Kartenbilder werden im Browser verkleinert, bleiben im Speicher und gehen nur an die Mitspieler, nie an die Person,
+  für die sie sind, und nirgendwo sonst hin. Bei einem Bild-Link lädt nur der Ersteller das Bild; verschickt werden die Daten.
+- Ein clientseitiges Passwort wäre nur eine Hürde. Echten Zugangsschutz gäbe es erst mit Cloudflare Access vor einem
+  Cloudflare-Pages-Hosting.
+- Durchsagen und Schaffner sprechen mit der Sprachausgabe des Browsers; welche Stimme kommt, hängt vom System ab.
 
 ## Lizenzen
 

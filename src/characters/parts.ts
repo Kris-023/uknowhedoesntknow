@@ -6,8 +6,6 @@ import { tag, type Role } from '../scene/build';
 export const UCYL = new THREE.CylinderGeometry(0.85, 1, 1, 10).translate(0, 0.5, 0);
 export const USPH = new THREE.SphereGeometry(1, 14, 10);
 export const UBOX = new THREE.BoxGeometry(1, 1, 1);
-/** Upper sphere cap: the base for every hairstyle and the beanie. */
-export const HCAP = new THREE.SphereGeometry(1, 14, 9, 0, Math.PI * 2, 0, 1.1);
 
 const UP = new THREE.Vector3(0, 1, 0);
 export const V = (x: number, y: number, z: number) => new THREE.Vector3(x, y, z);

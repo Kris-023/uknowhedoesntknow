@@ -28,7 +28,7 @@ export class World {
   readonly scene = new THREE.Scene();
   readonly camera = new THREE.PerspectiveCamera(CAMERA.wagonFov, 16 / 9, 0.05, 120);
   readonly coach: Coach;
-  private lighting: Lighting;
+  readonly lighting: Lighting;
   private tunnel: Tunnel;
   private neighbours: Neighbours;
   /** Clock time of a debug-triggered blackout; -Infinity = none. */
@@ -47,6 +47,8 @@ export class World {
   private zoomK = 0;
   private eye = new THREE.Vector3();
   private aim = new THREE.Vector3();
+  private lookEuler = new THREE.Euler();
+  private seatQ = new THREE.Quaternion();
 
   constructor(readonly clock: SharedClock) {
     this.scene.background = new THREE.Color(COLORS.background);
@@ -61,7 +63,7 @@ export class World {
       geos: crowds,
       material: crowdMaterial,
       upTo: TRAIN.crowdedPerSide,
-    });
+    }, this.lighting.hemi);
     // Players come after the bake: people are not part of the neighbour copies.
     this.players = new Players(this.coach.root, clock.seed);
     this.npcs = new Npcs(this.coach.root, clock.seed);
@@ -84,6 +86,7 @@ export class World {
     this.junk.update(t);
     this.zoomK += ((this.cam === 'pov' ? this.zoom : 0) - this.zoomK) * (1 - Math.exp(-dt * CAMERA.zoomRate));
     this.updateCamera(t, p.shakeOn ? p.shakeMm / 1000 : 0, sf);
+    this.neighbours.cull(this.camera);
   }
 
   /** Current POV field-of-view factor (1 = normal); mouse sensitivity scales with it. */
@@ -95,12 +98,16 @@ export class World {
     const cam = this.camera;
     const sh = shake(t, amp, (this.clock.seed % 101) * 0.37);
     if (this.cam === 'pov') {
-      // Camera rides in the head: eyes for position, the head's facing (+z) for direction. Only the
-      // direction is taken, not the full orientation, so torso lean never tilts the horizon.
-      const rig = this.players.me.rig;
-      rig.head.updateWorldMatrix(true, false);
-      rig.head.localToWorld(this.eye.copy(rig.eye));
-      rig.head.localToWorld(this.aim.copy(rig.eye).add(FORWARD));
+      // Eyes for position (the camera rides along with the body), but the direction comes straight
+      // from the mouse target and the seat. Taking it from the head bone made the view trail behind:
+      // head smoothing, the lagging torso turn and its lean kept it drifting after the mouse stopped.
+      const me = this.players.me;
+      me.rig.head.updateWorldMatrix(true, false);
+      me.rig.head.localToWorld(this.eye.copy(me.rig.eye));
+      const { yaw, pitch } = this.players.look;
+      this.lookEuler.set(pitch, yaw, 0, 'YXZ');
+      me.root.getWorldQuaternion(this.seatQ);
+      this.aim.copy(FORWARD).applyEuler(this.lookEuler).applyQuaternion(this.seatQ).add(this.eye);
       cam.position.set(this.eye.x + sh.x * 0.6, this.eye.y + sh.y * 0.6, this.eye.z);
       cam.lookAt(this.aim.x + sh.x * 0.6, this.aim.y + sh.y * 0.6, this.aim.z);
       cam.rotateZ(amp * 1.2 * noise1(t * 3.1 + 2));

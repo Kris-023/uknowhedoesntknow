@@ -179,3 +179,27 @@ describe('room settings', () => {
     expect(a.s.opts.voice).toBe(true);
   });
 });
+
+describe('rejoin', () => {
+  it('someone who reloads gets their seat back and the host learns the old id', () => {
+    const hub = new MemoryHub();
+    const t = { ms: 1_000_000 };
+    const now = () => t.ms;
+    const host = new Session(hub.connect('h'), new SharedClock(1, now()), true, state(1), now, 'tok-h');
+    const rejoins: string[] = [];
+    host.listen({ rejoin: (o, n) => rejoins.push(`${o}->${n}`) });
+    new Session(hub.connect('b1'), new SharedClock(2, now()), false, state(2), now, 'tok-b');
+    const c = new Session(hub.connect('c1'), new SharedClock(3, now()), false, state(3), now, 'tok-c');
+    hub.flush();
+    const seatB = host.roster.get('b1')!.seat;
+    hub.disconnect('b1');
+    hub.flush();
+    // c takes nothing; b comes back with a new peer id but the same tab token.
+    t.ms += 10_000;
+    const b2 = new Session(hub.connect('b2'), new SharedClock(4, now()), false, state(2), now, 'tok-b');
+    hub.flush();
+    expect(b2.mySeat).toBe(seatB);
+    expect(rejoins).toEqual(['b1->b2']);
+    expect(c.roster.has('b2')).toBe(true);
+  });
+});

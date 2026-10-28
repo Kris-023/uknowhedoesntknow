@@ -140,3 +140,44 @@ describe('Schaffner', async () => {
     expect(run(1, SCHAFFNER.loudS + 0.2, 14)).toBeNull();
   });
 });
+
+describe('Wer bin ich? resilience', async () => {
+  const { LocalGameRoom } = await import('../src/game/minigame');
+  const { WhoamiGame } = await import('../src/game/whoami/game');
+  const card = (n: string) => `data:image/jpeg;base64,${btoa(n)}`;
+
+  it('a new host continues a running round from the public state', () => {
+    const h = new WhoamiHost(P);
+    ready(h);
+    h.intent('a', { a: 'ask' }, 0, true);
+    const h2 = WhoamiHost.fromState(h.state);
+    expect(h2.state.phase).toBe('play');
+    expect(h2.state.vote).toBeNull();
+    expect(h2.intent('a', { a: 'ask' }, 0, false)).toBe(true);
+  });
+
+  it("after a rejoin the returning player gets the others' cards again, never their own", () => {
+    const room = new LocalGameRoom([
+      { id: 'a', seat: 0, name: 'A' },
+      { id: 'b', seat: 2, name: 'B' },
+      { id: 'c', seat: 1, name: 'C' },
+      { id: 'b2', seat: -1, name: 'B' },
+    ]);
+    // b2 is not in the room yet.
+    const late = room.roster.pop()!;
+    const g: Record<string, InstanceType<typeof WhoamiGame>> = Object.fromEntries(['a', 'b', 'c', 'b2'].map((id) => [id, new WhoamiGame(room.net(id))]));
+    g.a.start();
+    room.pump();
+    for (const id of ['a', 'b', 'c']) g[id].submitCard(card(`for-${g[id].myTarget}`));
+    room.pump();
+    room.pump();
+    // b reloads: gone, then back as b2 on the same seat.
+    room.roster.splice(1, 1, { ...late, seat: 2 });
+    g.a.rejoin('b', 'b2');
+    room.pump();
+    room.pump();
+    expect(g.b2.state?.players).toContain('b2');
+    expect(g.b2.cards.has('b2')).toBe(false);
+    expect([...g.b2.cards.keys()].sort()).toEqual(['a', 'c']);
+  });
+});

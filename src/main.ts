@@ -15,7 +15,9 @@ import { Pipeline } from './render/pipeline';
 import { World } from './scene/world';
 import { el } from './ui/dom';
 import { BenchPanel } from './ui/benchPanel';
-import { MainMenu, PauseMenu } from './ui/menu';
+import { MouseTrace } from './debug/mouseTrace';
+import { GpuTimer, HeapWatch } from './debug/gpuTimer';
+import { MainMenu, PauseMenu, type LobbyChoice } from './ui/menu';
 import { MicHud } from './ui/micHud';
 import { NameTags } from './ui/nametags';
 import { LocalGameRoom, sessionNet, type GameNet } from './game/minigame';
@@ -65,11 +67,15 @@ async function start(): Promise<void> {
     return;
   }
   const menu = new MainMenu(document.body, profile, setProfile);
-  const choice = await menu.choose();
+  // Reload inside a room (same tab, same #code): straight back in, no menu clicks.
+  const back = rejoinCode();
+  const choice: LobbyChoice = back ? { kind: 'join', code: back } : await menu.choose();
   saveProfile(profile);
   // Still within the click's user activation: audio may start and the mic may be asked for now.
+  // After an automatic rejoin there was no click yet: audio starts with the first one.
   const voice = getVoice(true);
   voice?.resume();
+  if (back) for (const ev of ['pointerdown', 'keydown'] as const) addEventListener(ev, () => voice?.resume(), { once: true });
   // Mic now for the benchmark and own rooms with voice; a joiner asks only once the welcome says
   // the room has voice chat, so quiet rooms never show the permission prompt.
   const micWanted = choice.kind === 'bench' || (choice.kind === 'create' && choice.voice);
@@ -85,7 +91,8 @@ async function start(): Promise<void> {
   history.replaceState(null, '', `#${code}`);
   const net = trysteroTransport(code, (msg) => console.warn('Trystero:', msg));
   voice?.bind(net);
-  const session = new Session(net, clock, choice.kind === 'create', profile);
+  const session = new Session(net, clock, choice.kind === 'create', profile, undefined, tabToken(code));
+  markInRoom(code);
   if (choice.kind === 'create') session.setOpts({ voice: choice.voice });
   addEventListener('pagehide', () => session.leave());
   // Pings and hello retries keep running while the tab is in the background.
@@ -118,6 +125,12 @@ function launch(clock: SharedClock, session: Session | null, startCam: 'wagon' |
   let pipeline: Pipeline | null = null;
   try {
     pipeline = new Pipeline(stage, world.scene, world.camera);
+    // Graphics driver reset or GPU memory pressure: the canvas is dead, but the room isn't.
+    // A reload brings everything back, and the automatic rejoin keeps the seat.
+    pipeline.renderer.domElement.addEventListener('webglcontextlost', (e) => {
+      e.preventDefault();
+      showProblem('Die Grafik ist abgestürzt (WebGL-Kontext verloren).', 'Neu laden', () => location.reload());
+    });
   } catch {
     const msg = document.createElement('div');
     msg.className = 'nogl';
@@ -181,7 +194,13 @@ function launch(clock: SharedClock, session: Session | null, startCam: 'wagon' |
     history.replaceState(null, '', location.pathname + location.search);
     location.reload();
   };
-  const benchPanel = bench ? new BenchPanel(document.body, toMenu) : null;
+  const mouseK = () => CAMERA.mouseSensitivity * settings.mouseSens * world.fovFactor;
+  const trace = bench ? new MouseTrace() : null;
+  const benchPanel = bench ? new BenchPanel(document.body, toMenu, trace, mouseK) : null;
+  // Benchmark diagnostics: GPU time per frame (where the browser has timer queries) and GC as heap drops.
+  const gpuTimer = benchPanel && pipeline ? GpuTimer.create(pipeline.renderer.getContext()) : null;
+  const heap = benchPanel ? new HeapWatch() : null;
+  if (benchPanel) benchPanel.diag = { gpuTimer: !!gpuTimer, heapPrecise: () => !!heap?.precise };
   if (bench) document.body.classList.add('benching');
   const tags = new NameTags(document.body, players, world.camera, stage);
   const micHud = voice ? new MicHud(document.body, voice) : null;
@@ -248,6 +267,8 @@ function launch(clock: SharedClock, session: Session | null, startCam: 'wagon' |
   // Dev only: ?voteS=120 stretches votes, so slow test browsers don't run out of time.
   const devVoteS = import.meta.env.DEV ? Number(params.get('voteS')) || undefined : undefined;
   const whoami = new WhoamiGame(gameNet, devVoteS);
+  // Someone reloaded and came back: they keep seat, points and their place in the round.
+  session?.listen({ rejoin: (oldId, newId) => whoami.rejoin(oldId, newId) });
   const wiUi = new WhoamiUi(document.body, whoami, () => gameNet.members(), {
     isHost: () => gameNet.isHost(),
     hostName: () => gameNet.members().find((m) => m.id === gameNet.hostId())?.name || 'der Host',
@@ -344,7 +365,7 @@ function launch(clock: SharedClock, session: Session | null, startCam: 'wagon' |
 
   // Click into the scene to look around: the mouse turns your character's head (pointer lock).
   stage.addEventListener('click', () => {
-    if (world.cam === 'pov' && !document.pointerLockElement) void stage.requestPointerLock();
+    if (world.cam === 'pov' && !document.pointerLockElement) lockMouse(stage);
   });
   let unlockedAt = -Infinity;
   // A game dialog took the mouse on purpose (card maker, end of round): no pause menu then.
@@ -369,7 +390,7 @@ function launch(clock: SharedClock, session: Session | null, startCam: 'wagon' |
     pause.close();
     syncHint();
     // A game dialog (card maker, end of round) needs the mouse; don't grab it back then.
-    if (world.cam === 'pov' && !document.body.classList.contains('wi-dialog')) void stage.requestPointerLock();
+    if (world.cam === 'pov' && !document.body.classList.contains('wi-dialog')) lockMouse(stage);
   };
   addEventListener('keydown', (e) => {
     if (e.key !== 'Escape' || world.cam !== 'pov') return;
@@ -388,13 +409,24 @@ function launch(clock: SharedClock, session: Session | null, startCam: 'wagon' |
   addEventListener('mouseup', (e) => {
     if (e.button === 2) world.zoom = 0;
   });
-  document.addEventListener('mousemove', (e) => {
-    if (document.pointerLockElement !== stage) return;
-    const k = CAMERA.mouseSensitivity * settings.mouseSens * world.fovFactor;
+  // Two possible sources, one active at a time (see settings.mouseRaw). Raw events arrive as the
+  // device sends them instead of once per frame; in Zen that felt clearly less sluggish.
+  const rawMouse = 'onpointerrawupdate' in window;
+  const onLook = (e: MouseEvent, raw: boolean) => {
+    if (raw !== (settings.mouseRaw && rawMouse) || document.pointerLockElement !== stage) return;
+    const k = mouseK();
     const look = players.look;
     look.yaw = Math.max(-HEAD.maxYaw, Math.min(HEAD.maxYaw, look.yaw - e.movementX * k));
     const dy = (settings.invertY ? -1 : 1) * e.movementY;
     look.pitch = Math.max(HEAD.minPitch, Math.min(HEAD.maxPitch, look.pitch + dy * k));
+  };
+  document.addEventListener('mousemove', (e) => {
+    trace?.move(e, document.pointerLockElement === stage);
+    onLook(e, false);
+  });
+  addEventListener('pointerrawupdate', (e) => {
+    trace?.raw(e as PointerEvent, document.pointerLockElement === stage);
+    onLook(e as PointerEvent, true);
   });
 
   let last = performance.now();
@@ -404,6 +436,7 @@ function launch(clock: SharedClock, session: Session | null, startCam: 'wagon' |
   function frame(now: number): void {
     requestAnimationFrame(frame);
     if (document.hidden) return;
+    const workStart = performance.now();
     const rawMs = now - last;
     const dt = Math.min(0.05, Math.max(0.001, rawMs / 1000));
     last = now;
@@ -462,8 +495,26 @@ function launch(clock: SharedClock, session: Session | null, startCam: 'wagon' |
       return seat === undefined ? null : players.headPos(seat, voicePos);
     });
     if (!pipeline) return;
+    gpuTimer?.poll();
+    gpuTimer?.begin();
     pipeline.render();
-    benchPanel?.update({ ms: Math.max(0.1, rawMs), calls: pipeline.renderer.info.render.calls, render: pipeline.renderSize });
+    const gpuCell = gpuTimer?.end() ?? null;
+    if (trace?.active) {
+      const dir = world.camera.getWorldDirection(traceDir);
+      trace.frame(dt, players.look.yaw, players.me.yaw, Math.atan2(dir.x, dir.z));
+    }
+    if (benchPanel) {
+      // What was going on, so a stutter in the log can be matched to its cause.
+      const tags: string[] = [];
+      if (world.power < 0.98) tags.push('Stromausfall');
+      if (world.lighting.passing) tags.push('Gegenzug');
+      if (typeof speechSynthesis !== 'undefined' && speechSynthesis.speaking) tags.push('Durchsage');
+      if (!document.pointerLockElement) tags.push('Maus frei');
+      // Heap shrank since the last frame: a garbage collection ran in or just before this frame.
+      const freedMb = heap?.sample() ?? 0;
+      if (heap?.precise && freedMb > 0) tags.push('GC');
+      benchPanel.update({ ms: Math.max(0.1, rawMs), work: performance.now() - workStart, calls: pipeline.renderer.info.render.calls, render: pipeline.renderSize, tags, gpu: gpuCell });
+    }
     if (now - lastStat > 400) {
       lastStat = now;
       const info = pipeline.renderer.info.render;
@@ -518,3 +569,88 @@ function connect(session: Session, world: World, panel: DebugPanel, pause: Pause
   });
   setInterval(roomInfo, 2000);
 }
+
+// --- Reconnect and failure handling --------------------------------------------------------------
+
+/**
+ * Per tab and room: a token that survives a reload (sessionStorage), so the host gives you your
+ * seat back. A new tab is a new person.
+ */
+function tabToken(code: string): string {
+  const key = `ukhdk.token.${code}`;
+  try {
+    let t = sessionStorage.getItem(key);
+    if (!t) sessionStorage.setItem(key, (t = Array.from(crypto.getRandomValues(new Uint32Array(3)), (n) => n.toString(36)).join('')));
+    return t;
+  } catch {
+    return Math.random().toString(36).slice(2);
+  }
+}
+
+function markInRoom(code: string): void {
+  try {
+    sessionStorage.setItem('ukhdk.inroom', code);
+  } catch {
+    // Without storage a reload just shows the menu with the code filled in.
+  }
+}
+
+/** The room this tab was in before a reload, if the address still points there. */
+function rejoinCode(): string | null {
+  try {
+    const code = sessionStorage.getItem('ukhdk.inroom');
+    return code && location.hash.slice(1) === code ? code : null;
+  } catch {
+    return null;
+  }
+}
+
+let problemEl: HTMLElement | null = null;
+/** One calm notice in the middle for things that went wrong, with what to do about it. */
+function showProblem(text: string, action?: string, onAction?: () => void): void {
+  problemEl?.remove();
+  const box = el('div', 'problem');
+  box.setAttribute('role', 'alert');
+  box.append(el('p', '', text));
+  if (action && onAction) {
+    const b = el('button', 'btn big', action);
+    b.type = 'button';
+    b.addEventListener('click', onAction);
+    box.append(b);
+  }
+  document.body.append(box);
+  problemEl = box;
+}
+
+function hideProblem(): void {
+  problemEl?.remove();
+  problemEl = null;
+}
+
+// Offline: say it, instead of letting heads freeze silently. Back online, the relays reconnect by themselves.
+addEventListener('offline', () => showProblem('Keine Internetverbindung. Sobald sie zurück ist, verbindet sich der Raum von selbst neu.'));
+addEventListener('online', hideProblem);
+
+/**
+ * Pointer lock with raw mouse counts. Without it, Chrome hands out movement after OS acceleration
+ * and, at display scaling above 100 %, rounds small steps down to zero: slow pans did nothing until
+ * a jerk. Browsers without raw input get the normal lock.
+ */
+function lockMouse(el: HTMLElement): void {
+  const raw = el.requestPointerLock({ unadjustedMovement: true }) as Promise<void> | undefined;
+  if (!raw) MouseTrace.lockMode = 'normal (Browser ohne Rohdaten-Option)';
+  raw?.then(
+    () => (MouseTrace.lockMode = 'roh (unadjustedMovement)'),
+    (e: DOMException) => {
+      MouseTrace.lockMode = `Rohdaten abgelehnt: ${e.name}`;
+      if (e.name !== 'NotSupportedError') return;
+      const plain = el.requestPointerLock() as Promise<void> | undefined;
+      plain?.then(
+        () => (MouseTrace.lockMode = 'normal (Rohdaten nicht unterstützt)'),
+        (e2: DOMException) => (MouseTrace.lockMode = `fehlgeschlagen: ${e2.name}`),
+      );
+    },
+  );
+}
+
+const traceDir = new THREE.Vector3();

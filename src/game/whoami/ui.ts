@@ -93,7 +93,10 @@ export class WhoamiUi {
     if (!this.banner.hidden && performance.now() > this.bannerUntil) this.banner.hidden = true;
     this.renderLobby();
     const cd = this.bar.querySelector('.wi-countdown');
-    if (cd && s?.vote) cd.textContent = `noch ${Math.ceil(this.game.voteLeftS)} s`;
+    if (cd && s?.vote) {
+      const text = `noch ${Math.ceil(this.game.voteLeftS)} s`;
+      if (cd.textContent !== text) cd.textContent = text;
+    }
   }
 
   private render(): void {

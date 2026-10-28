@@ -1,4 +1,5 @@
 import * as THREE from 'three';
+import { SLOTS } from '../characters/accessories';
 import { Person, type PersonState } from '../characters/person';
 
 /**
@@ -62,11 +63,13 @@ export class CharacterPreview {
     const p = this.person;
     p.name = state.name;
     if (JSON.stringify(p.look) !== JSON.stringify(state.look)) p.setLook(state.look);
-    for (const s of ['head', 'hand', 'arm', 'hip'] as const) {
+    for (const s of SLOTS) {
       const id = state.items[s];
       if (p.items[s] !== id) id ? p.equip(id) : p.unequip(s);
     }
     p.settle();
+    // A dog or crate stands beside the legs: step back so it stays in the frame while turning.
+    this.camera.position.z = state.items.floor ? 6.6 : 5.3;
   }
 
   private frame(now: number): void {

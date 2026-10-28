@@ -1,7 +1,7 @@
 import * as THREE from 'three';
 import { CAMERA, COLORS, HEAD, LIGHTS, NET, PLAYER_SEATS, SEAT_X, WHOAMI } from '../config';
 import { mulberry32, type Rand } from '../core/rng';
-import { ITEMS, ITEM_IDS, SLOTS, type ItemId } from '../characters/accessories';
+import { ITEMS, ITEM_IDS, SLOT_CHANCE, SLOTS, type ItemId } from '../characters/accessories';
 import { makeLook, type Look } from '../characters/look';
 import { Person, type PersonState } from '../characters/person';
 import { basic, group, tag } from '../scene/build';
@@ -13,7 +13,7 @@ const START_LOOKS: Partial<Look>[] = [
   { female: false, hair: 'locken' },
   { female: true, hair: 'dutt' },
 ];
-const START_ITEMS: ItemId[][] = [['schlaeger'], ['gurke'], ['huhn'], ['jute']];
+const START_ITEMS: ItemId[][] = [['basecap'], ['gurke'], ['huhn'], ['jute']];
 /** Names for the simulated passengers in solo mode. */
 const FAKE_NAMES = ['Kalle', 'Deniz', 'Mo', 'Sascha'];
 
@@ -26,7 +26,7 @@ const LABEL_Y = 1.36;
 export function randomState(r: Rand): PersonState {
   const items: PersonState['items'] = {};
   for (const s of SLOTS) {
-    if (r() >= (s === 'hip' ? 0.25 : 0.5)) continue;
+    if (r() >= SLOT_CHANCE[s]) continue;
     const ids = ITEM_IDS.filter((id) => ITEMS[id].slot === s);
     items[s] = ids[Math.floor(r() * ids.length) % ids.length];
   }
@@ -76,7 +76,7 @@ export class Players {
       root.position.set(seat.side * SEAT_X, 0.525, seat.z);
       // Seated players face the aisle.
       root.rotation.y = seat.side === -1 ? Math.PI / 2 : -Math.PI / 2;
-      const look = { ...makeLook(rand), ...START_LOOKS[i], top: COLORS.players[i], glasses: false, beard: false };
+      const look = { ...makeLook(rand), ...START_LOOKS[i], top: COLORS.players[i], glasses: false, beard: 'none' as const };
       const p = new Person(root, look, 'sit');
       p.name = FAKE_NAMES[i];
       for (const id of START_ITEMS[i]) p.equip(id);
@@ -203,7 +203,7 @@ export class Players {
     for (const s of SLOTS) {
       p.unequip(s);
       if (s === 'hand' && !p.handSide) continue;
-      if (r() < (s === 'hip' ? 0.25 : 0.5)) {
+      if (r() < SLOT_CHANCE[s]) {
         const ids = ITEM_IDS.filter((id) => ITEMS[id].slot === s);
         p.equip(ids[Math.floor(r() * ids.length) % ids.length]);
       }

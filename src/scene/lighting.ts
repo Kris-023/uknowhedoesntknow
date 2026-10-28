@@ -14,6 +14,10 @@ interface NeonSegment {
 export interface Lighting {
   /** `power` is the coach supply (1 normal, 0 blackout); the tunnel light through the windows ignores it. */
   update(t: number, speedFactor: number, power: number): void;
+  /** An oncoming train is sweeping past right now (for the benchmark's stutter log). */
+  readonly passing: boolean;
+  /** The fill light; the baked crowds copy it into their unlit material. */
+  readonly hemi: THREE.HemisphereLight;
 }
 
 /**
@@ -22,6 +26,7 @@ export interface Lighting {
  * actually darkens when it stutters. Hemisphere and white lights are only a faint fill.
  */
 export function buildLighting(scene: THREE.Scene, coach: THREE.Object3D, tex: CoachTextures, lobbySeed: number): Lighting {
+  const lean = leanLights();
   const neonColor = new THREE.Color(COLORS.neon);
   const hemi = new THREE.HemisphereLight(0x7088d0, 0x1a1c24, LIGHTS.hemi * LIGHT_SCALE);
   scene.add(hemi);
@@ -37,7 +42,7 @@ export function buildLighting(scene: THREE.Scene, coach: THREE.Object3D, tex: Co
 
   const neonGroup = group('neon', coach);
   const segments: NeonSegment[] = [];
-  const blue: { light: THREE.PointLight; seg: NeonSegment }[] = [];
+  const blue: { light: THREE.PointLight; segs: NeonSegment[]; gain: number }[] = [];
   // Lobby seed shifts every segment's phase, so two lobbies don't flicker in lockstep.
   const seedShift = (lobbySeed % 997) * 0.013;
   const tubeGeo = boxGeo(0.05, 0.025, 1.9);
@@ -69,32 +74,81 @@ export function buildLighting(scene: THREE.Scene, coach: THREE.Object3D, tex: Co
         if (kind === 'ceiling' && idx % 2 === 0) {
           const light = at(new THREE.PointLight(COLORS.neonLight, 0, 7, 1.4), s * 0.6, 2.1, z);
           scene.add(light);
-          blue.push({ light, seg });
+          blue.push({ light, segs: [seg], gain: 1 });
         }
       }
     }
   }
 
+  if (lean) {
+    // Dev comparison (?lights=lean): 4 point lights instead of 11. The white fill goes into the
+    // hemisphere, each side's three blue lights become one longer-reaching light in the middle that
+    // follows the average of their segments, and the oncoming train borrows the window light of its side.
+    scene.remove(...whites, passLight);
+    whites.length = 0;
+    for (const side of [0, 1]) {
+      const three = blue.slice(side * 3, side * 3 + 3);
+      for (const b of three) if (b !== three[1]) scene.remove(b.light);
+      three[1].segs = three.flatMap((b) => b.segs);
+      three[1].gain = LEAN.blueGain;
+      three[1].light.distance = LEAN.blueDistance;
+    }
+    const kept = [blue[1], blue[4]];
+    blue.length = 0;
+    blue.push(...kept);
+  }
+  const hemiScale = lean ? LEAN.hemiGain : 1;
+
+  let passing = false;
   return {
+    hemi,
+    get passing() {
+      return passing;
+    },
     update(t, sf, power) {
       winL.intensity = windowFlash(t, sf, 0) * LIGHTS.window * POINT_LIGHT_SCALE;
       winR.intensity = windowFlash(t, sf, 1) * LIGHTS.window * POINT_LIGHT_SCALE;
+      if (lean) {
+        winL.position.z = winR.position.z = 0.5;
+        winL.color.setHex(0x6f8cff);
+        winR.color.setHex(0xbcd0ff);
+      }
       const on = oncoming(t, lobbySeed, ONCOMING);
+      passing = !!on;
       if (on) {
         // Strobing (window, gap, window …) and sweeping front to back while the train passes.
         const strobe = Math.sin(t * 70) > -0.3 ? 1 : 0.15;
         passLight.position.set(on.side * 1.35, 1.45, -6 + 12 * on.phase);
         passLight.intensity = 9 * Math.sin(on.phase * Math.PI) * strobe * POINT_LIGHT_SCALE;
+        if (lean) {
+          const w = on.side < 0 ? winL : winR;
+          w.position.z = passLight.position.z;
+          w.color.setHex(0xdfe8ff);
+          w.intensity = Math.max(w.intensity, passLight.intensity);
+        }
       } else passLight.intensity = 0;
       // Hemisphere keeps a sliver during blackout: the tunnel and neighbour coaches still glow in.
-      hemi.intensity = LIGHTS.hemi * LIGHT_SCALE * (0.35 + 0.65 * power);
+      hemi.intensity = LIGHTS.hemi * LIGHT_SCALE * (0.35 + 0.65 * power) * (lean ? 1 + (hemiScale - 1) * power : 1);
       for (const w of whites) w.intensity = LIGHTS.ceilingWhite * POINT_LIGHT_SCALE * power;
       for (const seg of segments) {
         seg.k = flick(t, seg.seed) * power;
         seg.tube.color.copy(neonColor).multiplyScalar((0.04 + 0.96 * seg.k) * LIGHTS.neonTubeHdr);
         seg.halo.opacity = 0.55 * seg.k;
       }
-      for (const b of blue) b.light.intensity = LIGHTS.neonBlue * POINT_LIGHT_SCALE * b.seg.k;
+      for (const b of blue) {
+        let k = 0;
+        for (const seg of b.segs) k += seg.k;
+        b.light.intensity = LIGHTS.neonBlue * POINT_LIGHT_SCALE * b.gain * (k / b.segs.length);
+      }
     },
   };
+}
+
+/** Gains of the lean light set, tuned so the coach keeps roughly the same brightness. */
+const LEAN = { hemiGain: 1.15, blueGain: 1.7, blueDistance: 11 } as const;
+
+/** Dev-only: `?lights=lean` swaps in the 4-light set for a side-by-side comparison. */
+function leanLights(): boolean {
+  if (!import.meta.env.DEV || typeof location === 'undefined') return false;
+  return new URLSearchParams(location.search).get('lights') === 'lean';
 }

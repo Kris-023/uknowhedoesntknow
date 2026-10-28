@@ -50,7 +50,8 @@ export class LocalGameRoom {
   private nodes = new Map<string, Transport>();
   private handlers = new Map<string, ((type: string, data: unknown, from: string) => void)[]>();
 
-  constructor(private roster: Member[]) {
+  /** Mutable so tests can let someone leave and come back. */
+  constructor(readonly roster: Member[]) {
     for (const m of roster) {
       const t = this.hub.connect(m.id);
       const list: ((type: string, data: unknown, from: string) => void)[] = [];

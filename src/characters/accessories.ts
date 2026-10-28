@@ -1,5 +1,9 @@
 import * as THREE from 'three';
 import { canvasTex } from '../scene/textures';
+import { am, pp, texOnce } from './itemkit';
+import type { Footwear, TopStyle } from './look';
+import * as M from './memes';
+import type { ItemCtx } from './memes';
 import { part, UBOX, UCYL, USPH } from './parts';
 import type { Slot } from './rig';
 
@@ -7,35 +11,27 @@ import type { Slot } from './rig';
 // No brands, no real logos, no protected characters.
 
 /** Per-frame animation hook, stored on the item's root (the chicken bobs its head). */
-export type ItemTick = (t: number) => void;
-
-const matCache = new Map<string, THREE.MeshStandardMaterial>();
-function am(color: number, o: THREE.MeshStandardMaterialParameters = {}): THREE.MeshStandardMaterial {
-  const k = `${color}|${JSON.stringify(o, (key, v) => (key === 'map' ? (v as THREE.Texture).uuid : v))}`;
-  let m = matCache.get(k);
-  if (!m) matCache.set(k, (m = new THREE.MeshStandardMaterial({ color, roughness: 0.7, metalness: 0.05, ...o })));
-  return m;
-}
-
-const texCache = new Map<string, THREE.Texture>();
-function texOnce(k: string, make: () => THREE.Texture): THREE.Texture {
-  let t = texCache.get(k);
-  if (!t) texCache.set(k, (t = make()));
-  return t;
-}
-
-const pp = (parent: THREE.Object3D, geo: THREE.BufferGeometry, mat: THREE.Material, x: number, y: number, z: number, sx?: number, sy?: number, sz?: number) =>
-  part(parent, geo, mat, x, y, z, sx, sy, sz, 'prop');
+export type { ItemTick } from './memes';
+import type { ItemTick } from './memes';
 
 function gurke(): THREE.Group {
-  const g = new THREE.Group();
+  // Modelled upright along +y, then laid flat across the head, slightly askew so it reads from the
+  // front and from the side.
+  const c = new THREE.Group();
   const m = am(0x3e8a2c, { roughness: 0.4 });
-  pp(g, UCYL, m, 0, 0, 0, 0.055, 0.3, 0.055);
-  pp(g, USPH, m, 0, 0, 0, 0.052, 0.04, 0.052);
-  pp(g, USPH, m, 0, 0.3, 0, 0.047, 0.04, 0.047);
-  pp(g, UCYL, am(0x244f1b), 0, 0.32, 0, 0.012, 0.035, 0.012);
-  [0.07, 0.15, 0.23].forEach((y, i) => pp(g, USPH, am(0xa9d36a), i % 2 ? 0.05 : -0.045, y, 0.02, 0.01, 0.01, 0.01));
-  g.rotation.z = 0.1;
+  pp(c, UCYL, m, 0, 0, 0, 0.055, 0.3, 0.055);
+  pp(c, USPH, m, 0, 0, 0, 0.052, 0.04, 0.052);
+  pp(c, USPH, m, 0, 0.3, 0, 0.047, 0.04, 0.047);
+  pp(c, UCYL, am(0x244f1b), 0, 0.32, 0, 0.012, 0.035, 0.012);
+  [0.07, 0.15, 0.23].forEach((y, i) => pp(c, USPH, am(0xa9d36a), i % 2 ? 0.05 : -0.045, y, 0.02, 0.01, 0.01, 0.01));
+  c.position.y = -0.15;
+  const g = new THREE.Group();
+  const lie = new THREE.Group();
+  lie.add(c);
+  lie.rotation.set(0, 0.45, Math.PI / 2 + 0.06);
+  // Its radius above the anchor (top of the hair), so it rests on the head instead of sinking in.
+  lie.position.y = 0.045;
+  g.add(lie);
   return g;
 }
 
@@ -188,42 +184,84 @@ function spaeti(): THREE.Group {
   return g;
 }
 
-const batGeo = new THREE.LatheGeometry(
-  [[0.001, 0.12], [0.022, 0.115], [0.015, 0.09], [0.017, -0.1], [0.026, -0.22], [0.04, -0.36], [0.043, -0.5], [0.036, -0.57], [0.001, -0.585]].map(
-    ([r, y]) => new THREE.Vector2(r, y),
-  ),
-  10,
-);
-function schlaeger(): THREE.Group {
-  const g = new THREE.Group();
-  pp(g, batGeo, am(0xc89558, { roughness: 0.5 }), 0, 0, 0);
-  pp(g, UCYL, am(0x1a1a1a), 0, -0.02, 0, 0.02, 0.09, 0.02);
-  return g;
-}
-
 export interface ItemDef {
   slot: Slot;
   label: string;
-  build: () => THREE.Group;
+  build: (c: ItemCtx) => THREE.Group;
+  /** Which of the player's colours the item takes (shown in the editor while it is worn). */
+  tint?: 'hat' | 'acc';
+  /** A real hat: the hair is styled to fit under it (curls flattened, crest and beanie off). */
+  underHat?: boolean;
 }
 
 export const ITEMS = {
   gurke: { slot: 'head', label: 'Gurke', build: gurke },
   pylone: { slot: 'head', label: 'Hütchen', build: pylone },
   ananas: { slot: 'head', label: 'Ananas', build: ananas },
+  basecap: { slot: 'head', label: 'Basecap', build: M.basecap, tint: 'hat', underHat: true },
+  aluhut: { slot: 'head', label: 'Aluhut', build: M.aluhut, underHat: true },
+  uschanka: { slot: 'head', label: 'Uschanka', build: M.uschanka, tint: 'hat', underHat: true },
+  barett: { slot: 'head', label: 'Baskenmütze', build: M.barett, tint: 'hat', underHat: true },
+  rollerhelm: { slot: 'head', label: 'Rollerhelm', build: M.rollerhelm, tint: 'hat', underHat: true },
+  zipfel: { slot: 'head', label: 'Zipfelmütze', build: M.zipfelmuetze, tint: 'hat', underHat: true },
   huhn: { slot: 'hand', label: 'Huhn', build: huhn },
   doener: { slot: 'hand', label: 'Döner', build: doener },
   ente: { slot: 'hand', label: 'Quietscheente', build: ente },
+  baguette: { slot: 'hand', label: 'Baguette', build: M.baguette },
+  espresso: { slot: 'hand', label: 'Espresso', build: M.espresso },
+  pizza: { slot: 'hand', label: 'Pizzakarton', build: M.pizza },
+  thermos: { slot: 'hand', label: 'Thermoskanne', build: M.thermos, tint: 'acc' },
+  mate: { slot: 'hand', label: 'Mate', build: M.mate },
+  energy: { slot: 'hand', label: 'Energydose', build: M.energy },
+  wurst: { slot: 'hand', label: 'Bratwurst', build: M.bratwurst },
+  lauch: { slot: 'hand', label: 'Lauch', build: M.lauch },
+  kartoffel: { slot: 'hand', label: 'Kartoffel', build: M.kartoffel },
+  sparschwein: { slot: 'hand', label: 'Sparschwein', build: M.sparschwein },
+  pfand: { slot: 'hand', label: 'Pfandflasche', build: () => buildBottle() },
   jute: { slot: 'arm', label: 'Jutebeutel', build: jute },
   spaeti: { slot: 'arm', label: 'Späti-Tüte', build: spaeti },
-  schlaeger: { slot: 'hip', label: 'Schläger', build: schlaeger },
+  gelbersack: { slot: 'arm', label: 'Gelber Sack', build: M.gelberSack },
+  kette: { slot: 'neck', label: 'Goldkette', build: M.goldkette },
+  schal: { slot: 'neck', label: 'Fanschal', build: M.schal, tint: 'acc' },
+  bauchtasche: { slot: 'body', label: 'Bauchtasche', build: M.bauchtasche, tint: 'acc' },
+  umhaenge: { slot: 'body', label: 'Bauchtasche quer', build: M.umhaengetasche, tint: 'acc' },
+  kasten: { slot: 'floor', label: 'Kasten Bier', build: M.kasten, tint: 'acc' },
+  hund: { slot: 'floor', label: 'Golden Retriever', build: M.hund, tint: 'acc' },
+  zwerg: { slot: 'floor', label: 'Gartenzwerg', build: M.gartenzwerg, tint: 'acc' },
+  muell: { slot: 'floor', label: 'Mülltrennung', build: M.muell },
 } satisfies Record<string, ItemDef>;
 
 export type ItemId = keyof typeof ITEMS;
 export const ITEM_IDS = Object.keys(ITEMS) as ItemId[];
-export const SLOTS: Slot[] = ['head', 'hand', 'arm', 'hip'];
-export const SLOT_LABEL: Record<Slot, string> = { head: 'Kopf', hand: 'Hand', arm: 'Arm', hip: 'Hose' };
+// 'hip' stays as an anchor and type (the bat used it) but has no items any more, so it is not offered,
+// synced or rolled; old saves and peers that still send the bat simply lose it in parseState.
+export const SLOTS: Slot[] = ['head', 'hand', 'arm', 'neck', 'body', 'floor'];
+export const SLOT_LABEL: Record<Slot, string> = { head: 'Kopf', hand: 'Hand', arm: 'Arm', hip: 'Hose', neck: 'Hals', body: 'Bauch', floor: 'Boden' };
+/** Chance per slot when rolling random items: the big costume pieces stay rare. */
+export const SLOT_CHANCE: Record<Slot, number> = { head: 0.45, hand: 0.45, arm: 0.35, hip: 0.2, neck: 0.12, body: 0.12, floor: 0.12 };
 
+/**
+ * Outfit presets: set the clothing style and a set of items in one click. They never touch
+ * colours, face or body, so the player's own choices stay.
+ */
+export interface Outfit {
+  label: string;
+  topStyle: TopStyle;
+  footwear: Footwear;
+  items: Partial<Record<Slot, ItemId>>;
+}
+export const OUTFITS: Outfit[] = [
+  { label: 'Alltag', topStyle: 'shirt', footwear: 'sneaker', items: {} },
+  { label: 'Talahon', topStyle: 'monogramm', footwear: 'sneaker', items: { head: 'basecap', neck: 'kette', body: 'umhaenge', hand: 'energy' } },
+  { label: 'Genosse', topStyle: 'trainingsjacke', footwear: 'schlappen', items: { head: 'uschanka', hand: 'kartoffel' } },
+  { label: 'Deutsch in a Nutshell', topStyle: 'funktion', footwear: 'sandalen', items: { body: 'bauchtasche', hand: 'thermos', floor: 'muell' } },
+  { label: 'Italienisch', topStyle: 'shirt', footwear: 'sneaker', items: { head: 'rollerhelm', hand: 'espresso' } },
+  { label: 'Französisch', topStyle: 'ringel', footwear: 'sneaker', items: { head: 'barett', hand: 'baguette' } },
+  { label: 'Feierabend', topStyle: 'shirt', footwear: 'schlappen', items: { hand: 'mate', floor: 'kasten' } },
+  { label: 'Schrebergarten', topStyle: 'funktion', footwear: 'hausschuhe', items: { head: 'zipfel', hand: 'lauch', floor: 'zwerg' } },
+  { label: 'Gassi', topStyle: 'funktion', footwear: 'sneaker', items: { head: 'basecap', floor: 'hund' } },
+  { label: 'Aluhut', topStyle: 'shirt', footwear: 'sandalen', items: { head: 'aluhut' } },
+];
 
 // Props for the passengers' activities. Not items: nobody picks them, the NPC's behaviour brings them.
 

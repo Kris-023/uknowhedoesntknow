@@ -109,5 +109,29 @@ export function bakeCrowd(seed: number): THREE.BufferGeometry {
   return mergeGeometries(geos)!;
 }
 
-/** Shared material for all baked crowds. Double-sided because hair caps and the torso are open shells. */
-export const crowdMaterial = new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.8, metalness: 0.02, side: THREE.DoubleSide });
+/**
+ * Hemisphere light the crowds follow: colour × intensity × Lambert factor, set per frame by the
+ * neighbours from the scene's hemisphere light.
+ */
+export const crowdHemi = { sky: { value: new THREE.Color() }, ground: { value: new THREE.Color() } };
+
+/**
+ * Shared material for all baked crowds. Unlit basic material with hand-made hemisphere shading:
+ * the neighbour coaches lie outside the reach of the player coach's point lights anyway, but a
+ * standard material still paid for all of them on every crowd pixel. Fog works as before.
+ * Double-sided because hair caps and the torso are open shells; back faces shade with the flipped normal.
+ */
+export const crowdMaterial = new THREE.MeshBasicMaterial({ vertexColors: true, side: THREE.DoubleSide });
+crowdMaterial.onBeforeCompile = (sh) => {
+  sh.uniforms.hemiSky = crowdHemi.sky;
+  sh.uniforms.hemiGround = crowdHemi.ground;
+  sh.vertexShader =
+    'varying float vUpN;\n' +
+    sh.vertexShader.replace('#include <begin_vertex>', '#include <begin_vertex>\n  vUpN = normalize(mat3(modelMatrix) * normal).y;');
+  sh.fragmentShader =
+    'uniform vec3 hemiSky;\nuniform vec3 hemiGround;\nvarying float vUpN;\n' +
+    sh.fragmentShader.replace(
+      '#include <color_fragment>',
+      '#include <color_fragment>\n  float upN = gl_FrontFacing ? vUpN : -vUpN;\n  diffuseColor.rgb *= mix(hemiGround, hemiSky, 0.5 * upN + 0.5);',
+    );
+};

@@ -1,4 +1,4 @@
-import { NET } from '../../config';
+import { NET, WHOAMI } from '../../config';
 import type { GameNet, Minigame } from '../minigame';
 import { parseCardData } from './cardImage';
 import { parseIntent, WhoamiHost, type Intent, type Vote, type WhoamiState } from './logic';
@@ -132,12 +132,56 @@ export class WhoamiGame implements Minigame {
     }
   }
 
+  /** Host: when each absent player was last seen, for the grace time before they leave the round. */
+  private goneSince = new Map<string, number>();
+
+  /**
+   * Host: someone reloaded and came back with a new id. They keep their place, points and turn;
+   * the authors send them the cards again (never their own).
+   */
+  rejoin(oldId: string, newId: string): void {
+    if (!this.host?.replace(oldId, newId)) return;
+    this.goneSince.delete(oldId);
+    this.net.send('wi:rejoin', { old: oldId, new: newId });
+    this.publish();
+    this.resendTo(newId, oldId);
+  }
+
+  /**
+   * Someone came back with an empty memory: send them every card I hold, except their own. Not just
+   * the one I made, because the cards they made themselves were lost with the reload. Checked
+   * against both ids: the rejoin note can arrive before the renamed state.
+   */
+  private resendTo(newId: string, oldId: string): void {
+    for (const [target, img] of this.cards) if (target !== newId && target !== oldId && target !== this.selfId) this.net.send('wi:card', { target, img }, newId);
+  }
+
   tick(now: number): void {
+    // A new host (the old one left) takes over a running round from its public state.
+    if (!this.host && this.isHost && this.state) {
+      this.host = WhoamiHost.fromState(this.state, this.voteS);
+      this.scores = { ...this.state.scores };
+      this.publish(now);
+    }
     if (!this.host) return;
     let changed = this.host.tick(Date.now());
-    // Players who left the room leave the round too.
+    // Absent players get a grace time to come back (reload); their turn passes meanwhile.
     const here = new Set(this.net.members().map((m) => m.id));
-    for (const p of [...this.host.state.players]) if (!here.has(p)) changed = this.host.removePlayer(p, Date.now()) || changed;
+    const t = Date.now();
+    for (const p of [...this.host.state.players]) {
+      if (here.has(p)) {
+        this.goneSince.delete(p);
+        continue;
+      }
+      const since = this.goneSince.get(p) ?? t;
+      this.goneSince.set(p, since);
+      const s = this.host.state;
+      if (t - since > WHOAMI.absentPassS * 1000 && s.phase === 'play' && s.turn === p && !s.vote) changed = this.host.intent(p, { a: 'pass' }, t, false) || changed;
+      if (t - since > WHOAMI.absentLeaveS * 1000) {
+        this.goneSince.delete(p);
+        changed = this.host.removePlayer(p, t) || changed;
+      }
+    }
     // A slow heartbeat re-syncs anyone who missed a message.
     if (changed || now - this.lastPublish > 3000) this.publish(now);
   }
@@ -150,6 +194,10 @@ export class WhoamiGame implements Minigame {
         this.hostSkew = s.sentAt - Date.now();
         this.applyState(s);
       }
+    } else if (type === 'wi:rejoin') {
+      // Someone came back: as an author, give them my card again (unless it's theirs).
+      const d = data as { new?: unknown; old?: unknown };
+      if (from === this.net.hostId() && typeof d?.new === 'string' && typeof d.old === 'string' && d.new !== this.selfId) this.resendTo(d.new, d.old);
     } else if (type === 'wi:intent') {
       const i = parseIntent(data);
       if (i && this.host) this.applyIntent(from, i);
@@ -158,7 +206,8 @@ export class WhoamiGame implements Minigame {
       const img = parseCardData(d?.img);
       const target = typeof d?.target === 'string' ? d.target : null;
       const s = this.state;
-      if (!img || !target || !s || s.authorOf[target] !== from) return;
+      // From the author, or a copy from another player after a rejoin (never overwriting what we have).
+      if (!img || !target || !s || !(s.authorOf[target] === from || (s.players.includes(from) && !this.cards.has(target)))) return;
       // Our own card only once it's revealed: before that it is dropped, even if someone sends it.
       if (target === this.selfId && !(s.phase === 'done' || s.solved.includes(this.selfId))) return;
       this.cards.set(target, img);

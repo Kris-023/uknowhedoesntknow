@@ -32,8 +32,7 @@ body.locked .panel { opacity: .35; pointer-events: none; }
 kbd { font: inherit; border: 1px solid var(--line); padding: 1px 5px; color: var(--fg); }
 
 .panel { position: fixed; top: 12px; right: 12px; bottom: 12px; width: 360px; max-width: calc((100vw - 24px) / var(--ui)); overflow-y: auto; zoom: var(--ui);
-  background: var(--panel); border: 1px solid var(--line); padding: 14px; display: flex; flex-direction: column; gap: 12px;
-  backdrop-filter: blur(6px); }
+  background: var(--panel); border: 1px solid var(--line); padding: 14px; display: flex; flex-direction: column; gap: 12px; }
 .panel[hidden] { display: none; }
 .panel-head { display: flex; align-items: center; justify-content: space-between; }
 .panel h2 { margin: 0; font: 700 1.5rem/1 var(--font-display); text-transform: uppercase; letter-spacing: .03em; }
@@ -208,6 +207,7 @@ kbd { font: inherit; border: 1px solid var(--line); padding: 1px 5px; color: var
 .bench-title { margin: 0; font: 800 1.6rem/1 var(--font-display); text-transform: uppercase; letter-spacing: .03em; }
 .bench .field { grid-template-columns: 90px minmax(0, 1fr); }
 .bench .slider input { max-width: none; min-width: 0; }
+.trace-out { width: 100%; height: 140px; margin-top: 8px; font: 500 .7rem/1.35 var(--font-mono); background: rgba(0, 0, 0, .35); color: #c9d2e3; border: 1px solid var(--line); resize: vertical; }
 
 /* Play tab: one calm column. */
 .play { display: flex; flex-direction: column; gap: 14px; padding-top: 6px; }
@@ -252,15 +252,16 @@ kbd { font: inherit; border: 1px solid var(--line); padding: 1px 5px; color: var
 .wi-preview { max-width: 100%; max-height: 180px; display: block; }
 .wi-preview[hidden], .wi-drop-hint[hidden] { display: none; }
 
-/* Game prompts sit inside the view (not glued to the edge), translucent so the coach shows through. */
+/* Game prompts sit inside the view (not glued to the edge), translucent so the coach shows through.
+   No backdrop-filter over the live canvas: the browser would re-blur that area every frame. */
 .wi-bar { position: fixed; top: 9vh; left: 0; right: 0; margin-inline: auto; width: max-content; max-width: calc((100vw - 32px) / var(--ui));
-  z-index: 4; zoom: var(--ui); background: rgba(5, 8, 16, .58); backdrop-filter: blur(3px); border: 1px solid rgba(255, 255, 255, .06);
+  z-index: 4; zoom: var(--ui); background: rgba(5, 8, 16, .74); border: 1px solid rgba(255, 255, 255, .06);
   padding: 10px 16px; display: flex; flex-wrap: wrap; align-items: center; justify-content: center; gap: 6px 14px; text-align: center; }
 .wi-bar strong { font: 800 1.25rem/1 var(--font-display); letter-spacing: .02em; }
 .wi-actions { display: flex; flex-wrap: wrap; align-items: center; justify-content: center; gap: 8px 10px; flex-basis: 100%; }
 .wi-banner { position: fixed; top: 52vh; left: 0; right: 0; margin-inline: auto; width: max-content; max-width: calc((100vw - 32px) / var(--ui));
   z-index: 5; zoom: var(--ui); pointer-events: none; text-align: center; display: flex; flex-direction: column; gap: 4px; padding: 12px 26px;
-  background: rgba(5, 8, 16, .55); backdrop-filter: blur(3px); text-shadow: 0 2px 10px rgba(0, 0, 0, .8); }
+  background: rgba(5, 8, 16, .7); text-shadow: 0 2px 10px rgba(0, 0, 0, .8); }
 /* Echo: pops in, holds, drifts up a little while fading. */
 .wi-banner.echo { animation: echo 3.2s ease-out forwards; }
 @keyframes echo {
@@ -301,3 +302,9 @@ body.wi-dialog .hint-bar { display: none; }
 .wi-scores .tag.ok { color: #9bff7a; border-color: rgba(155, 255, 122, .4); }
 .wi-scores .tag.hot { color: var(--amber); border-color: var(--amber); }
 .wi-reveal figure.me figcaption { color: var(--amber); }
+
+/* Problems (graphics crash, offline): one calm box in the middle, above the game. */
+.problem { position: fixed; top: 30vh; left: 0; right: 0; margin-inline: auto; width: max-content; max-width: calc((100vw - 32px) / var(--ui));
+  z-index: 20; zoom: var(--ui); background: var(--panel); border: 1px solid #ff8a7a; padding: 16px 20px; display: flex; flex-direction: column;
+  gap: 12px; align-items: center; text-align: center; }
+.problem p { margin: 0; font-size: 15px; color: var(--fg); }

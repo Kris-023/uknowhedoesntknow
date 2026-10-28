@@ -120,6 +120,46 @@ export class WhoamiHost {
     return false;
   }
 
+  /**
+   * Continue a round from its public state: the new host after the old one left. Secret votes of a
+   * running vote are gone with the old host, so that vote starts over.
+   */
+  static fromState(state: WhoamiState, voteS?: number): WhoamiHost {
+    const h = new WhoamiHost(state.players, state.scores, state.round, voteS);
+    h.state = structuredClone(state);
+    h.state.vote = null;
+    return h;
+  }
+
+  /** A player came back under a new id (reload): everything that names them follows. */
+  replace(oldId: string, newId: string): boolean {
+    const s = this.state;
+    if (!s.players.includes(oldId)) return false;
+    const r = (id: string) => (id === oldId ? newId : id);
+    s.players = s.players.map(r);
+    s.authorOf = Object.fromEntries(Object.entries(s.authorOf).map(([t, a]) => [r(t), r(a)]));
+    s.ready = s.ready.map(r);
+    s.solved = s.solved.map(r);
+    s.turn = s.turn && r(s.turn);
+    if (s.vote) {
+      s.vote.guesser = r(s.vote.guesser);
+      s.vote.voters = s.vote.voters.map(r);
+      const v = this.votes.get(oldId);
+      if (v) {
+        this.votes.delete(oldId);
+        this.votes.set(newId, v);
+      }
+    }
+    if (s.last) s.last.guesser = r(s.last.guesser);
+    for (const rec of [s.scores, s.questions]) {
+      if (oldId in rec) {
+        rec[newId] = rec[oldId];
+        delete rec[oldId];
+      }
+    }
+    return true;
+  }
+
   /** The Schaffner's fine. */
   penalize(id: string, points: number): void {
     if (id in this.state.scores) this.state.scores[id] -= points;

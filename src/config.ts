@@ -77,14 +77,22 @@ export const LIGHTS: LightPreset = { ...LIGHT_PRESETS.nacht };
 
 export const RENDER = {
   maxPixelRatio: 2,
+  /** MSAA on the scene target. The canvas itself has no AA: with post-processing only fullscreen quads reach it. */
+  msaaSamples: 4,
   fogNear: 4,
   fogFar: 40,
 } as const;
 
 /** Real bloom (post-processing). The fake halos stay for the case it is switched off. */
 export const BLOOM = {
-  strength: 0.8,
-  radius: 0.45,
+  /**
+   * Tuned for the half-size bloom below: its coarser mips spread more haze, so strength and radius
+   * are lower than the full-size values they replace (0.8 / 0.45); same look within ~3/255 on average.
+   */
+  strength: 0.72,
+  radius: 0.25,
+  /** Bloom works at this fraction of the render size; glow is soft anyway, the full size cost ~10 % GPU. */
+  resolutionScale: 0.5,
 } as const;
 
 export const SPEED = {
@@ -108,7 +116,8 @@ export const SHAKE = {
 export const TRAIN = {
   period: 11.6,
   gangwayLength: 0.8,
-  neighboursPerSide: 3,
+  /** A third copy (29–41 m away) changed 0.01 % of the pixels: the fog (far 40) swallows it. */
+  neighboursPerSide: 2,
   /** Neighbour coaches up to this distance (per side) carry baked passengers; two crowd variants alternate. */
   crowdedPerSide: 2,
   crowdVariants: 2,
@@ -200,6 +209,8 @@ export const NET = {
   poseEpsilon: 0.002,
   /** Smoothing rate for remote heads; together with ~50 ms send interval stays well under 150 ms. */
   remoteRate: 18,
+  /** Someone who comes back within this long (reload, short drop) gets their seat back. */
+  rejoinMs: 5 * 60_000,
   /** Joiner repeats its hello until a host answers (host may still be connecting). */
   helloRetryMs: 2000,
   /** Quick pings right after joining for a good clock offset, then occasional ones. */
@@ -243,6 +254,14 @@ export const VOICE = {
   vadHangMs: 450,
   vadLookaheadS: 0.05,
   vadPollMs: 15,
+  /**
+   * Outgoing voice: a highpass takes out desk thumps and rumble, a limiter only catches shouts before
+   * they clip (it starts above the Schaffner's level, so it doesn't hide shouting from him).
+   * Opus starts around 32 kbit/s in browsers; 64 is clearly fuller and still nothing for a 4-way mesh.
+   */
+  highpassHz: 80,
+  limiterDb: -6,
+  bitrate: 64_000,
   /** Push-to-talk key (KeyboardEvent.code) and mute toggle. */
   pttKey: 'KeyV',
   muteKey: 'KeyM',
@@ -291,13 +310,16 @@ export const WHOAMI = {
   points: [3, 2, 1, 1],
   /** A vote closes after this long with the votes that came in. */
   voteS: 20,
+  /** Absent player (reload, dropout): their turn passes after this long, they leave the round after that. */
+  absentPassS: 8,
+  absentLeaveS: 60,
   /** Card image: longest side in px, JPEG quality. Kept in memory only, never uploaded. */
   cardPx: 512,
   cardQuality: 0.82,
   /** Largest card payload accepted from a peer (base64 data URL). */
   cardMaxChars: 600_000,
   /** Card above the head: size in metres (for the on-screen size); its bottom edge this high above the seat root. */
-  cardSizeM: 0.44,
+  cardSizeM: 0.62,
   cardY: 1.1,
 } as const;
 
@@ -316,4 +338,16 @@ export const SCHAFFNER = {
   penalty: 1,
   /** How long he stands next to you. */
   showS: 7,
+} as const;
+
+/** Rolling random looks and the procedural hair/beard materials. */
+export const LOOKS = {
+  /** Share of random looks with a joke face (gestreckt, länglich, Dorito). */
+  jokeFaceChance: 0.12,
+  /** Share of random men with some beard (style picked separately). */
+  beardChance: 0.35,
+  /** Relief of the hair textures; higher reads as coarser hair under the coach lights. */
+  hairBump: 2.5,
+  /** Stubble is a dotted decal over the jaw; at full opacity it reads as dirt. */
+  stubbleOpacity: 0.85,
 } as const;

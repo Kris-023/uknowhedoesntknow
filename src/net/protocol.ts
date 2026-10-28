@@ -1,5 +1,5 @@
 import { ITEMS, SLOTS, type ItemId } from '../characters/accessories';
-import { BUILDS, HAIRSTYLES, type Look } from '../characters/look';
+import { BEARDS, BUILDS, FACES, FOOTWEAR, HAIRSTYLES, TOPSTYLES, type Beard, type Look } from '../characters/look';
 import type { PersonState } from '../characters/person';
 import type { Slot } from '../characters/rig';
 import { HEAD, NET } from '../config';
@@ -60,17 +60,28 @@ const num = (v: unknown, min: number, max: number): number | null =>
   typeof v === 'number' && Number.isFinite(v) && v >= min && v <= max ? v : null;
 const color = (v: unknown) => num(v, 0, 0xffffff);
 
+/** Beard was a plain flag before the styles: `true` becomes the full beard it used to draw. */
+function parseBeard(v: unknown): Beard {
+  if (v === true) return 'vollbart';
+  return BEARDS.find((b) => b === v) ?? 'none';
+}
+
 export function parseLook(v: unknown): Look | null {
   if (!isObj(v)) return null;
   const hair = HAIRSTYLES.find((h) => h === v.hair);
   const cols = [v.skin, v.hairCol, v.top, v.pants, v.shoes, v.hat].map(color);
-  const flags = [v.female, v.glasses, v.beard, v.short];
+  const flags = [v.female, v.glasses, v.short];
   if (!hair || cols.some((c) => c === null) || flags.some((f) => typeof f !== 'boolean')) return null;
   const [skin, hairCol, top, pants, shoes, hat] = cols as number[];
-  const [female, glasses, beard, short] = flags as boolean[];
-  // Profiles saved before builds existed have none: they keep the old normal body.
+  const [female, glasses, short] = flags as boolean[];
+  // Fields added later fall back to the old look, so saved profiles and older peers still load.
   const build = BUILDS.find((b) => b === v.build) ?? 'normal';
-  return { female, build, skin, hair, hairCol, top, pants, shoes, hat, glasses, beard, short };
+  const face = FACES.find((f) => f === v.face) ?? 'oval';
+  const beard = parseBeard(v.beard);
+  const topStyle = TOPSTYLES.find((t) => t === v.topStyle) ?? 'shirt';
+  const footwear = FOOTWEAR.find((f) => f === v.footwear) ?? 'sneaker';
+  const acc = color(v.acc) ?? hat;
+  return { female, build, skin, hair, hairCol, top, pants, shoes, hat, glasses, beard, short, face, topStyle, footwear, acc };
 }
 
 export function parseState(v: unknown): PersonState | null {

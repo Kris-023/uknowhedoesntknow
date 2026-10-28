@@ -60,6 +60,10 @@ function streakMat(map: THREE.Texture, opacity: number): THREE.MeshBasicMaterial
     blending: THREE.AdditiveBlending,
     depthWrite: false,
     side: THREE.DoubleSide,
+    // Additive blending doesn't care about order, so one pass is enough. Without this three.js draws
+    // transparent double-sided meshes twice (back, then front) and flags the material for a program
+    // check twice per frame.
+    forceSinglePass: true,
   });
 }
 
@@ -83,6 +87,10 @@ export function buildTunnel(scene: THREE.Scene, seed: number): Tunnel {
   const fixedY = new Float32Array(N);
   const speedMul = new Float32Array(N);
   const pulseF = new Float32Array(N);
+  // Debris x/y only change when a streak wraps, so they are hashed once per lap, not per frame.
+  const lapOf = new Float64Array(N).fill(NaN);
+  const lapX = new Float32Array(N);
+  const lapY = new Float32Array(N);
   const base: THREE.Color[] = [];
 
   const geo = crossedPlanes();
@@ -139,9 +147,14 @@ export function buildTunnel(scene: THREE.Scene, seed: number): Tunnel {
         let x = fixedX[i];
         let y = fixedY[i];
         if (i >= TUNNEL.regular) {
-          const side = hash01(seed, i, lap, 1) < 0.5 ? -1 : 1;
-          x = side * (2.0 + hash01(seed, i, lap, 2) * 3.5);
-          y = hash01(seed, i, lap, 3) * 2.8 - 0.1;
+          if (lapOf[i] !== lap) {
+            lapOf[i] = lap;
+            const side = hash01(seed, i, lap, 1) < 0.5 ? -1 : 1;
+            lapX[i] = side * (2.0 + hash01(seed, i, lap, 2) * 3.5);
+            lapY[i] = hash01(seed, i, lap, 3) * 2.8 - 0.1;
+          }
+          x = lapX[i];
+          y = lapY[i];
         }
         const l = len[i] * stretch;
         // Fade in/out near the wrap ends so streaks don't pop into existence.

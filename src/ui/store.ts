@@ -48,6 +48,8 @@ export interface Settings {
   /** Multiplier on the base mouse sensitivity. */
   mouseSens: number;
   invertY: boolean;
+  /** Read the mouse from pointerrawupdate instead of mousemove (device events, not one per frame). */
+  mouseRaw: boolean;
   /** Use the microphone in rooms (asked for when joining). */
   micOn: boolean;
   /** Input device id, '' = browser default. */
@@ -59,6 +61,12 @@ export interface Settings {
   micGain: number;
   /** Volume of all voices. */
   voiceVolume: number;
+  /** Noise filter on the own mic: neural (RNNoise, also catches typing), the browser's own, or none. */
+  micFilter: 'ki' | 'browser' | 'off';
+  /** Browser echo cancellation (removes what comes out of your speakers). */
+  echoCancel: boolean;
+  /** Browser auto gain: evens out distance to the mic, but also lifts room noise in pauses. */
+  autoGain: boolean;
   /** Train sounds (rumble, rail joints, oncoming trains, gong). */
   ambientVolume: number;
   /** Spoken stop announcements (browser speech). */
@@ -76,12 +84,16 @@ function defaults(): Settings {
     shakeMm: SHAKE.defaultMm,
     mouseSens: 1,
     invertY: false,
+    mouseRaw: true,
     micOn: true,
     micDevice: '',
     voiceMode: 'open',
     vadLevel: VOICE.vadDefault,
     micGain: 1,
     voiceVolume: 1,
+    micFilter: 'ki',
+    echoCancel: true,
+    autoGain: true,
     ambientVolume: 0.7,
     announcements: true,
   };
@@ -103,12 +115,16 @@ function loadSettings(): Settings {
     shakeMm: num(o.shakeMm, 0, SHAKE.maxMm, d.shakeMm),
     mouseSens: num(o.mouseSens, 0.2, 3, d.mouseSens),
     invertY: bool(o.invertY, d.invertY),
+    mouseRaw: bool(o.mouseRaw, d.mouseRaw),
     micOn: bool(o.micOn, d.micOn),
     micDevice: typeof o.micDevice === 'string' && o.micDevice.length < 300 ? o.micDevice : d.micDevice,
     voiceMode: o.voiceMode === 'ptt' || o.voiceMode === 'auto' ? o.voiceMode : 'open',
     vadLevel: num(o.vadLevel, 0.05, 0.95, d.vadLevel),
     micGain: num(o.micGain, 0.25, 3, d.micGain),
     voiceVolume: num(o.voiceVolume, 0, 1.5, d.voiceVolume),
+    micFilter: o.micFilter === 'browser' || o.micFilter === 'off' ? o.micFilter : d.micFilter,
+    echoCancel: bool(o.echoCancel, d.echoCancel),
+    autoGain: bool(o.autoGain, d.autoGain),
     ambientVolume: num(o.ambientVolume, 0, 1.5, d.ambientVolume),
     announcements: bool(o.announcements, d.announcements),
   };

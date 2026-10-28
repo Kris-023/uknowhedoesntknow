@@ -2,6 +2,8 @@ import * as THREE from 'three';
 import { VOICE } from '../config';
 import type { Transport } from '../net/transport';
 import { onSettings, settings } from '../ui/store';
+import type { RnnoiseWorkletNode } from '@sapphi-red/web-noise-suppressor';
+import { createDenoiser } from './denoise';
 
 /** Mic RMS -> mouth level 0..1, gated so room noise keeps the mouth shut. */
 export function rmsToLevel(rms: number): number {
@@ -74,8 +76,23 @@ export class Voice {
   readonly bus: GainNode;
   private master: GainNode;
   private reverb: ConvolverNode;
-  /** raw: the device stream; send: after our gain, this is what peers get. */
-  private mic: { raw: MediaStream; send: MediaStream; gain: GainNode; delay: DelayNode; analyser: AnalyserNode } | null = null;
+  /** raw: the device stream; send: after our processing, this is what peers get. */
+  private mic: {
+    raw: MediaStream;
+    send: MediaStream;
+    src: MediaStreamAudioSourceNode;
+    denoise: RnnoiseWorkletNode | null;
+    gain: GainNode;
+    delay: DelayNode;
+    analyser: AnalyserNode;
+  } | null = null;
+  /**
+   * The mic gets its own 48 kHz context without an output device: RNNoise needs 48 kHz, and if the
+   * filter ever stalls, only the outgoing voice hiccups, not everything you hear.
+   */
+  private micCtx: AudioContext | null = null;
+  /** Which noise filter is actually running (the neural one can fail to load). */
+  micFilter: 'ki' | 'browser' | 'off' = 'off';
   /** Voice activation state (only used in 'auto' mode). */
   private gateOpen = false;
   private lastLoud = 0;
@@ -122,8 +139,9 @@ export class Voice {
     onSettings(() => {
       const s = settings;
       this.master.gain.setTargetAtTime(this.roomVoice ? s.voiceVolume : 0, this.ctx.currentTime, 0.05);
-      this.mic?.gain.gain.setTargetAtTime(s.micGain, this.ctx.currentTime, 0.05);
-      if (s.micOn !== last.micOn || (s.micOn && s.micDevice !== last.micDevice)) {
+      this.mic?.gain.gain.setTargetAtTime(s.micGain, this.mic.gain.context.currentTime, 0.05);
+      const chain = s.micDevice !== last.micDevice || s.micFilter !== last.micFilter || s.echoCancel !== last.echoCancel || s.autoGain !== last.autoGain;
+      if (s.micOn !== last.micOn || (s.micOn && chain)) {
         if (s.micOn && this.roomVoice) void this.startMic();
         else this.stopMic();
       }
@@ -154,6 +172,16 @@ export class Voice {
   /** Must run inside a click or key press: browsers only start audio after a user gesture. */
   resume(): void {
     void this.ctx.resume();
+    void this.micCtx?.resume();
+  }
+
+  private micContext(): AudioContext | null {
+    try {
+      this.micCtx ??= new AudioContext({ sampleRate: 48000, latencyHint: 'interactive', sinkId: { type: 'none' } } as AudioContextOptions);
+    } catch {
+      return null;
+    }
+    return this.micCtx;
   }
 
   onChange(f: () => void): () => void {
@@ -190,11 +218,25 @@ export class Voice {
     this.stopMic();
     this.micState = 'starting';
     this.emit();
+    // The neural filter loads before the mic is opened: if it can't run, the browser's own steps in.
+    let ctx = this.ctx;
+    let denoise: RnnoiseWorkletNode | null = null;
+    const micCtx = settings.micFilter === 'ki' ? this.micContext() : null;
+    if (micCtx) {
+      try {
+        denoise = await createDenoiser(micCtx);
+        ctx = micCtx;
+      } catch (e) {
+        console.warn('Rauschfilter:', e);
+      }
+    }
+    let filter: Voice['micFilter'] = denoise ? 'ki' : settings.micFilter === 'off' ? 'off' : 'browser';
     const audio = (deviceId?: string): MediaTrackConstraints => ({
       deviceId: deviceId ? { exact: deviceId } : undefined,
-      echoCancellation: true,
-      noiseSuppression: true,
-      autoGainControl: true,
+      echoCancellation: settings.echoCancel,
+      // Never both: two suppressors in a row make voices sound underwater.
+      noiseSuppression: filter === 'browser',
+      autoGainControl: settings.autoGain,
     });
     try {
       let stream: MediaStream;
@@ -206,23 +248,45 @@ export class Voice {
         stream = await navigator.mediaDevices.getUserMedia({ audio: audio() });
       }
       if (!settings.micOn) {
+        denoise?.destroy();
         stream.getTracks().forEach((t) => t.stop());
         this.micState = 'off';
         this.emit();
         return;
       }
-      // Mic -> gain -> (analyser, outgoing stream). The gain is the player's mic volume, so the test
-      // meter shows exactly what the others will get. Never played back locally (no self-echo).
-      const gain = new GainNode(this.ctx, { gain: settings.micGain });
-      const analyser = this.ctx.createAnalyser();
+      let src: MediaStreamAudioSourceNode;
+      try {
+        src = ctx.createMediaStreamSource(stream);
+      } catch (e) {
+        // Firefox can't connect a mic running at 44.1 kHz to the 48 kHz context: browser filter instead.
+        if (ctx === this.ctx) throw e;
+        denoise?.destroy();
+        denoise = null;
+        ctx = this.ctx;
+        if (settings.micFilter !== 'off') {
+          filter = 'browser';
+          await stream.getAudioTracks()[0]?.applyConstraints(audio(settings.micDevice || undefined)).catch(() => {});
+        }
+        src = ctx.createMediaStreamSource(stream);
+      }
+      void ctx.resume();
+      // Mic -> highpass -> (RNNoise) -> gain -> (analyser, limiter -> delay -> outgoing stream). The gain
+      // is the player's mic volume, so the test meter shows what the others get. Never played back
+      // locally (no self-echo).
+      const highpass = new BiquadFilterNode(ctx, { type: 'highpass', frequency: VOICE.highpassHz, Q: 0.7 });
+      const gain = new GainNode(ctx, { gain: settings.micGain });
+      const analyser = ctx.createAnalyser();
       analyser.fftSize = 512;
-      const dest = this.ctx.createMediaStreamDestination();
+      const limiter = new DynamicsCompressorNode(ctx, { threshold: VOICE.limiterDb, knee: 4, ratio: 12, attack: 0.003, release: 0.15 });
+      const dest = ctx.createMediaStreamDestination();
       // Only the sent audio is delayed (for voice activation); the analyser sees it live.
-      const delay = new DelayNode(this.ctx, { maxDelayTime: 0.2 });
-      this.ctx.createMediaStreamSource(stream).connect(gain);
+      const delay = new DelayNode(ctx, { maxDelayTime: 0.2 });
+      src.connect(highpass);
+      (denoise ? highpass.connect(denoise) : highpass).connect(gain);
       gain.connect(analyser);
-      gain.connect(delay).connect(dest);
-      this.mic = { raw: stream, send: dest.stream, gain, delay, analyser };
+      gain.connect(limiter).connect(delay).connect(dest);
+      this.micFilter = filter;
+      this.mic = { raw: stream, send: dest.stream, src, denoise, gain, delay, analyser };
       this.micState = 'on';
       this.micError = '';
       this.applyLookahead();
@@ -246,8 +310,11 @@ export class Voice {
     if (this.mic) {
       this.net?.removeStream?.(this.mic.send);
       this.mic.raw.getTracks().forEach((t) => t.stop());
+      this.mic.src.disconnect();
       this.mic.gain.disconnect();
+      this.mic.denoise?.destroy();
       this.mic = null;
+      this.micFilter = 'off';
     }
     if (this.micState !== 'starting') this.micState = 'off';
     this.emit();
@@ -280,7 +347,7 @@ export class Voice {
   }
 
   private applyLookahead(): void {
-    this.mic?.delay.delayTime.setValueAtTime(settings.voiceMode === 'auto' ? VOICE.vadLookaheadS : 0, this.ctx.currentTime);
+    this.mic?.delay.delayTime.setValueAtTime(settings.voiceMode === 'auto' ? VOICE.vadLookaheadS : 0, this.mic.delay.context.currentTime);
   }
 
   setMuted(m: boolean): void {
