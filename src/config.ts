@@ -352,8 +352,40 @@ export const LOOKS = {
   stubbleOpacity: 0.85,
 } as const;
 
-/** Room settings dialog: the vote durations on offer. */
+/** Word cards shared by every word game: limits for submissions and what peers may send. */
+export const WORDS = {
+  maxChars: 40,
+  maxTaboo: 8,
+  /** Own list in the browser. */
+  maxCustom: 500,
+  /** Cards one player brings into a room. */
+  maxShared: 300,
+} as const;
+
+/** "Sag's anders": explain a word without its forbidden words. */
+export const SAGS = {
+  /** Seconds per turn (the room picks from ROOM.turnChoices). */
+  turnS: 60,
+  /** Every player explains this many turns per round. */
+  turnsEach: 2,
+  /** Free for all (2–3 players): the one who guessed and the one who explained. */
+  ffaGuesser: 2,
+  ffaExplainer: 1,
+  /** Teams (4 players): a guessed word for the explaining team, a foul for the other one. */
+  teamGot: 1,
+  teamFoul: 1,
+  /** Free for all: on a foul the word's points are taken back and the explainer loses this much. */
+  ffaFoul: 1,
+  /** After each word its card is shown to all; this long anyone may still call a foul (free for all). */
+  challengeS: 8,
+  /** Absent explainer (reload, dropout): the turn ends after this long, they leave the round after that. */
+  absentPassS: 8,
+  absentLeaveS: 60,
+} as const;
+
+/** Room settings dialog: the choices on offer. */
 export const ROOM = {
   voteChoices: [10, 20, 30, 45],
   voteDefault: WHOAMI.voteS,
+  turnChoices: [45, 60, 90, 120],
 } as const;

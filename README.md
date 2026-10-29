@@ -2,7 +2,7 @@
 
 Browser-Partyspiel für 2 bis 4 Freunde: Ihr sitzt euch in einem viel zu schnellen U-Bahn-Wagen gegenüber,
 draußen rast der Tunnel vorbei, drinnen flackert das Neon, und die Mitreisenden starren aufs Handy.
-Der Wagen heißt „Hypertrain“ und ist die erste Map, das erste Minigame ist „Wer bin ich?“.
+Der Wagen heißt „Hypertrain“ und ist die erste Map, die Minigames sind „Wer bin ich?“ und „Sag's anders“.
 Nur PC, nur Browser, nur private Räume, kein Server.
 
 **Stand: M7 (alle Meilensteine aus dem Auftrag umgesetzt).** Details und offene Fragen: `teamlead/SUPERDOC.md`.
@@ -15,12 +15,13 @@ Nur PC, nur Browser, nur private Räume, kein Server.
 3. Figur und Accessoires im Tab **Charakter**, Ton und Grafik in **Einstellungen**. Der Browser merkt sich alles.
 
 Neben „Raum erstellen“ liegen die **Raum-Einstellungen**: Sprachchat an/aus (aus, wenn ihr schon im TeamSpeak oder
-Discord seid), Schaffner aus / nur ermahnen / mit Punktabzug, Abstimmungszeit und Stromausfälle. Der Host kann sie im
-Esc-Menü jederzeit für alle ändern.
+Discord seid), Schaffner aus / nur ermahnen / mit Punktabzug, Abstimmungszeit, Stromausfälle, Wortstapel und Zeit pro
+Zug. Der Host kann sie im Esc-Menü jederzeit für alle ändern.
+
+Zwischen den Runden steht oben, welches Minigame als Nächstes kommt: <kbd>T</kbd> wechselt, <kbd>G</kbd> startet (nur der Host).
 
 ### Wer bin ich?
 
-- Oben steht, ob es losgehen kann. Der Host startet mit <kbd>G</kbd>.
 - Jeder sucht ein Bild für den Nachbarn: Link, <kbd>Strg</kbd>+<kbd>V</kbd>, reinziehen oder Datei. Die Karte schwebt über
   dessen Kopf; die eigene sieht man nicht.
 - Wer dran ist, stellt laut eine Ja/Nein-Frage und drückt <kbd>F</kbd>. Die anderen stimmen geheim ab:
@@ -28,6 +29,23 @@ Esc-Menü jederzeit für alle ändern.
 - „Ich bin …“ sagen und <kbd>R</kbd> drücken: die anderen stimmen ab, ob es stimmt. <kbd>P</kbd> gibt den Zug weiter.
 - Wer zuerst errät, bekommt 3 Punkte, dann 2, dann 1. Wer zu lange zu laut ist, bekommt Besuch vom Schaffner: −1 Punkt.
 - Unten links stehen Phase, Reihenfolge, Punkte und wer schon abgestimmt hat.
+
+### Sag's anders
+
+Ein Wort erklären, ohne das Wort selbst und ohne die rot durchgestrichenen Wörter auf der Karte zu sagen.
+
+- **Modus** in den Raum-Einstellungen: **Teams** (Standard) oder **Jeder gegen jeden**. Teams gehen nur zu viert;
+  mit 2–3 Spielern spielt immer jeder gegen jeden.
+- **Teams:** Blau gegen Gelb, je zwei gegenüber. Wer erklärt, sieht die Karte; das eigene Team rät laut,
+  das andere Team sieht die Karte mit und drückt <kbd>B</kbd>, sobald ein verbotenes Wort fällt (+1 für sie).
+  Erraten mit <kbd>Leertaste</kbd> gibt dem erklärenden Team 1 Punkt.
+- **Jeder gegen jeden:** Alle anderen raten; wer es errät, bekommt 2 Punkte, wer erklärt hat, 1.
+  Wer es erraten hat, wählt der Erklärer mit <kbd>1</kbd>–<kbd>3</kbd>. Danach sehen alle die Karte noch 8 Sekunden und
+  können mit <kbd>B</kbd> anfechten: dann fallen die Punkte weg und der Erklärer verliert 1.
+- <kbd>Leertaste</kbd> startet den eigenen Zug (60 s, einstellbar), <kbd>P</kbd> überspringt eine Karte. Jeder erklärt zweimal.
+- Wortstapel: **Normal**, **NSFW** (richtig derb, nur für Leute, die das wollen) und **Eigene**. Eigene Wörter trägst du
+  im Menü-Tab **Wörter** ein; sie bleiben in deinem Browser und kommen im Raum zu allen, ohne dass sie vorher jemand sieht.
+  Mit „Liste kopieren“ oder als Datei gibst du sie weiter; am Rundenende kannst du gespielte Wörter anderer übernehmen.
 
 ### Steuerung
 
@@ -44,7 +62,7 @@ Kopfhörer sind am besten. Chrome rechnet Spielton nicht aus dem Mikro heraus, F
 ### Alleine ausprobieren
 
 **Einstellungen → Benchmark starten**: allein im Wagen mit simulierten Mitreisenden, FPS und Grafik live einstellen.
-<kbd>G</kbd> startet dort eine Testrunde „Wer bin ich?“ gegen Bots. Mehrere Tabs auf einem Rechner gehen auch als Mitspieler.
+<kbd>T</kbd> wählt das Minigame, <kbd>G</kbd> startet eine Testrunde gegen Bots. Mehrere Tabs auf einem Rechner gehen auch als Mitspieler.
 
 ### Wenn etwas hakt
 

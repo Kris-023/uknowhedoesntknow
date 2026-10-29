@@ -2,7 +2,8 @@ import { ITEMS, SLOTS, type ItemId } from '../characters/accessories';
 import { BEARDS, BUILDS, FACES, FOOTWEAR, HAIRSTYLES, TOPSTYLES, type Beard, type Look } from '../characters/look';
 import type { PersonState } from '../characters/person';
 import type { Slot } from '../characters/rig';
-import { HEAD, NET, ROOM } from '../config';
+import { HEAD, NET, ROOM, SAGS } from '../config';
+import { DECK_IDS, type DeckId } from '../words/types';
 
 // Wire format. Only IDs and numbers travel, never geometry. Everything received is validated,
 // because a peer is just another browser that could send anything.
@@ -34,6 +35,12 @@ export interface RoomOpts {
   voteS: number;
   /** Random power failures in the coach (the lights going out). */
   blackouts: boolean;
+  /** Word decks in play for word games ("Sag's anders"). */
+  decks: DeckId[];
+  /** Seconds per turn in "Sag's anders". */
+  turnS: number;
+  /** "Sag's anders" with four players: two teams, or everyone against everyone (fewer always play alone). */
+  sagsTeams: boolean;
 }
 
 /** Anything missing or broken falls back to the default, so older peers and saves still work. */
@@ -44,6 +51,9 @@ export function parseOpts(v: unknown): RoomOpts {
     schaffner: SCHAFFNER_MODES.includes(o.schaffner as SchaffnerMode) ? (o.schaffner as SchaffnerMode) : 'fine',
     voteS: (ROOM.voteChoices as readonly number[]).includes(o.voteS as number) ? (o.voteS as number) : ROOM.voteDefault,
     blackouts: o.blackouts !== false,
+    decks: Array.isArray(o.decks) ? DECK_IDS.filter((d) => (o.decks as unknown[]).includes(d)) : ['normal', 'custom'],
+    turnS: (ROOM.turnChoices as readonly number[]).includes(o.turnS as number) ? (o.turnS as number) : SAGS.turnS,
+    sagsTeams: o.sagsTeams !== false,
   };
 }
 
