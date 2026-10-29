@@ -1,66 +1,51 @@
-import { AMBIENCE, HALT_CYCLE_S, SPEED, STATIONS } from '../config';
-import { haltCountdown, nextStopIndex } from '../core/motion';
-import { hash01 } from '../core/rng';
+import type { MapDef, MapSound, SoundKit } from '../maps/types';
+import { AMBIENCE } from '../config';
 import { onSettings, settings } from '../ui/store';
 import { impulse, type Voice } from './voice';
 
-/** Announcement texts per stop; the cycle index picks one, so all clients hear the same. */
-const LINES: Record<(typeof STATIONS)[number], string[]> = {
-  Offenbach: ['Nächster Halt: Offenbach.', 'Nächster Halt: Offenbach. Bitte nicht an den Türen lehnen.'],
-  Kaiserslautern: ['Nächster Halt: Kaiserslautern.', 'Nächster Halt: Kaiserslautern. Ausstieg in Fahrtrichtung rechts.'],
-  Oranienburg: ['Nächster Halt: Oranienburg.', 'Nächster Halt: Oranienburg. Zurückbleiben bitte.'],
-  'Alt Schauerberg': ['Nächster Halt: Alt Schauerberg.', 'Nächster Halt: Alt Schauerberg. Ausstieg in Fahrtrichtung links.'],
-  KitKat: ['Nächster Halt: KitKat.', 'Nächster Halt: KitKat. Bitte achten Sie auf Ihr Gepäck. Und auf Ihre Gurke.'],
-  Kreuzberg: ['Nächster Halt: Kreuzberg.', 'Nächster Halt: Kreuzberg. Ausstieg in Fahrtrichtung links.'],
-  Alfteller: ['Nächster Halt: Alfteller.', 'Nächster Halt: Alfteller. Bitte nicht an den Türen lehnen.'],
-  Gutach: ['Nächster Halt: Gutach. Endstation, bitte alle aussteigen.', 'Nächster Halt: Gutach. Dieser Zug endet dort. Wirklich.'],
-};
-
 /**
- * Synthetic train sounds, all from Web Audio and the shared clock: low rumble and motor hum with
- * the speed, a relay clunk when the power drops, and a gong before each stop's announcement.
- * No audio files. Rail-joint clicks and the oncoming-train whoosh were tried and dropped on
- * request (too present); the oncoming train is light only.
+ * Map ambience from Web Audio and the shared clock, no audio files. This class owns the shared
+ * parts (volume, noise, the ceiling-speaker gong, browser speech, the relay clunk when the power
+ * drops); each map plays its own bed through the kit (see MapDef.sound).
  */
-export class Ambience {
-  private ctx: AudioContext;
-  private out: GainNode;
-  private noise: AudioBuffer;
-  private rumble: GainNode;
-  private rumbleLp: BiquadFilterNode;
-  private hum: GainNode;
-  private humOsc: OscillatorNode;
-  /** Gong chain: band-limited like a cheap ceiling speaker, plus a bit of tiled-coach echo. */
+export class Ambience implements SoundKit {
+  readonly ctx: AudioContext;
+  readonly out: GainNode;
+  readonly bed: GainNode;
+  readonly music: GainNode;
+  readonly noise: AudioBuffer;
+  /** Gong chain: band-limited like a cheap ceiling speaker, plus a bit of room echo. */
   private speaker: GainNode;
-  private lastAnnounce = -1;
+  private map: MapSound;
   private lastPower = 1;
   /** Relay: one quiet clunk per outage, not one per flicker of the stuttering start. */
   private lastClunk = -Infinity;
   private restoreSince: number | null = null;
 
-  constructor(
-    voice: Voice,
-    private seed: number,
-  ) {
+  constructor(voice: Voice, seed: number, map: MapDef) {
     const ctx = (this.ctx = voice.ctx);
+    // Three channels straight to the bus, so each has its own volume; the bed sits under the ambience.
+    const bedLevel = () => (settings.quietAmbience ? AMBIENCE.quietBed : 1);
+    const musicLevel = () => (settings.musicOn ? settings.musicVolume : 0);
     this.out = new GainNode(ctx, { gain: settings.ambientVolume });
     this.out.connect(voice.bus);
-    onSettings(() => this.out.gain.setTargetAtTime(settings.ambientVolume, ctx.currentTime, 0.05));
+    this.bed = new GainNode(ctx, { gain: bedLevel() });
+    this.bed.connect(this.out);
+    this.music = new GainNode(ctx, { gain: musicLevel() });
+    this.music.connect(voice.bus);
+    const announceOut = new GainNode(ctx, { gain: settings.announceVolume });
+    announceOut.connect(voice.bus);
+    onSettings(() => {
+      const now = ctx.currentTime;
+      this.out.gain.setTargetAtTime(settings.ambientVolume, now, 0.05);
+      this.bed.gain.setTargetAtTime(bedLevel(), now, 0.15);
+      this.music.gain.setTargetAtTime(musicLevel(), now, 0.15);
+      announceOut.gain.setTargetAtTime(settings.announceVolume, now, 0.05);
+    });
 
     this.noise = ctx.createBuffer(1, ctx.sampleRate * 2, ctx.sampleRate);
     const d = this.noise.getChannelData(0);
     for (let i = 0; i < d.length; i++) d[i] = Math.random() * 2 - 1;
-
-    const src = new AudioBufferSourceNode(ctx, { buffer: this.noise, loop: true });
-    this.rumbleLp = new BiquadFilterNode(ctx, { type: 'lowpass', frequency: 150, Q: 0.7 });
-    this.rumble = new GainNode(ctx, { gain: 0 });
-    src.connect(this.rumbleLp).connect(this.rumble).connect(this.out);
-    src.start();
-    this.humOsc = new OscillatorNode(ctx, { type: 'sawtooth', frequency: 40 });
-    const humLp = new BiquadFilterNode(ctx, { type: 'lowpass', frequency: 220 });
-    this.hum = new GainNode(ctx, { gain: 0 });
-    this.humOsc.connect(humLp).connect(this.hum).connect(this.out);
-    this.humOsc.start();
 
     this.speaker = new GainNode(ctx, { gain: 0.5 });
     const hp = new BiquadFilterNode(ctx, { type: 'highpass', frequency: 380 });
@@ -68,21 +53,16 @@ export class Ambience {
     const room = new ConvolverNode(ctx, { buffer: impulse(ctx, 0.9) });
     const wet = new GainNode(ctx, { gain: 0.35 });
     this.speaker.connect(hp).connect(lp);
-    lp.connect(this.out);
-    lp.connect(room).connect(wet).connect(this.out);
+    lp.connect(announceOut);
+    lp.connect(room).connect(wet).connect(announceOut);
+    this.map = map.sound(this, seed);
   }
 
-  /** Per frame. `power` 0..1 coach supply. */
+  /** Per frame. `power` 0..1 supply of the map (coach, laundromat fuse, …). */
   update(t: number, kmh: number, power: number): void {
     if (this.ctx.state !== 'running') return;
     const now = this.ctx.currentTime;
-    const sf = Math.min(1, kmh / SPEED.maxKmh);
-    this.rumble.gain.setTargetAtTime(0.02 + 0.22 * Math.sqrt(sf), now, 0.3);
-    this.rumbleLp.frequency.setTargetAtTime(110 + 260 * sf, now, 0.3);
-    // The motor sings with the speed; it stops with the power, the rumble doesn't (the train rolls on).
-    this.hum.gain.setTargetAtTime(0.035 * sf * power, now, 0.15);
-    this.humOsc.frequency.setTargetAtTime(32 + 60 * sf, now, 0.3);
-
+    this.map.update(t, power, kmh);
     if (power < 0.5 && this.lastPower >= 0.5 && now - this.lastClunk > 3) {
       this.clunk(0.14);
       this.lastClunk = now;
@@ -95,32 +75,22 @@ export class Ambience {
       this.restoreSince = null;
     }
     this.lastPower = power;
-
-    const cycle = Math.floor(t / HALT_CYCLE_S);
-    if (haltCountdown(t, HALT_CYCLE_S) === AMBIENCE.announceAt && cycle !== this.lastAnnounce) {
-      this.lastAnnounce = cycle;
-      const station = STATIONS[nextStopIndex(t, HALT_CYCLE_S, STATIONS.length)];
-      const lines = LINES[station];
-      this.gong();
-      const text = lines[Math.floor(hash01(this.seed, cycle, 5) * lines.length) % lines.length];
-      setTimeout(() => this.speak(text), 1700);
-    }
   }
 
   /** Gong, then a spoken announcement (the Schaffner uses this too). */
-  announce(text: string): void {
+  announce(text: string, important = false): void {
     this.gong();
-    setTimeout(() => this.speak(text, true), 1700);
+    setTimeout(() => this.speak(text, important), 1700);
   }
 
-  private burst(at: number, dur: number): AudioBufferSourceNode {
+  burst(at: number, dur: number): AudioBufferSourceNode {
     const s = new AudioBufferSourceNode(this.ctx, { buffer: this.noise });
     s.start(at, Math.random() * 1.5, dur);
     return s;
   }
 
   /** Relay in the ceiling when the coach power drops or comes back. */
-  private clunk(gain: number): void {
+  clunk(gain: number): void {
     const ctx = this.ctx;
     const t0 = ctx.currentTime + 0.01;
     const o = new OscillatorNode(ctx, { type: 'square', frequency: 55 });
@@ -167,7 +137,7 @@ export class Ambience {
     if (de) u.voice = de;
     u.rate = 0.95;
     u.pitch = 0.85;
-    u.volume = Math.min(1, settings.ambientVolume);
+    u.volume = Math.min(1, settings.announceVolume);
     speechSynthesis.speak(u);
   }
 }

@@ -4,6 +4,7 @@ import type { PersonState } from '../characters/person';
 import type { Slot } from '../characters/rig';
 import { HEAD, NET, ROOM, SAGS } from '../config';
 import { DECK_IDS, type DeckId } from '../words/types';
+import { MAP_IDS, type MapId } from '../maps/types';
 
 // Wire format. Only IDs and numbers travel, never geometry. Everything received is validated,
 // because a peer is just another browser that could send anything.
@@ -41,6 +42,8 @@ export interface RoomOpts {
   turnS: number;
   /** "Sag's anders" with four players: two teams, or everyone against everyone (fewer always play alone). */
   sagsTeams: boolean;
+  /** Where the room plays; fixed when the room is created (the world is built from it). */
+  map: MapId;
 }
 
 /** Anything missing or broken falls back to the default, so older peers and saves still work. */
@@ -54,6 +57,7 @@ export function parseOpts(v: unknown): RoomOpts {
     decks: Array.isArray(o.decks) ? DECK_IDS.filter((d) => (o.decks as unknown[]).includes(d)) : ['normal', 'custom'],
     turnS: (ROOM.turnChoices as readonly number[]).includes(o.turnS as number) ? (o.turnS as number) : SAGS.turnS,
     sagsTeams: o.sagsTeams !== false,
+    map: MAP_IDS.includes(o.map as MapId) ? (o.map as MapId) : 'hypertrain',
   };
 }
 

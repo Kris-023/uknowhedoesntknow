@@ -1,19 +1,14 @@
 import * as THREE from 'three';
-import { BLACKOUT, CAMERA, COLORS, HALT_CYCLE_S, RENDER, SPEED, STATIONS, TRAIN } from '../config';
+import { CAMERA, SPEED } from '../config';
 import type { SharedClock } from '../core/clock';
-import { coachPower, haltCountdown, nextStopIndex, noise1, shake } from '../core/motion';
-import { bakeCrowd, crowdMaterial } from '../game/crowd';
+import { noise1, shake } from '../core/motion';
 import { Npcs } from '../game/npcs';
 import { Players } from '../game/players';
+import { mapDef } from '../maps';
+import type { MapDef, MapId, MapScene } from '../maps/types';
 import { trainDistance, type Train } from '../net/protocol';
-import { buildCoach, type Coach } from './coach';
-import { buildJunk, type Junk } from './junk';
-import { buildLighting, type Lighting } from './lighting';
-import { buildNeighbours, type Neighbours } from './neighbours';
-import { makeCoachTextures } from './textures';
-import { buildTunnel, type Tunnel } from './tunnel';
 
-/** Overview of the coach, or first person from the head of the local player. */
+/** Overview of the map, or first person from the head of the local player. */
 export type CamMode = 'wagon' | 'pov';
 
 export interface WorldParams {
@@ -23,25 +18,19 @@ export interface WorldParams {
 
 const FORWARD = new THREE.Vector3(0, 0, 1);
 
-/** The whole hypertrain scene. Everything ambient is derived from the shared clock. */
-const NO_BLACKOUTS = { ...BLACKOUT, chance: -1 };
-
+/** The scene: one map plus the people in it. Everything ambient is derived from the shared clock. */
 export class World {
   readonly scene = new THREE.Scene();
   readonly camera = new THREE.PerspectiveCamera(CAMERA.wagonFov, 16 / 9, 0.05, 120);
-  readonly coach: Coach;
-  readonly lighting: Lighting;
-  private tunnel: Tunnel;
-  private neighbours: Neighbours;
+  readonly def: MapDef;
+  readonly map: MapScene;
   /** Clock time of a debug-triggered blackout; -Infinity = none. */
   forcedBlackoutAt = -Infinity;
-  power = 1;
   /** Room setting: random power failures (a forced one from the debug panel still works). */
   blackouts = true;
 
   readonly players: Players;
   readonly npcs: Npcs;
-  private junk: Junk;
   cam: CamMode = 'wagon';
   /** Speed profile from the host (or the local slider when solo); distance is its integral over the clock. */
   train: Train = { kmh: 0, t0: 0, d0: 0 };
@@ -54,43 +43,34 @@ export class World {
   private lookEuler = new THREE.Euler();
   private seatQ = new THREE.Quaternion();
 
-  constructor(readonly clock: SharedClock) {
-    this.scene.background = new THREE.Color(COLORS.background);
-    this.scene.fog = new THREE.Fog(COLORS.background, RENDER.fogNear, RENDER.fogFar);
-    const tex = makeCoachTextures();
-    this.coach = buildCoach(this.scene, tex);
-    this.lighting = buildLighting(this.scene, this.coach.root, tex, clock.seed);
-    this.tunnel = buildTunnel(this.scene, clock.seed);
-    // Baked after lighting, so the neon tubes are part of every neighbour copy.
-    const crowds = Array.from({ length: TRAIN.crowdVariants }, (_, i) => bakeCrowd(clock.seed + i * 101));
-    this.neighbours = buildNeighbours(this.scene, this.coach.root, this.coach.poweredMaterials, {
-      geos: crowds,
-      material: crowdMaterial,
-      upTo: TRAIN.crowdedPerSide,
-    }, this.lighting.hemi);
-    // Players come after the bake: people are not part of the neighbour copies.
-    this.players = new Players(this.coach.root, clock.seed);
-    this.npcs = new Npcs(this.coach.root, clock.seed);
-    this.junk = buildJunk(this.coach.root, clock.seed);
+  constructor(
+    readonly clock: SharedClock,
+    mapId: MapId = 'hypertrain',
+  ) {
+    this.def = mapDef(mapId);
+    this.map = this.def.build(this.scene, clock.seed);
+    // People come after the map: baked copies (the hypertrain's neighbour coaches) must not contain them.
+    this.players = new Players(this.map.root, clock.seed, this.map.seats);
+    this.npcs = new Npcs(this.map.root, clock.seed, this.map.npcs);
     this.update(0, 0, { shakeMm: 0, shakeOn: false });
+  }
+
+  /** Supply of the map right now (1 normal, 0 blackout). */
+  get power(): number {
+    return this.map.power;
   }
 
   update(t: number, dt: number, p: WorldParams): void {
     const kmh = this.train.kmh;
     const sf = kmh / SPEED.maxKmh;
     this.distance = trainDistance(this.train, t) * SPEED.visualScale;
-    this.power = coachPower(t, this.clock.seed, this.blackouts ? BLACKOUT : NO_BLACKOUTS, this.forcedBlackoutAt);
-    this.tunnel.update(t, this.distance, kmh);
-    this.lighting.update(t, sf, this.power);
-    this.coach.setPower(this.power);
-    this.neighbours.update(t);
-    this.coach.halt.draw(haltCountdown(t, HALT_CYCLE_S), STATIONS[nextStopIndex(t, HALT_CYCLE_S, STATIONS.length)]);
+    const amp = p.shakeOn ? (p.shakeMm / 1000) * this.map.shake : 0;
+    this.map.update({ t, dt, kmh, distance: this.distance, blackouts: this.blackouts, forcedBlackoutAt: this.forcedBlackoutAt, camera: this.camera });
     this.players.update(t, dt, this.cam === 'pov');
-    this.npcs.update(t, dt, p.shakeOn ? p.shakeMm / 1000 : 0);
-    this.junk.update(t);
+    this.npcs.update(t, dt, amp);
     this.zoomK += ((this.cam === 'pov' ? this.zoom : 0) - this.zoomK) * (1 - Math.exp(-dt * CAMERA.zoomRate));
-    this.updateCamera(t, p.shakeOn ? p.shakeMm / 1000 : 0, sf);
-    this.neighbours.cull(this.camera);
+    // Only moving maps widen the view with speed.
+    this.updateCamera(t, amp, sf * (this.map.speedFov ?? 0));
   }
 
   /** Current POV field-of-view factor (1 = normal); mouse sensitivity scales with it. */
@@ -115,13 +95,14 @@ export class World {
       cam.position.set(this.eye.x + sh.x * 0.6, this.eye.y + sh.y * 0.6, this.eye.z);
       cam.lookAt(this.aim.x + sh.x * 0.6, this.aim.y + sh.y * 0.6, this.aim.z);
       cam.rotateZ(amp * 1.2 * noise1(t * 3.1 + 2));
-      cam.fov = (CAMERA.seatFov + 6 * sf) * this.fovFactor;
+      cam.fov = (CAMERA.seatFov + sf) * this.fovFactor;
     } else {
-      const [x, y, z] = CAMERA.wagonPos;
+      const o = this.map.overview;
+      const [x, y, z] = o.pos;
       cam.position.set(x + sh.x, y + sh.y, z);
-      cam.lookAt(...CAMERA.wagonLook);
+      cam.lookAt(...o.look);
       cam.rotateZ(sh.roll);
-      cam.fov = CAMERA.wagonFov + 6 * sf + 1.5 * Math.sin(t * 0.4);
+      cam.fov = o.fov + sf + 1.5 * Math.sin(t * 0.4);
     }
     cam.updateProjectionMatrix();
   }

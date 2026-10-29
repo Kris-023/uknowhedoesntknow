@@ -83,7 +83,7 @@ export class GameLobby {
     const game = GAMES.find((g) => g.id === this.selected)!;
     const row = el('div', 'wi-actions');
     if (this.canStart) {
-      row.append(el('span', 'note', r.solo ? `Testrunde gegen Bots · ${game.blurb}` : `${r.players()} im Wagen · ${game.blurb}`));
+      row.append(el('span', 'note', r.solo ? `Testrunde gegen Bots · ${game.blurb}` : `${r.players()} im Raum · ${game.blurb}`));
       const b = el('button', 'btn big', 'Runde starten [G]');
       b.type = 'button';
       b.addEventListener('click', () => r.start(this.selected));

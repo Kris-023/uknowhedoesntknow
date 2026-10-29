@@ -1,6 +1,7 @@
 import * as THREE from 'three';
 import { Person } from '../characters/person';
-import { PLAYER_SEATS, SCHAFFNER, SEAT_X } from '../config';
+import { SCHAFFNER } from '../config';
+import type { Spot } from '../maps/types';
 import { group } from '../scene/build';
 
 /**
@@ -71,13 +72,11 @@ export class SchaffnerFigure {
     this.root.visible = false;
   }
 
-  /** Stand in the aisle beside `seat`, turned towards it. */
-  show(seat: number, nowS: number): void {
-    const s = PLAYER_SEATS[seat];
-    if (!s) return;
-    this.root.position.set(s.side * 0.42, 0.9, s.z + (s.z < 0 ? -0.55 : 0.55));
-    const target = new THREE.Vector3(s.side * SEAT_X, 0, s.z);
-    this.faceYaw = Math.atan2(target.x - this.root.position.x, target.z - this.root.position.z);
+  /** Stand where the map says (beside the seat, turned towards it). */
+  show(spot: Spot | null, nowS: number): void {
+    if (!spot) return;
+    this.root.position.set(spot.x, spot.y + 0.9, spot.z);
+    this.faceYaw = spot.yaw;
     this.root.rotation.y = this.faceYaw;
     this.until = nowS + SCHAFFNER.showS;
     this.root.visible = true;

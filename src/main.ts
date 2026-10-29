@@ -13,6 +13,7 @@ import { Session } from './net/session';
 import { trysteroTransport } from './net/trystero';
 import { Pipeline } from './render/pipeline';
 import { World } from './scene/world';
+import { MAP_IDS, type MapId } from './maps/types';
 import { el } from './ui/dom';
 import { BenchPanel } from './ui/benchPanel';
 import { MouseTrace } from './debug/mouseTrace';
@@ -124,7 +125,10 @@ async function start(): Promise<void> {
 }
 
 function launch(clock: SharedClock, session: Session | null, startCam: 'wagon' | 'pov', code = '', voice: Voice | null = null, bench = false): void {
-  const world = new World(clock);
+  // The room's map (host setting); solo: your own room setting, or ?map= for screenshots.
+  const urlMap = params.get('map');
+  const mapId = session?.opts.map ?? (MAP_IDS.includes(urlMap as MapId) ? (urlMap as MapId) : settings.room.map);
+  const world = new World(clock, mapId);
   const players = world.players;
 
   let pipeline: Pipeline | null = null;
@@ -194,6 +198,7 @@ function launch(clock: SharedClock, session: Session | null, startCam: 'wagon' |
       session?.setState(p);
     },
     bench,
+    world.def.name,
   );
   const toMenu = () => {
     history.replaceState(null, '', location.pathname + location.search);
@@ -209,7 +214,7 @@ function launch(clock: SharedClock, session: Session | null, startCam: 'wagon' |
   if (bench) document.body.classList.add('benching');
   const tags = new NameTags(document.body, players, world.camera, stage);
   const micHud = voice ? new MicHud(document.body, voice) : null;
-  const ambience = voice ? new Ambience(voice, clock.seed) : null;
+  const ambience = voice ? new Ambience(voice, clock.seed, world.def) : null;
   // Quiet start: no crackle while the world settles in (see Voice.holdOutput).
   voice?.holdOutput();
   let smooth = 0;
@@ -384,16 +389,16 @@ function launch(clock: SharedClock, session: Session | null, startCam: 'wagon' |
   };
 
   // The Schaffner: the host listens for shouting in everyone's audio and calls him.
-  const schaffner = new SchaffnerFigure(world.coach.root);
+  const schaffner = new SchaffnerFigure(world.map.root);
   const loud = new LoudTracker();
   const callSchaffner = (id: string) => {
     const m = gameNet.members().find((x) => x.id === id);
     if (!m) return;
-    schaffner.show(m.seat, clock.now());
+    schaffner.show(world.map.seats[m.seat] ? world.map.scoldSpot(m.seat) : null, clock.now());
     // Room setting: 'warn' only tells off, 'fine' also costs a point (only while a round is played).
     const fineOn = (session?.opts.schaffner ?? 'fine') === 'fine';
     const fined = fineOn && (gameNet.isHost() ? whoami.penalize(id, SCHAFFNER.penalty) || sags.penalize(id, SCHAFFNER.penalty) : whoami.state?.phase === 'play' || sags.running);
-    ambience?.announce(`Durchsage für ${m.name || 'Fahrgast'}: Etwas leiser bitte!${fined ? ' Das kostet einen Punkt.' : ''}`);
+    ambience?.announce(`Durchsage für ${m.name || 'Fahrgast'}: Etwas leiser bitte!${fined ? ' Das kostet einen Punkt.' : ''}`, true);
     const mine = m.id === gameNet.selfId;
     wiUi.flash(
       mine ? 'Der Schaffner steht neben dir' : `Schaffner bei ${m.name || 'Fahrgast'}`,
@@ -575,8 +580,7 @@ function launch(clock: SharedClock, session: Session | null, startCam: 'wagon' |
     if (benchPanel) {
       // What was going on, so a stutter in the log can be matched to its cause.
       const tags: string[] = [];
-      if (world.power < 0.98) tags.push('Stromausfall');
-      if (world.lighting.passing) tags.push('Gegenzug');
+      tags.push(...world.map.events());
       if (typeof speechSynthesis !== 'undefined' && speechSynthesis.speaking) tags.push('Durchsage');
       if (!document.pointerLockElement) tags.push('Maus frei');
       // Heap shrank since the last frame: a garbage collection ran in or just before this frame.

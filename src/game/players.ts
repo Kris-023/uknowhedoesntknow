@@ -1,5 +1,6 @@
 import * as THREE from 'three';
-import { CAMERA, COLORS, HEAD, LIGHTS, NET, PLAYER_SEATS, SEAT_X, WHOAMI } from '../config';
+import { CAMERA, COLORS, HEAD, LIGHTS, NET, WHOAMI } from '../config';
+import type { Spot } from '../maps/types';
 import { mulberry32, type Rand } from '../core/rng';
 import { ITEMS, ITEM_IDS, SLOT_CHANCE, SLOTS, type ItemId } from '../characters/accessories';
 import { makeLook, type Look } from '../characters/look';
@@ -68,14 +69,14 @@ export class Players {
   constructor(
     parent: THREE.Object3D,
     private seed: number,
+    seats: readonly Spot[],
   ) {
     const rand = mulberry32(seed ^ 0x5eed);
     const markerGeo = new THREE.OctahedronGeometry(0.11, 0);
-    PLAYER_SEATS.forEach((seat, i) => {
+    seats.forEach((seat, i) => {
       const root = group(`player_${i + 1}`, parent);
-      root.position.set(seat.side * SEAT_X, 0.525, seat.z);
-      // Seated players face the aisle.
-      root.rotation.y = seat.side === -1 ? Math.PI / 2 : -Math.PI / 2;
+      root.position.set(seat.x, seat.y, seat.z);
+      root.rotation.y = seat.yaw;
       const look = { ...makeLook(rand), ...START_LOOKS[i], top: COLORS.players[i], glasses: false, beard: 'none' as const };
       const p = new Person(root, look, 'sit');
       p.name = FAKE_NAMES[i];

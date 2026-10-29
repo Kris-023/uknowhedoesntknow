@@ -288,6 +288,8 @@ export const AMBIENCE = {
   maxHoldS: 8,
   /** Announcement this many seconds before the halt countdown reaches zero. */
   announceAt: 12,
+  /** "Ruhige Umgebung": the steady bed drops to this share; one-off noises stay as they are. */
+  quietBed: 0.2,
 } as const;
 
 /** Mitreisende: 7 seated (seat index on a side), 3 standing in the back (z <= -2.5, out of the players' way). */
