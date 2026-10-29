@@ -166,10 +166,10 @@ describe('room settings', () => {
   it('a quiet room tells joiners in the welcome and later changes reach everyone', () => {
     const hub = new MemoryHub();
     const a = peer(hub, 'a', true);
-    a.s.setOpts({ ...parseOpts(undefined), voice: false, schaffner: 'warn', voteS: 45, blackouts: false });
+    a.s.setOpts({ ...parseOpts(undefined), voice: false, schaffner: 'warn', voteS: 45, blackouts: false, decks: ['nsfw'], turnS: 90, sagsTeams: false });
     const b = peer(hub, 'b', false);
     hub.flush();
-    expect(b.s.opts).toEqual({ voice: false, schaffner: 'warn', voteS: 45, blackouts: false });
+    expect(b.s.opts).toEqual({ voice: false, schaffner: 'warn', voteS: 45, blackouts: false, decks: ['nsfw'], turnS: 90, sagsTeams: false });
     a.s.setOpts({ ...a.s.opts, voice: true });
     hub.flush();
     expect(b.s.opts.voice).toBe(true);
@@ -180,8 +180,10 @@ describe('room settings', () => {
   });
 
   it('settings from older peers or saves fall back to the defaults', () => {
-    expect(parseOpts({ voice: false })).toEqual({ voice: false, schaffner: 'fine', voteS: 20, blackouts: true });
-    expect(parseOpts({ schaffner: 'laut', voteS: 7, blackouts: 'nein' })).toEqual({ voice: true, schaffner: 'fine', voteS: 20, blackouts: true });
+    const words = { decks: ['normal', 'custom'], turnS: 60, sagsTeams: true };
+    expect(parseOpts({ voice: false })).toEqual({ voice: false, schaffner: 'fine', voteS: 20, blackouts: true, ...words });
+    expect(parseOpts({ schaffner: 'laut', voteS: 7, blackouts: 'nein' })).toEqual({ voice: true, schaffner: 'fine', voteS: 20, blackouts: true, ...words });
+    expect(parseOpts({ decks: ['nsfw', 'kaputt'], turnS: 5 })).toMatchObject({ decks: ['nsfw'], turnS: 60 });
   });
 });
 

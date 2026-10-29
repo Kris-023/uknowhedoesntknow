@@ -9,13 +9,14 @@ import { CharacterPreview } from './preview';
 import { openRoomDialog, roomSummary } from './roomDialog';
 import { SettingsView } from './settingsView';
 import { settings, updateSettings } from './store';
+import { WordsView } from './wordsView';
 
 export type LobbyChoice = { kind: 'create'; code: string; opts: RoomOpts } | { kind: 'join'; code: string } | { kind: 'bench' };
 
 /** The one map so far. Kept as data so the menu already separates map, game and character. */
 export const MAP = { name: 'Hypertrain', line: 'Linie 7' };
 
-type TabId = 'play' | 'character' | 'settings';
+type TabId = 'play' | 'character' | 'words' | 'settings';
 
 /**
  * Shared frame of main menu and in-game menu: tabs on top, one panel below. The character tab adds
@@ -33,6 +34,7 @@ abstract class MenuShell {
   private previewBox = el('div', 'me-preview');
   protected editor: CharacterEditor;
   private settingsView: SettingsView | null = null;
+  private wordsView: WordsView | null = null;
   /** Used when the name field stays empty. */
   protected readonly fallbackName = randomName();
 
@@ -48,7 +50,7 @@ abstract class MenuShell {
     const head = el('header', 'menu-head');
     const nav = el('div', 'tabs');
     nav.setAttribute('role', 'tablist');
-    for (const [id, label] of [['play', playLabel], ['character', 'Charakter'], ['settings', 'Einstellungen']] as const) {
+    for (const [id, label] of [['play', playLabel], ['character', 'Charakter'], ['words', 'Wörter'], ['settings', 'Einstellungen']] as const) {
       const b = el('button', 'tab', label);
       b.type = 'button';
       b.id = `tab-${id}`;
@@ -100,6 +102,8 @@ abstract class MenuShell {
     this.showPreview(false);
     this.settingsView?.dispose();
     this.settingsView = null;
+    this.wordsView?.dispose();
+    this.wordsView = null;
     this.root.remove();
   }
 
@@ -130,11 +134,16 @@ abstract class MenuShell {
     this.panel.setAttribute('aria-labelledby', `tab-${id}`);
     this.settingsView?.dispose();
     this.settingsView = null;
+    this.wordsView?.dispose();
+    this.wordsView = null;
     this.panel.replaceChildren();
     this.showPreview(id === 'character');
     if (id === 'play') this.renderPlay();
     else if (id === 'character') this.panel.append(this.editor.root);
-    else {
+    else if (id === 'words') {
+      this.wordsView = new WordsView(() => this.profile.name || this.fallbackName);
+      this.panel.append(this.wordsView.root);
+    } else {
       this.settingsView = new SettingsView(this.settingsExtra());
       this.panel.append(this.settingsView.root);
     }

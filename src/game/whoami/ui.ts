@@ -9,16 +9,12 @@ const RESULT_TEXT: Record<Result, string> = { yes: 'Ja', no: 'Nein', idk: 'Weiß
 const RESULT_SHOW_MS = 3200;
 
 /** Keys while playing, so nobody has to let go of the mouse look to vote. */
-const KEYS = { ask: 'KeyF', guess: 'KeyR', pass: 'KeyP', yes: 'Digit1', no: 'Digit2', idk: 'Digit3', start: 'KeyG' } as const;
+const KEYS = { ask: 'KeyF', guess: 'KeyR', pass: 'KeyP', yes: 'Digit1', no: 'Digit2', idk: 'Digit3' } as const;
 
-/** What the round-start prompt needs to know about the room. */
+/** What the game screens need to know about the room. */
 export interface LobbyInfo {
-  isHost(): boolean;
   hostName(): string;
-  canStart(): boolean;
   start(): void;
-  /** Solo benchmark: the round is against bots. */
-  solo: boolean;
   /** Why the others might not hear your question (mic off, muted), or null. */
   micWarning(): string | null;
 }
@@ -36,8 +32,6 @@ const hex = (seat: number) => `#${(COLORS.players[seat] ?? 0x888888).toString(16
  */
 export class WhoamiUi {
   private maker = el('section', 'wi-maker');
-  /** Before a round (and after one): who can start, and with which key. */
-  private lobby = el('div', 'wi-bar wi-lobby');
   private bar = el('div', 'wi-bar');
   private banner = el('div', 'wi-banner');
   private board = el('aside', 'wi-board');
@@ -55,7 +49,7 @@ export class WhoamiUi {
     private members: () => Member[],
     private info: LobbyInfo,
   ) {
-    for (const e of [this.maker, this.bar, this.lobby, this.banner, this.board, this.done]) {
+    for (const e of [this.maker, this.bar, this.banner, this.board, this.done]) {
       e.hidden = true;
       host.append(e);
     }
@@ -87,11 +81,23 @@ export class WhoamiUi {
     this.bannerUntil = performance.now() + RESULT_SHOW_MS;
   }
 
-  /** Per frame: countdown, banner timing, round-start prompt. */
+  /** End-of-round screen is open (the lobby waits until it's closed). */
+  get doneOpen(): boolean {
+    return !this.done.hidden;
+  }
+
+  /** Close the end-of-round screen (a new game is starting). */
+  closeDone(): void {
+    const s = this.game.state;
+    if (s) this.closedRound = s.round;
+    this.done.hidden = true;
+    document.body.classList.remove('wi-dialog');
+  }
+
+  /** Per frame: countdown, banner timing. */
   tick(): void {
     const s = this.game.state;
     if (!this.banner.hidden && performance.now() > this.bannerUntil) this.banner.hidden = true;
-    this.renderLobby();
     const cd = this.bar.querySelector('.wi-countdown');
     if (cd && s?.vote) {
       const text = `noch ${Math.ceil(this.game.voteLeftS)} s`;
@@ -99,8 +105,20 @@ export class WhoamiUi {
     }
   }
 
+  private visible = true;
+
+  /** Only the game played last shows its screens; the other one steps aside. */
+  set shown(on: boolean) {
+    this.visible = on;
+    this.render();
+  }
+
   private render(): void {
     const s = this.game.state;
+    if (!this.visible) {
+      for (const e of [this.maker, this.bar, this.board, this.done]) e.hidden = true;
+      return;
+    }
     const active = !!s && s.players.length > 0;
     this.board.hidden = !active;
     if (!s) {
@@ -149,33 +167,6 @@ export class WhoamiUi {
       if (!s.solved.includes(p)) return p === s.turn ? null : p;
     }
     return null;
-  }
-
-  private lobbyKey = '';
-
-  /** "Waiting for players" / "round can start (G)" / "waiting for the host", top centre. */
-  private renderLobby(): void {
-    const s = this.game.state;
-    const idle = !s || (s.phase === 'done' && this.done.hidden);
-    const n = this.members().length;
-    const host = this.info.isHost();
-    const can = this.info.canStart();
-    const key = `${idle}|${n}|${host}|${can}|${this.info.hostName()}|${s?.round ?? 0}`;
-    if (key === this.lobbyKey) return;
-    this.lobbyKey = key;
-    this.lobby.hidden = !idle;
-    if (!idle) return;
-    const l = this.lobby;
-    l.replaceChildren(el('strong', '', 'Wer bin ich?'));
-    const again = !!s;
-    if (host && can) {
-      l.append(el('span', '', this.info.solo ? 'Testrunde gegen Bots' : again ? `Noch eine Runde? ${n} im Wagen` : `${n} im Wagen, es kann losgehen`));
-      l.append(this.btn(again ? 'Neue Runde [G]' : 'Runde starten [G]', () => this.info.start(), 'big'));
-    } else if (host) {
-      l.append(el('span', '', 'Warte auf Mitspieler …'), el('span', 'note', 'Link teilen: Esc → Link kopieren'));
-    } else {
-      l.append(el('span', '', `Warte, bis ${this.info.hostName()} die Runde startet …`));
-    }
   }
 
   private renderMaker(): void {
@@ -413,17 +404,7 @@ export class WhoamiUi {
     const row = el('div', 'row');
     if (this.game.isHost) row.append(this.btn('Neue Runde [G]', () => this.info.start(), 'big'));
     else row.append(el('span', 'note', `${this.info.hostName()} kann eine neue Runde starten.`));
-    row.append(
-      this.btn(
-        'Schließen',
-        () => {
-          this.closedRound = s.round;
-          d.hidden = true;
-          document.body.classList.remove('wi-dialog');
-        },
-        'ghost',
-      ),
-    );
+    row.append(this.btn('Schließen', () => this.closeDone(), 'ghost'));
     d.append(el('p', 'note', 'Unter jeder Karte steht, wer sie über dem Kopf hatte.'), grid, row);
   }
 
@@ -437,11 +418,6 @@ export class WhoamiUi {
   private key(e: KeyboardEvent): void {
     const s = this.game.state;
     if (e.repeat || e.target instanceof HTMLInputElement || e.target instanceof HTMLSelectElement) return;
-    if (e.code === KEYS.start && (!s || s.phase === 'done') && this.info.isHost() && this.info.canStart()) {
-      this.closedRound = s?.round ?? -1;
-      this.info.start();
-      return;
-    }
     if (!s || s.phase !== 'play') return;
     const me = this.game.selfId;
     const v = s.vote;

@@ -1,6 +1,6 @@
 import * as THREE from 'three';
 import { Ambience } from './audio/ambience';
-import { getVoice, type Voice } from './audio/voice';
+import { echoNeedsHeadphones, getVoice, type Voice } from './audio/voice';
 import type { PersonState } from './characters/person';
 import { AMBIENCE, CAMERA, HEAD, LIGHT_PRESETS, LIGHTS, NET, SCHAFFNER, VOICE } from './config';
 import { SharedClock } from './core/clock';
@@ -26,6 +26,11 @@ import { WhoamiBots } from './game/whoami/bots';
 import { CardsView } from './game/whoami/cardsView';
 import { WhoamiGame } from './game/whoami/game';
 import { WhoamiUi } from './game/whoami/ui';
+import { GameLobby, GAMES, type GameId } from './game/lobby';
+import { SagsBots } from './game/sagsanders/bots';
+import { SagsGame } from './game/sagsanders/game';
+import { SagsUi } from './game/sagsanders/ui';
+import { customCards, playerId } from './words/custom';
 import { initUiScale } from './ui/scale';
 import { loadProfile, onSettings, saveProfile, settings } from './ui/store';
 import './style.css';
@@ -252,9 +257,13 @@ function launch(clock: SharedClock, session: Session | null, startCam: 'wagon' |
 
   if (session) connect(session, world, panel, pause, code, refreshSeats);
 
-  // Minigame "Wer bin ich?": over the room, or solo against bots on the other seats.
+  // Minigames ("Wer bin ich?", "Sag's anders"): over the room, or solo against bots on the other seats.
   let bots: WhoamiBots | null = null;
+  let sagsBots: SagsBots | null = null;
   let gameNet: GameNet;
+  // Solo: your own settings for the next room stand in for the host's.
+  const roomOpts = () => session?.opts ?? settings.room;
+  const sagsRoom = { decks: () => roomOpts().decks, turnS: () => roomOpts().turnS, teams: () => roomOpts().sagsTeams };
   if (session) gameNet = sessionNet(session);
   else {
     const members = players.people.map((p, i) => ({ id: i === players.active ? 'me' : `bot${i}`, seat: i, name: i === players.active ? profile.name : p.name }));
@@ -262,63 +271,114 @@ function launch(clock: SharedClock, session: Session | null, startCam: 'wagon' |
     members.sort((a, b) => Number(b.id === 'me') - Number(a.id === 'me'));
     const room = new LocalGameRoom(members);
     gameNet = room.net('me');
-    bots = new WhoamiBots(room, members.slice(1).map((m) => m.id));
+    const ids = members.slice(1).map((m) => m.id);
+    bots = new WhoamiBots(room, ids);
+    sagsBots = new SagsBots(room, ids, sagsRoom);
   }
   // Dev only: ?voteS=120 stretches votes, so slow test browsers don't run out of time.
   const devVoteS = import.meta.env.DEV ? Number(params.get('voteS')) || undefined : undefined;
   const whoami = new WhoamiGame(gameNet, devVoteS);
   whoami.roomVoteS = () => session?.opts.voteS;
+  const sags = new SagsGame(gameNet, sagsRoom, () => ({ pid: playerId(), cards: customCards() }));
   // Someone reloaded and came back: they keep seat, points and their place in the round.
-  session?.listen({ rejoin: (oldId, newId) => whoami.rejoin(oldId, newId) });
-  const wiUi = new WhoamiUi(document.body, whoami, () => gameNet.members(), {
-    isHost: () => gameNet.isHost(),
-    hostName: () => gameNet.members().find((m) => m.id === gameNet.hostId())?.name || 'der Host',
-    canStart: () => gameNet.members().length >= 2,
-    start: () => whoami.start(),
-    solo: !session,
-    micWarning: () => {
-      if (!voice || !voice.roomVoice) return null;
-      if (voice.micState !== 'on') return 'Dein Mikro ist aus: die anderen hören deine Frage nicht (Esc → Einstellungen).';
-      if (voice.muted) return 'Du bist stumm geschaltet: M drücken.';
-      return null;
+  session?.listen({
+    rejoin: (oldId, newId) => {
+      whoami.rejoin(oldId, newId);
+      sags.rejoin(oldId, newId);
     },
   });
+  const hostName = () => gameNet.members().find((m) => m.id === gameNet.hostId())?.name || 'der Host';
+  const micWarning = () => {
+    if (!voice || !voice.roomVoice) return null;
+    if (voice.micState !== 'on') return 'Dein Mikro ist aus: die anderen hören dich nicht (Esc → Einstellungen).';
+    if (voice.muted) return 'Du bist stumm geschaltet: M drücken.';
+    return null;
+  };
+  const whoamiRunning = () => !!whoami.state && whoami.state.phase !== 'done';
+  // Only one game at a time; starting one ends the other and closes both end screens.
+  const startGame = (id: GameId) => {
+    wiUi.closeDone();
+    saUi.close();
+    if (id === 'whoami') {
+      if (sags.running) sags.end();
+      whoami.start();
+    } else {
+      if (whoamiRunning()) whoami.end();
+      sags.start();
+    }
+    lobby.pick(id);
+  };
+  const wiUi = new WhoamiUi(document.body, whoami, () => gameNet.members(), { hostName, start: () => startGame('whoami'), micWarning });
+  const saUi = new SagsUi(document.body, sags, () => gameNet.members(), {
+    hostName,
+    start: () => startGame('sags'),
+    flash: (title, big, tone, sub) => wiUi.flash(title, big, tone, sub),
+    micWarning,
+  });
+  const lobby = new GameLobby(document.body, {
+    isHost: () => gameNet.isHost(),
+    hostName,
+    players: () => gameNet.members().length,
+    idle: () => !whoamiRunning() && !sags.running && !wiUi.doneOpen && !saUi.doneOpen,
+    solo: !session,
+    start: startGame,
+  });
+  // The game last started owns the scoreboard; the other one's board steps aside.
+  let current: GameId | null = null;
+  const own = (id: GameId) => {
+    if (current === id) return;
+    current = id;
+    wiUi.shown = id === 'whoami';
+    saUi.shown = id === 'sags';
+  };
   const cards = new CardsView(document.body, players, world.camera, stage);
   // Phase changes that need the screen: a new card to make or the end of round close the Esc menu.
   let lastPhase = '';
   whoami.onChange(() => {
     const phase = whoami.state?.phase ?? '';
+    if (whoamiRunning()) own('whoami');
     if (phase !== lastPhase && (phase === 'done' || phase === 'cards') && pause.isOpen) pause.close();
     lastPhase = phase;
+    syncHint();
+  });
+  let lastSags = '';
+  sags.onChange(() => {
+    const phase = sags.state?.phase ?? '';
+    if (sags.running) own('sags');
+    if (phase !== lastSags && phase === 'done' && pause.isOpen) pause.close();
+    lastSags = phase;
     syncHint();
   });
   const cardOf = (seat: number): string | '?' | null => {
     const s = whoami.state;
     const id = gameNet.members().find((m) => m.seat === seat)?.id;
-    if (!s || s.phase === 'cards' || !id || !s.players.includes(id)) return null;
+    if (current !== 'whoami' || !s || s.phase === 'cards' || !id || !s.players.includes(id)) return null;
     // Your own card stays a question mark until you have solved it.
     if (id === gameNet.selfId) return whoami.cards.get(id) ?? '?';
     return whoami.cards.get(id) ?? null;
   };
   pause.gameControls = () => {
     const box = el('div', 'room-box');
-    box.append(el('span', 'eyebrow', 'Minigame'), el('strong', 'wi-title', 'Wer bin ich?'));
-    const s = whoami.state;
-    const running = !!s && s.phase !== 'done';
+    box.append(el('span', 'eyebrow', 'Minigame'));
+    const running: GameId | null = whoamiRunning() ? 'whoami' : sags.running ? 'sags' : null;
     const row = el('div', 'row');
     if (gameNet.isHost()) {
       const enough = gameNet.members().length >= 2;
-      const b = el('button', 'btn big', running ? 'Runde beenden' : session ? 'Runde starten' : 'Testrunde mit Bots starten');
-      b.type = 'button';
-      b.disabled = !running && !enough;
-      b.addEventListener('click', () => {
-        if (running) whoami.end();
-        else whoami.start();
-        pause.onResume();
-      });
-      row.append(b);
+      for (const g of GAMES) {
+        if (running && running !== g.id) continue;
+        const b = el('button', running ? 'btn big' : 'btn', running ? `${g.title}: Runde beenden` : session ? `${g.title} starten` : `${g.title}: Testrunde`);
+        b.type = 'button';
+        b.disabled = !running && !enough;
+        b.addEventListener('click', () => {
+          if (running === 'whoami') whoami.end();
+          else if (running === 'sags') sags.end();
+          else startGame(g.id);
+          pause.onResume();
+        });
+        row.append(b);
+      }
       if (!enough) row.append(el('span', 'note', 'Mindestens zwei Spieler.'));
-    } else row.append(el('span', 'note', running ? 'Eine Runde läuft.' : 'Der Host startet die Runde.'));
+    } else row.append(el('span', 'note', running ? `${GAMES.find((g) => g.id === running)!.title}: eine Runde läuft.` : 'Der Host startet die Runde.'));
     box.append(row);
     return box;
   };
@@ -332,7 +392,7 @@ function launch(clock: SharedClock, session: Session | null, startCam: 'wagon' |
     schaffner.show(m.seat, clock.now());
     // Room setting: 'warn' only tells off, 'fine' also costs a point (only while a round is played).
     const fineOn = (session?.opts.schaffner ?? 'fine') === 'fine';
-    const fined = fineOn && (gameNet.isHost() ? whoami.penalize(id, SCHAFFNER.penalty) : whoami.state?.phase === 'play');
+    const fined = fineOn && (gameNet.isHost() ? whoami.penalize(id, SCHAFFNER.penalty) || sags.penalize(id, SCHAFFNER.penalty) : whoami.state?.phase === 'play' || sags.running);
     ambience?.announce(`Durchsage für ${m.name || 'Fahrgast'}: Etwas leiser bitte!${fined ? ' Das kostet einen Punkt.' : ''}`);
     const mine = m.id === gameNet.selfId;
     wiUi.flash(
@@ -362,7 +422,9 @@ function launch(clock: SharedClock, session: Session | null, startCam: 'wagon' |
   function syncHint(): void {
     const locked = document.pointerLockElement === stage;
     hint.hidden = world.cam !== 'pov' || locked || pause.isOpen;
-    hint.textContent = 'Klick ins Bild, um dich umzusehen · Esc öffnet das Menü';
+    const echo = !bench && !!voice?.roomVoice && echoNeedsHeadphones;
+    hint.replaceChildren('Klick ins Bild, um dich umzusehen · Esc öffnet das Menü');
+    if (echo) hint.append(el('span', 'hint-echo', 'Kopfhörer empfohlen: ohne hören die anderen sich selbst als Echo'));
   }
   syncHint();
 
@@ -472,9 +534,13 @@ function launch(clock: SharedClock, session: Session | null, startCam: 'wagon' |
     measureVoices();
     world.update(t, dt, settings);
     whoami.tick(now);
+    sags.tick(now);
     bots?.tick(now);
+    sagsBots?.tick(now);
     wiUi.tick();
-    players.showMarkers = !whoami.state || whoami.state.phase === 'done';
+    saUi.tick();
+    lobby.update();
+    players.showMarkers = !whoamiRunning() && !sags.running;
     cards.update(cardOf, (seat) => players.people[seat].name, world.cam === 'pov');
     // A card carries the name; the separate tag steps aside meanwhile.
     tags.update(world.cam === 'pov', (i) => Math.max(0, levels[i]), (i) => cards.shown.has(i));
@@ -528,7 +594,7 @@ function launch(clock: SharedClock, session: Session | null, startCam: 'wagon' |
 
   if (import.meta.env.DEV) {
     // Hook for Playwright checks; not shipped in the production bundle.
-    Object.assign(window, { __hyper: { world, panel, pipeline, clock, session, pause, voice, ambience, whoami, callSchaffner } });
+    Object.assign(window, { __hyper: { world, panel, pipeline, clock, session, pause, voice, ambience, whoami, sags, callSchaffner } });
   }
 }
 

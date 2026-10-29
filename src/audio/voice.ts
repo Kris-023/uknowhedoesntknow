@@ -34,7 +34,12 @@ export function gateStep(open: boolean, level: number, threshold: number, now: n
   return { open: loud || (open && now - last < hangMs), lastLoud: last };
 }
 
-export type MicState = 'off' | 'starting' | 'on' | 'blocked' | 'missing' | 'error';
+/** Chromium's echo canceller ignores Web Audio output (see the bus wiring below); Firefox handles it. */
+export const echoNeedsHeadphones: boolean =
+  typeof navigator !== 'undefined' &&
+  !!(navigator as Navigator & { userAgentData?: { brands: { brand: string }[] } }).userAgentData?.brands.some((b) => b.brand === 'Chromium');
+
+export type MicState ='off' | 'starting' | 'on' | 'blocked' | 'missing' | 'error';
 
 interface Peer {
   stream: MediaStream;
