@@ -72,9 +72,16 @@ export interface Settings {
   echoCancel: boolean;
   /** Browser auto gain: evens out distance to the mic, but also lifts room noise in pauses. */
   autoGain: boolean;
-  /** Train sounds (rumble, rail joints, oncoming trains, gong). */
+  /** The map's own sounds: steady bed (rumble, fryer, rain, hum) and one-off noises. */
   ambientVolume: number;
-  /** Spoken stop announcements (browser speech). */
+  /** Turns the steady bed down a lot; one-off noises (bell, knocking, beeps) stay. */
+  quietAmbience: boolean;
+  /** Music in the map (diner jukebox, the party next door), separate from the ambience. */
+  musicOn: boolean;
+  musicVolume: number;
+  /** Gong and spoken lines (stops, number calls, the Schaffner). */
+  announceVolume: number;
+  /** Spoken map announcements (browser speech); the Schaffner always speaks. */
   announcements: boolean;
 }
 
@@ -102,6 +109,10 @@ function defaults(): Settings {
     echoCancel: true,
     autoGain: true,
     ambientVolume: 0.7,
+    quietAmbience: false,
+    musicOn: true,
+    musicVolume: 0.7,
+    announceVolume: 0.8,
     announcements: true,
   };
 }
@@ -135,6 +146,10 @@ function loadSettings(): Settings {
     echoCancel: bool(o.echoCancel, d.echoCancel),
     autoGain: bool(o.autoGain, d.autoGain),
     ambientVolume: num(o.ambientVolume, 0, 1.5, d.ambientVolume),
+    quietAmbience: bool(o.quietAmbience, d.quietAmbience),
+    musicOn: bool(o.musicOn, d.musicOn),
+    musicVolume: num(o.musicVolume, 0, 1.5, d.musicVolume),
+    announceVolume: num(o.announceVolume, 0, 1.5, d.announceVolume),
     announcements: bool(o.announcements, d.announcements),
   };
 }

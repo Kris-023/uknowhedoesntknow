@@ -10,11 +10,11 @@ import { openRoomDialog, roomSummary } from './roomDialog';
 import { SettingsView } from './settingsView';
 import { settings, updateSettings } from './store';
 import { WordsView } from './wordsView';
+import { mapDef, mapList } from '../maps';
 
 export type LobbyChoice = { kind: 'create'; code: string; opts: RoomOpts } | { kind: 'join'; code: string } | { kind: 'bench' };
 
 /** The one map so far. Kept as data so the menu already separates map, game and character. */
-export const MAP = { name: 'Hypertrain', line: 'Linie 7' };
 
 type TabId = 'play' | 'character' | 'words' | 'settings';
 
@@ -191,8 +191,8 @@ export class MainMenu extends MenuShell {
     start.type = 'button';
     start.addEventListener('click', () => this.pick({ kind: 'bench' }));
     const row = el('div', 'row');
-    row.append(start, el('span', 'note', 'Allein im Wagen mit drei simulierten Mitreisenden. FPS und Grafik live anpassen.'));
-    box.append(el('legend', 'group-title', 'Testfahrt'), row);
+    row.append(start, el('span', 'note', 'Allein mit simulierten Mitspielern. FPS und Grafik live anpassen.'));
+    box.append(el('legend', 'group-title', 'Benchmark'), row);
     return box;
   }
 
@@ -250,8 +250,28 @@ export class MainMenu extends MenuShell {
       else err.textContent = `Der Code hat ${NET.codeLength} Zeichen, z. B. ABCD-EFGH.`;
     });
 
-    const map = el('p', 'map-row');
-    map.append(el('span', 'field-label', 'Map'), el('span', 'map-name', MAP.name));
+    // The map is part of the room settings, but important enough to pick right here.
+    const map = el('div', 'map-row');
+    const maps = el('div', 'seg');
+    maps.setAttribute('role', 'group');
+    maps.setAttribute('aria-label', 'Map');
+    const mapNote = el('span', 'note');
+    const syncMap = () => {
+      for (const b of maps.querySelectorAll('button')) b.setAttribute('aria-pressed', String(b.dataset.map === settings.room.map));
+      mapNote.textContent = mapDef(settings.room.map).blurb;
+    };
+    for (const m of mapList()) {
+      const b = el('button', '', m.name);
+      b.type = 'button';
+      b.dataset.map = m.id;
+      b.addEventListener('click', () => {
+        updateSettings({ room: { ...settings.room, map: m.id } });
+        syncMap();
+      });
+      maps.append(b);
+    }
+    syncMap();
+    map.append(el('span', 'field-label', 'Map'), maps, mapNote);
 
     // Create and its settings side by side, joining by code below. With an invite link, joining comes first.
     const createRow = el('div', 'play-create');
@@ -332,9 +352,10 @@ export class PauseMenu extends MenuShell {
     profile: PersonState,
     onProfile: (p: PersonState) => void,
     private bench = false,
+    mapName = 'Hypertrain',
   ) {
     const title = el('div', 'brand');
-    title.append(el('span', 'brand-kicker', `Map · ${MAP.name}`), el('h1', 'brand-name small', 'Menü'));
+    title.append(el('span', 'brand-kicker', `Map · ${mapName}`), el('h1', 'brand-name small', 'Menü'));
     super(profile, onProfile, 'Spiel', title);
     this.root.classList.add('pause');
     this.root.addEventListener('keydown', (e) => {
@@ -415,7 +436,7 @@ export class PauseMenu extends MenuShell {
         if (!p.me && this.volume) li.append(this.volSlider(p.id, p.name));
         list.append(li);
       }
-      const meta = [`${r.players.length}/${NET.maxPlayers} im Wagen`, r.role === 'host' ? 'du bist Host' : 'du bist Gast'];
+      const meta = [`${r.players.length}/${NET.maxPlayers} im Raum`, r.role === 'host' ? 'du bist Host' : 'du bist Gast'];
       if (r.role === 'client' && Number.isFinite(r.rttMs)) meta.push(`Ping ${Math.round(r.rttMs)} ms`);
       sec.append(el('span', 'eyebrow', 'Raum'), codeRow, list, el('p', 'note', meta.join(' · ')));
       const vrow = el('div', 'row');
@@ -432,7 +453,7 @@ export class PauseMenu extends MenuShell {
       vrow.append(el('span', 'note', roomSummary(r.opts)));
       sec.append(vrow);
     } else {
-      sec.append(el('span', 'eyebrow', this.bench ? 'Benchmark' : 'Allein'), el('p', 'note', 'Ohne Netzwerk, die drei Mitreisenden sind simuliert.'));
+      sec.append(el('span', 'eyebrow', this.bench ? 'Benchmark' : 'Allein'), el('p', 'note', 'Ohne Netzwerk, die drei Mitspieler sind simuliert.'));
     }
     this.panel.append(sec);
     const game = this.gameControls?.();

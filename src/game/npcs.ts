@@ -3,16 +3,14 @@ import { buildBottle, buildNewspaper, buildPhone, ITEM_IDS, ITEMS } from '../cha
 import { makeLook } from '../characters/look';
 import { Person } from '../characters/person';
 import { ARMPOSE } from '../characters/rig';
-import { NPC_DEFS, SEAT_X } from '../config';
 import { smoothstep } from '../core/motion';
 import { mulberry32 } from '../core/rng';
+import type { NpcAct, NpcSpot } from '../maps/types';
 import { group } from '../scene/build';
-
-type Act = (typeof NPC_DEFS)[number]['act'];
 
 interface Npc {
   person: Person;
-  act: Act;
+  act: NpcAct;
   /** Phase offset, so the ten don't move in lockstep. */
   off: number;
   paper: THREE.Group | null;
@@ -23,28 +21,27 @@ interface Npc {
 const STAND_SCALE = 0.94;
 
 /**
- * The ten passengers. Who looks how and carries what comes from the lobby seed, what they do from
- * the shared clock, so every client sees the same coach without a single network message.
+ * The map's extras (ten passengers in the hypertrain). Who looks how and carries what comes from the
+ * lobby seed, what they do from the shared clock, so every client sees the same scene without a
+ * single network message.
  */
 export class Npcs {
   private npcs: Npc[] = [];
 
-  constructor(parent: THREE.Object3D, seed: number) {
-    NPC_DEFS.forEach((d, i) => {
+  constructor(parent: THREE.Object3D, seed: number, spots: readonly NpcSpot[]) {
+    spots.forEach((d, i) => {
       const rand = mulberry32((seed ^ 0x4e5043) + i * 7919);
       const root = group(`npc_${i + 1}`, parent);
       let standing = false;
       let baseYaw = 0;
-      if ('seat' in d) {
-        root.position.set(d.seat.side * SEAT_X, 0.525, d.seat.z);
-        baseYaw = d.seat.side === -1 ? Math.PI / 2 : -Math.PI / 2;
-      } else {
+      if (d.pose === 'sit') root.position.set(d.at.x, d.at.y, d.at.z);
+      else {
         standing = true;
         // Feet on the floor: the standing rig reaches 0.9 below its root.
-        root.position.set(d.stand.x, 0.9 * STAND_SCALE, d.stand.z);
+        root.position.set(d.at.x, d.at.y + 0.9 * STAND_SCALE, d.at.z);
         root.scale.setScalar(STAND_SCALE);
-        baseYaw = d.stand.yaw;
       }
+      baseYaw = d.at.yaw;
       root.rotation.y = baseYaw;
       const person = new Person(root, makeLook(rand), standing ? 'stand' : 'sit');
       const arms = person.rig.arms!;
@@ -57,7 +54,7 @@ export class Npcs {
         person.armOverride = { R: 'phone' };
         person.handSide = 'L';
       } else if (d.act === 'beer') {
-        arms.R.hand.add(buildBottle('can' in d && d.can));
+        arms.R.hand.add(buildBottle(!!d.can));
         // Fixed to the hand, so the bottle tips towards the mouth when drinking.
         arms.R.mode = 'fixed';
         arms.R.base = -(ARMPOSE.beer.s + ARMPOSE.beer.e);

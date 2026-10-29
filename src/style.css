@@ -128,6 +128,13 @@ kbd { font: inherit; border: 1px solid var(--line); padding: 1px 5px; color: var
 .text-input:focus { border-color: var(--amber); outline: none; }
 .text-input.code { font-family: var(--font-mono); letter-spacing: .12em; text-transform: uppercase; max-width: 220px; }
 .editor, .settings { display: flex; flex-direction: column; gap: 16px; }
+/* Settings sub-tabs: smaller than the menu tabs, and the pane title is the tab itself. */
+.tabs.sub { flex-wrap: wrap; border-bottom: 1px solid var(--line); }
+.tabs.sub .tab { padding: 8px 12px 10px; font-size: 11px; }
+.settings-pane { display: flex; flex-direction: column; gap: 16px; }
+.settings-pane[hidden] { display: none; }
+.settings.tabbed .settings-pane > .group:first-child > .group-title { display: none; }
+.settings.tabbed .settings-pane > .group:first-child { border-top: 0; padding-top: 0; }
 .group { border: 0; margin: 0; padding: 14px 0 0; border-top: 1px solid var(--line); display: flex; flex-direction: column; gap: 10px; }
 .group-title { padding: 0 0 4px; font: 500 11px/1 var(--font-mono); letter-spacing: .12em; text-transform: uppercase; color: var(--amber); }
 .field { display: grid; grid-template-columns: 110px minmax(0, 1fr); gap: 4px 12px; align-items: center; }
@@ -230,7 +237,7 @@ kbd { font: inherit; border: 1px solid var(--line); padding: 1px 5px; color: var
 .check { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 10px; font-size: 13.5px; color: var(--fg2); cursor: pointer; }
 .check input { width: 16px; height: 16px; accent-color: var(--amber); margin: 0; }
 .sr-only { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; border: 0; }
-.map-row { margin: 10px 0 0; padding-top: 14px; border-top: 1px solid var(--line); display: flex; align-items: baseline; gap: 12px; }
+.map-row { margin: 10px 0 0; padding-top: 14px; border-top: 1px solid var(--line); display: flex; flex-wrap: wrap; align-items: center; gap: 8px 12px; }
 .map-row .map-name { font: 800 1.5rem/1 var(--font-display); letter-spacing: .02em; }
 .menu-me[hidden] { display: none; }
 

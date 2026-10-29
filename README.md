@@ -2,7 +2,8 @@
 
 Browser-Partyspiel für 2 bis 4 Freunde: Ihr sitzt euch in einem viel zu schnellen U-Bahn-Wagen gegenüber,
 draußen rast der Tunnel vorbei, drinnen flackert das Neon, und die Mitreisenden starren aufs Handy.
-Der Wagen heißt „Hypertrain“ und ist die erste Map, die Minigames sind „Wer bin ich?“ und „Sag's anders“.
+Sechs Maps: Hypertrain (der U-Bahn-Wagen), Waschsalon, Bürgeramt, Späti 3 Uhr, WG-Wohnzimmer und Diner. Die Minigames
+sind „Wer bin ich?“ und „Sag's anders“.
 Nur PC, nur Browser, nur private Räume, kein Server.
 
 **Stand: M7 (alle Meilensteine aus dem Auftrag umgesetzt).** Details und offene Fragen: `teamlead/SUPERDOC.md`.
@@ -12,7 +13,11 @@ Nur PC, nur Browser, nur private Räume, kein Server.
 1. Name eintragen (oder leer lassen für einen Zufallsnamen), **Raum erstellen**, Link an die anderen schicken
    (im Spiel: <kbd>Esc</kbd> → **Link kopieren**).
 2. Wer den Link öffnet, hat den Code schon im Feld und klickt **Beitreten**. Das Verbinden dauert ein paar Sekunden.
-3. Figur und Accessoires im Tab **Charakter**, Ton und Grafik in **Einstellungen**. Der Browser merkt sich alles.
+3. Figur und Accessoires im Tab **Charakter**, Ton und Grafik in **Einstellungen**. Umgebung, Musik und Durchsagen haben
+   eigene Regler; „Ruhige Umgebung“ dämpft das Dauerrauschen der Map. Der Browser merkt sich alles.
+
+Die **Map** wählst du im Spielen-Tab vor dem Erstellen; sie gilt für den ganzen Raum. Jede Map hat ihre eigenen
+Mitreisenden, Geräusche und ein eigenes Ereignis (Unwucht, Systemausfall, Streife, Nachbar klopft, Fritteuse brennt).
 
 Neben „Raum erstellen“ liegen die **Raum-Einstellungen**: Sprachchat an/aus (aus, wenn ihr schon im TeamSpeak oder
 Discord seid), Schaffner aus / nur ermahnen / mit Punktabzug, Abstimmungszeit, Stromausfälle, Wortstapel und Zeit pro

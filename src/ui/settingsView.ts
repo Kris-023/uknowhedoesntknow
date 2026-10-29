@@ -3,8 +3,18 @@ import { SHAKE } from '../config';
 import { el } from './dom';
 import { onSettings, settings, updateSettings, type Settings } from './store';
 
-type Section = 'voice' | 'gfx' | 'input';
-type SliderKey = 'shakeMm' | 'mouseSens' | 'voiceVolume' | 'micGain' | 'bloomStrength' | 'renderScale' | 'vadLevel' | 'ambientVolume' | 'cardScale';
+type Section = 'voice' | 'sound' | 'gfx' | 'input';
+
+/** Sub-tabs in this order: voice first (has to work before anything else), then sound, graphics, controls. */
+const SECTIONS: readonly { id: Section; label: string }[] = [
+  { id: 'voice', label: 'Stimme' },
+  { id: 'sound', label: 'Ton' },
+  { id: 'gfx', label: 'Grafik' },
+  { id: 'input', label: 'Steuerung' },
+];
+/** The last sub-tab you looked at, for the next time the settings open (this page load only). */
+let lastSection: Section = 'voice';
+type SliderKey = 'shakeMm' | 'mouseSens' | 'voiceVolume' | 'micGain' | 'bloomStrength' | 'renderScale' | 'vadLevel' | 'ambientVolume' | 'musicVolume' | 'announceVolume' | 'cardScale';
 
 /** Mouth/meter level range that normal speech should reach: loud enough to open the mouth, not clipping. */
 const TARGET = { from: 0.5, to: 0.85 };
@@ -21,24 +31,36 @@ export class SettingsView {
   private off: () => void;
   private raf = 0;
 
-  constructor(extra: HTMLElement | null = null, sections: Section[] = ['voice', 'gfx', 'input']) {
-    // Most needed first: the benchmark entry, voice (has to work before anything else), graphics
-    // (fps), controls, and the train sound last.
-    if (extra) this.root.append(extra);
-    if (sections.includes('voice')) this.root.append(this.voice());
+  constructor(extra: HTMLElement | null = null, sections: Section[] = SECTIONS.map((x) => x.id)) {
+    const panes = new Map<Section, HTMLElement[]>();
+    if (sections.includes('voice')) panes.set('voice', [this.voice()]);
+    if (sections.includes('sound')) {
+      const sound = el('fieldset', 'group');
+      sound.append(
+        el('legend', 'group-title', 'Ton'),
+        this.slider('Umgebung', 'ambientVolume', 0, 1.5, 0.05, pct, undefined, 'Geräusche der Map: Dröhnen, Fritteuse, Regen, Kühlschrank, Klopfen.'),
+        this.toggle('Ruhige Umgebung', 'quietAmbience', 'Dämpft das Dauerrauschen stark. Einzelne Geräusche wie Klingel oder Klopfen bleiben.'),
+        this.toggle('Musik', 'musicOn', 'Jukebox im Diner, Party nebenan in der WG.'),
+        this.slider('Lautstärke', 'musicVolume', 0, 1.5, 0.05, pct, () => settings.musicOn),
+        this.toggle('Durchsagen', 'announcements', 'Halte im Hypertrain, Aufrufe im Bürgeramt; per Sprachausgabe des Browsers. Der Schaffner spricht immer.'),
+        this.slider('Lautstärke', 'announceVolume', 0, 1.5, 0.05, pct, undefined, 'Gong und Sprache, auch für den Schaffner.'),
+      );
+      panes.set('sound', [sound]);
+    }
     if (sections.includes('gfx')) {
       const gfx = el('fieldset', 'group');
       gfx.append(
         el('legend', 'group-title', 'Grafik'),
         this.slider('Auflösung', 'renderScale', 0.5, 1, 0.05, pct, undefined, 'Weniger rechnet schneller, vor allem auf 4K.'),
-        this.toggle('Leuchten', 'bloom', 'Glühen um Neon und Streifen (Bloom).'),
+        this.toggle('Leuchten', 'bloom', 'Glühen um Lampen, Neon und Leuchtschilder (Bloom).'),
         this.slider('Stärke', 'bloomStrength', 0, 2, 0.05, pct, () => settings.bloom),
         this.slider('Karten', 'cardScale', 0.5, 2, 0.05, pct, undefined, 'Größe der Bilder über den Köpfen bei „Wer bin ich?“.'),
         this.seg('Licht', [['Nacht', 'nacht'], ['Hell', 'hell']] as const, 'light', 'Nacht ist die gedachte Stimmung, Hell zeigt mehr.'),
-        this.toggle('Wackeln', 'shakeOn'),
+        this.toggle('Wackeln', 'shakeOn', 'Die Kamera wackelt mit, vor allem im Hypertrain.'),
         this.slider('Stärke', 'shakeMm', 0, SHAKE.maxMm, 1, (v) => `${v} mm`, () => settings.shakeOn),
       );
-      this.root.append(gfx);
+      // The benchmark entry sits with the graphics: it's where you go to tune the fps.
+      panes.set('gfx', extra ? [gfx, extra] : [gfx]);
     }
     if (sections.includes('input')) {
       const input = el('fieldset', 'group');
@@ -46,17 +68,11 @@ export class SettingsView {
       // Only browsers that have the raw event get the switch.
       if ('onpointerrawupdate' in window) input.append(this.toggle('Direkte Mauseingabe', 'mouseRaw', 'Liest die Maus ohne Umweg, reagiert direkter. Nur ausschalten, wenn die Maus damit spinnt.'));
       input.append(this.toggle('Maus Y umkehren', 'invertY'));
-      this.root.append(input);
+      panes.set('input', [input]);
     }
-    if (sections.includes('voice')) {
-      const sound = el('fieldset', 'group');
-      sound.append(
-        el('legend', 'group-title', 'Ton'),
-        this.slider('Zug', 'ambientVolume', 0, 1.5, 0.05, pct, undefined, 'Dröhnen, Motor, Gong.'),
-        this.toggle('Durchsagen', 'announcements', 'Vor jedem Halt, mit der Sprachausgabe des Browsers.'),
-      );
-      this.root.append(sound);
-    }
+    // A short list (benchmark panel) stays one column; the full settings got too long for that.
+    if (panes.size < 3) for (const els of panes.values()) this.root.append(...els);
+    else this.tabbed(panes);
     this.off = onSettings(() => this.sync());
     this.sync();
   }
@@ -64,6 +80,51 @@ export class SettingsView {
   dispose(): void {
     this.off();
     cancelAnimationFrame(this.raf);
+  }
+
+  /** One sub-tab per section; all panes stay built (the mic meter keeps running), only one shows. */
+  private tabbed(panes: Map<Section, HTMLElement[]>): void {
+    this.root.classList.add('tabbed');
+    const nav = el('div', 'tabs sub');
+    nav.setAttribute('role', 'tablist');
+    nav.setAttribute('aria-label', 'Einstellungen');
+    const tabs = new Map<Section, HTMLButtonElement>();
+    const boxes = new Map<Section, HTMLElement>();
+    const show = (id: Section) => {
+      lastSection = id;
+      for (const [k, b] of tabs) {
+        b.setAttribute('aria-selected', String(k === id));
+        b.tabIndex = k === id ? 0 : -1;
+        boxes.get(k)!.hidden = k !== id;
+      }
+    };
+    for (const { id, label } of SECTIONS) {
+      const els = panes.get(id);
+      if (!els) continue;
+      const b = el('button', 'tab', label);
+      b.type = 'button';
+      b.id = `set-tab-${id}`;
+      b.setAttribute('role', 'tab');
+      b.setAttribute('aria-controls', `set-pane-${id}`);
+      b.addEventListener('click', () => show(id));
+      nav.append(b);
+      tabs.set(id, b);
+      const box = el('div', 'settings-pane');
+      box.id = `set-pane-${id}`;
+      box.setAttribute('role', 'tabpanel');
+      box.setAttribute('aria-labelledby', b.id);
+      box.append(...els);
+      boxes.set(id, box);
+    }
+    nav.addEventListener('keydown', (e) => {
+      if (e.key !== 'ArrowRight' && e.key !== 'ArrowLeft') return;
+      const ids = [...tabs.keys()];
+      const next = ids[(ids.indexOf(lastSection) + (e.key === 'ArrowRight' ? 1 : ids.length - 1)) % ids.length];
+      show(next);
+      tabs.get(next)!.focus();
+    });
+    this.root.append(nav, ...boxes.values());
+    show(tabs.has(lastSection) ? lastSection : [...tabs.keys()][0]);
   }
 
   private sync(): void {
@@ -225,7 +286,7 @@ export class SettingsView {
     return this.field(label, seg, hint);
   }
 
-  private toggle(label: string, key: 'bloom' | 'shakeOn' | 'invertY' | 'announcements' | 'echoCancel' | 'autoGain' | 'mouseRaw', hint?: string): HTMLElement {
+  private toggle(label: string, key: 'bloom' | 'shakeOn' | 'invertY' | 'announcements' | 'quietAmbience' | 'musicOn' | 'echoCancel' | 'autoGain' | 'mouseRaw', hint?: string): HTMLElement {
     const b = el('button', 'btn toggle');
     b.type = 'button';
     b.addEventListener('click', () => updateSettings({ [key]: !settings[key] }));

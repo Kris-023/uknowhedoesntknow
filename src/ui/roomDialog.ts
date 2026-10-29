@@ -8,7 +8,7 @@ import { el } from './dom';
 export function roomSummary(o: RoomOpts): string {
   const sf: Record<SchaffnerMode, string> = { off: 'Schaffner aus', warn: 'Schaffner ermahnt nur', fine: 'Schaffner mit Punktabzug' };
   const decks = o.decks.length ? o.decks.map((d) => DECK_NAMES[d]).join('/') : DECK_NAMES.normal;
-  return [o.voice ? 'Sprachchat an' : 'ohne Sprachchat', sf[o.schaffner], `Abstimmung ${o.voteS} s`, o.blackouts ? 'mit Stromausfällen' : 'ohne Stromausfälle', `Wörter ${decks}, ${o.turnS} s pro Zug`, o.sagsTeams ? 'zu viert in Teams' : 'jeder gegen jeden'].join(' · ');
+  return [o.voice ? 'Sprachchat an' : 'ohne Sprachchat', sf[o.schaffner], `Abstimmung ${o.voteS} s`, o.blackouts ? 'mit Stromausfällen' : 'ohne Stromausfälle', `Wörter ${decks}, ${o.turnS} s Erklärzeit`, o.sagsTeams ? 'zu viert in Teams' : 'jeder gegen jeden'].join(' · ');
 }
 
 /**
@@ -69,10 +69,10 @@ export function openRoomDialog(host: HTMLElement, current: RoomOpts, onChange: (
     seg('Sprachchat', 'voice', [['An', true], ['Aus', false]], 'Aus, wenn ihr schon im TeamSpeak oder Discord seid.'),
     seg('Schaffner', 'schaffner', [['Aus', 'off'], ['Nur ermahnen', 'warn'], ['Mit Punktabzug', 'fine']], 'Kommt, wenn jemand zu lange zu laut ist. Punktabzug nur während einer Runde.'),
     seg('Abstimmung', 'voteS', ROOM.voteChoices.map((s) => [`${s} s`, s] as const), 'So lange bleibt eine Abstimmung bei „Wer bin ich?“ offen.'),
-    seg('Stromausfälle', 'blackouts', [['An', true], ['Aus', false]], 'Ab und zu geht im Wagen kurz das Licht aus.'),
+    seg('Stromausfälle', 'blackouts', [['An', true], ['Aus', false]], 'Ab und zu geht kurz das Licht aus, jede Map auf ihre Art.'),
     decks('Wörter', 'Für „Sag’s anders“. NSFW ist richtig derb. Eigene = die Listen aller im Raum (Menü → Wörter).'),
     seg('Modus', 'sagsTeams', [['Teams', true], ['Jeder gegen jeden', false]], 'Für „Sag’s anders“. Teams gehen nur zu viert (2 gegen 2); mit 2–3 Spielern spielt immer jeder gegen jeden.'),
-    seg('Zeit pro Zug', 'turnS', ROOM.turnChoices.map((s) => [`${s} s`, s] as const), 'So lange erklärt jemand bei „Sag’s anders“, bevor der Nächste dran ist.'),
+    seg('Erklärzeit', 'turnS', ROOM.turnChoices.map((s) => [`${s} s`, s] as const), 'So lange erklärt jemand bei „Sag’s anders“, bevor der Nächste dran ist.'),
     done,
   );
   // Esc closes the dialog natively; it must not also reach the game's Esc handler (pause menu).
