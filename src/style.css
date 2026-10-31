@@ -399,3 +399,55 @@ body.wi-dialog .hint-bar { display: none; }
 .absent-row { display: flex; align-items: center; gap: 12px; background: var(--panel); border: 1px solid var(--line); border-left: 3px solid var(--amber);
   padding: 8px 10px 8px 12px; font-size: 13px; line-height: 1.35; color: var(--fg); }
 .absent-row .btn { flex: none; }
+
+/* Picking by looking ("Zeig drauf", the vote in "Ahnungslos"): a reticle in the middle, the picked head's tag or board stands out.
+   The tags are positioned by transform, so the highlight never touches transform. */
+.gaze-reticle { position: fixed; left: 50%; top: 50%; width: 22px; height: 22px; margin: -11px 0 0 -11px; z-index: 3; pointer-events: none;
+  border: 2px solid rgba(255, 255, 255, .75); border-radius: 50%; box-shadow: 0 0 0 1px rgba(0, 0, 0, .5), inset 0 0 0 1px rgba(0, 0, 0, .5); }
+.gaze-reticle::after { content: ""; position: absolute; left: 50%; top: 50%; width: 4px; height: 4px; margin: -2px 0 0 -2px; border-radius: 50%; background: #fff; }
+.gaze-reticle[hidden] { display: none; }
+.nametag.picked { background: var(--c); color: #0b1019; font-size: calc(17px * var(--ui)); padding: .3em .7em; box-shadow: 0 0 0 2px #fff, 0 4px 18px rgba(0, 0, 0, .6); }
+.nametag.picked::before { content: "▶ "; }
+.card-tag.picked { outline: 4px solid #fff; outline-offset: 2px; }
+
+/* Zeig drauf: the question on top, whom you point at, the result; the round's results at the end */
+.zd-lead { font: 500 11px/1 var(--font-mono); letter-spacing: .12em; text-transform: uppercase; color: var(--fg2); }
+.zd-question { max-width: 24em; }
+.zd-aim { display: flex; flex-wrap: wrap; align-items: baseline; justify-content: center; gap: 4px 8px; font-size: 15px; }
+.zd-aim .zd-name { font: 800 1.5rem/1 var(--font-display); letter-spacing: .02em; }
+.zd-name { font-weight: 800; }
+.zd-hint { font-size: 13px; }
+.zd-pick { display: flex; flex-wrap: wrap; align-items: center; justify-content: center; gap: 6px; flex-basis: 100%; }
+.btn.zd-pickbtn { border-left: 3px solid var(--c); color: var(--fg); }
+.zd-result { display: flex; flex-direction: column; align-items: center; gap: 4px; flex-basis: 100%; }
+.zd-ask { font-size: 13px; }
+.zd-top { display: flex; flex-wrap: wrap; justify-content: center; gap: 4px 16px; }
+.zd-top .zd-name { font: 800 2rem/1 var(--font-display); letter-spacing: .02em; }
+.zd-history { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 6px; max-height: 40vh; overflow-y: auto; }
+.zd-history li { display: flex; flex-wrap: wrap; align-items: baseline; justify-content: space-between; gap: 2px 12px; padding: 6px 10px;
+  border-left: 3px solid var(--amber); background: #0b1019; font-size: 13.5px; }
+.zd-history li.hit { border-color: #ff8a7a; }
+.zd-q { flex: 1 1 16em; color: var(--fg); }
+.zd-who { flex: none; }
+.zd-final li { font-size: 14px; }
+
+/* Ahnungslos: your word (or none) on top, the clues in order, the input on your turn */
+.ah-role { display: flex; align-items: baseline; gap: 8px; }
+.ah-role:empty { display: none; }
+.ah-lead { font: 500 11px/1 var(--font-mono); letter-spacing: .12em; text-transform: uppercase; color: var(--fg2); }
+.ah-word { font: 800 1.7rem/1 var(--font-display); letter-spacing: .03em; text-transform: uppercase; color: var(--amber); overflow-wrap: anywhere; }
+.ah-word.ah-none { color: #ff8a7a; }
+.ah-done .ah-word { font-size: 2.2rem; }
+.ah-bar .sa-head { align-items: center; }
+.ah-clues .gg-chip { min-width: 72px; padding: 5px 10px 6px; }
+.ah-clues .gg-chip b { font-size: 1.1rem; }
+.ah-facts { display: flex; flex-direction: column; align-items: flex-start; gap: 6px; }
+.ah-done .gg-chips { justify-content: flex-start; }
+.wi-warn[hidden] { display: none; }
+/* Bottom dock of "Zeig drauf"/"Ahnungslos": centred above the hint line, clear of the scoreboard on the left. */
+.wi-bar.zd-dock { top: auto; bottom: 64px; flex-direction: column; gap: 8px; padding: 8px 14px;
+  max-width: min(640px, calc((100vw - 620px) / var(--ui)), calc((100vw - 32px) / var(--ui))); }
+.zd-bar .gg-body { gap: 4px; }
+.zd-bar .gg-question { font-size: 1.45rem; }
+.zd-dock .zd-aim { flex-basis: 100%; }
+.ah-dock .gg-body:empty { display: none; }
