@@ -151,7 +151,10 @@ function counts(c) {
 async function seal(o) {
   const content = readContent(o.content);
   const password = readPassword();
-  const salt = crypto.getRandomValues(new Uint8Array(16));
+  // Same password as the existing vault: keep its salt, so the key everyone's browser remembered still
+  // fits and nobody has to unlock again after a list update. The IV is fresh every time.
+  const prev = await previousSalt(o.out, password);
+  const salt = prev ?? crypto.getRandomValues(new Uint8Array(16));
   const iv = crypto.getRandomValues(new Uint8Array(12));
   const key = await deriveKey(password, salt, ITERATIONS);
   const data = new Uint8Array(await crypto.subtle.encrypt({ name: 'AES-GCM', iv }, key, new TextEncoder().encode(JSON.stringify(content))));
@@ -166,6 +169,22 @@ async function seal(o) {
   };
   writeFileSync(o.out, JSON.stringify(vault, null, 2) + '\n');
   console.log(`Versiegelt: ${o.out}\n${counts(content)}`);
+  console.log(prev ? 'Schlüssel unverändert: freigeschaltete Browser bleiben freigeschaltet.' : 'Neuer Schlüssel: alle müssen einmal neu freischalten.');
+}
+
+/** Salt of the existing vault if it opens with this password (and uses today's iteration count), else null. */
+async function previousSalt(file, password) {
+  if (!existsSync(file)) return null;
+  try {
+    const v = JSON.parse(readFileSync(file, 'utf8'));
+    if (v.format !== 'ukhdk-vault' || v.v !== 1 || v.kdf?.iterations !== ITERATIONS) return null;
+    const salt = unb64(v.salt);
+    const key = await deriveKey(password, salt, ITERATIONS);
+    await crypto.subtle.decrypt({ name: 'AES-GCM', iv: unb64(v.iv) }, key, unb64(v.data));
+    return salt;
+  } catch {
+    return null;
+  }
 }
 
 async function check(o) {

@@ -65,6 +65,21 @@ describe('vault: the seal script', () => {
     expect(wrong.stderr).toContain('nicht auf');
   }, 20_000);
 
+  it('keeps the salt while the password stays, so remembered keys keep working', () => {
+    writeFileSync(passFile, PASS);
+    expect(run([], passFile).status).toBe(0);
+    const first = JSON.parse(readFileSync(out, 'utf8'));
+    const again = run([], passFile);
+    expect(again.stdout).toContain('Schlüssel unverändert');
+    const second = JSON.parse(readFileSync(out, 'utf8'));
+    expect(second.salt).toBe(first.salt);
+    expect(second.iv).not.toBe(first.iv);
+    writeFileSync(passFile, 'ein-anderes-passwort');
+    const other = run([], passFile);
+    expect(other.stdout).toContain('Neuer Schlüssel');
+    expect(JSON.parse(readFileSync(out, 'utf8')).salt).not.toBe(first.salt);
+  }, 30_000);
+
   it('refuses duplicates', () => {
     writeFileSync(passFile, PASS);
     writeFileSync(join(content, 'zeig-nsfw.txt'), lines([...FIXTURE.zeig.nsfw, FIXTURE.zeig.nsfw[0].toUpperCase()]));
