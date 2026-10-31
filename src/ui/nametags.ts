@@ -33,6 +33,12 @@ export class NameTags {
     host.append(this.root);
   }
 
+  /** Another world (map change): same seats, new people and camera. */
+  setView(players: Players, camera: THREE.PerspectiveCamera): void {
+    this.players = players;
+    this.camera = camera;
+  }
+
   /** `level(i)`: current voice level of seat i, to highlight who is speaking. */
   update(pov: boolean, level: (i: number) => number, hide: (i: number) => boolean = () => false): void {
     const { w, h } = this.size;

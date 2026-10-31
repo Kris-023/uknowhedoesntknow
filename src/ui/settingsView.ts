@@ -43,7 +43,7 @@ export class SettingsView {
         this.toggle('Musik', 'musicOn', 'Jukebox im Diner, Party nebenan in der WG.'),
         this.slider('Lautstärke', 'musicVolume', 0, 1.5, 0.05, pct, () => settings.musicOn),
         this.toggle('Durchsagen', 'announcements', 'Halte im Hypertrain, Aufrufe im Bürgeramt; per Sprachausgabe des Browsers. Der Schaffner spricht immer.'),
-        this.slider('Lautstärke', 'announceVolume', 0, 1.5, 0.05, pct, undefined, 'Gong und Sprache, auch für den Schaffner.'),
+        this.slider('Lautstärke', 'announceVolume', 0, 1.5, 0.05, pct, undefined, 'Gong und Sprache, auch für den Schaffner. Ganz links ist auch die Sprache stumm, manche Browser regeln sie sonst nicht mit.'),
       );
       panes.set('sound', [sound]);
     }

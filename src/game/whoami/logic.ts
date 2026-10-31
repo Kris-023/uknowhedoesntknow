@@ -111,6 +111,14 @@ export class WhoamiHost {
     }
   }
 
+  /** Everyone still in the room has voted: the vote closes without waiting for those who dropped out. */
+  closeIfAllIn(present: ReadonlySet<string>): boolean {
+    const v = this.state.vote;
+    if (!v || !v.voters.length || this.state.players.some((p) => p !== v.guesser && present.has(p) && !v.voters.includes(p))) return false;
+    this.resolve();
+    return true;
+  }
+
   /** Per tick: a vote closes at its deadline with whatever came in. */
   tick(now: number): boolean {
     if (this.state.vote && now >= this.state.vote.deadline) {

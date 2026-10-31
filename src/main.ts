@@ -21,7 +21,7 @@ import { GpuTimer, HeapWatch } from './debug/gpuTimer';
 import { MainMenu, PauseMenu, type LobbyChoice } from './ui/menu';
 import { MicHud } from './ui/micHud';
 import { NameTags } from './ui/nametags';
-import { LocalGameRoom, sessionNet, type GameNet } from './game/minigame';
+import { LocalGameRoom, sessionNet, type GameNet, type Minigame } from './game/minigame';
 import { LoudTracker, SchaffnerFigure } from './game/schaffner';
 import { WhoamiBots } from './game/whoami/bots';
 import { CardsView } from './game/whoami/cardsView';
@@ -31,9 +31,12 @@ import { GameLobby, GAMES, type GameId } from './game/lobby';
 import { SagsBots } from './game/sagsanders/bots';
 import { SagsGame } from './game/sagsanders/game';
 import { SagsUi } from './game/sagsanders/ui';
+import { GleichBots } from './game/gleich/bots';
+import { GleichGame } from './game/gleich/game';
+import { GleichUi } from './game/gleich/ui';
 import { customCards, playerId } from './words/custom';
 import { initUiScale } from './ui/scale';
-import { loadProfile, onSettings, saveProfile, settings } from './ui/store';
+import { loadProfile, onSettings, saveProfile, settings, updateSettings } from './ui/store';
 import './style.css';
 
 // The prototype's palette was tuned on r128, where hex colours went into the shader unconverted.
@@ -97,7 +100,7 @@ async function start(): Promise<void> {
   history.replaceState(null, '', `#${code}`);
   const net = trysteroTransport(code, (msg) => console.warn('Trystero:', msg));
   voice?.bind(net);
-  const session = new Session(net, clock, choice.kind === 'create', profile, undefined, tabToken(code));
+  const session = new Session(net, clock, choice.kind === 'create', profile, undefined, tabToken(code), playerId());
   markInRoom(code);
   if (choice.kind === 'create') session.setOpts(choice.opts);
   addEventListener('pagehide', () => session.leave());
@@ -128,8 +131,9 @@ function launch(clock: SharedClock, session: Session | null, startCam: 'wagon' |
   // The room's map (host setting); solo: your own room setting, or ?map= for screenshots.
   const urlMap = params.get('map');
   const mapId = session?.opts.map ?? (MAP_IDS.includes(urlMap as MapId) ? (urlMap as MapId) : settings.room.map);
-  const world = new World(clock, mapId);
-  const players = world.players;
+  // Rebuilt on a map change (swapMap); everything below reads these at call time, never a copy.
+  let world = new World(clock, mapId);
+  let players = world.players;
 
   let pipeline: Pipeline | null = null;
   try {
@@ -198,7 +202,7 @@ function launch(clock: SharedClock, session: Session | null, startCam: 'wagon' |
       session?.setState(p);
     },
     bench,
-    world.def.name,
+    world.def.id,
   );
   const toMenu = () => {
     history.replaceState(null, '', location.pathname + location.search);
@@ -214,12 +218,13 @@ function launch(clock: SharedClock, session: Session | null, startCam: 'wagon' |
   if (bench) document.body.classList.add('benching');
   const tags = new NameTags(document.body, players, world.camera, stage);
   const micHud = voice ? new MicHud(document.body, voice) : null;
-  const ambience = voice ? new Ambience(voice, clock.seed, world.def) : null;
-  // Quiet start: no crackle while the world settles in (see Voice.holdOutput).
+  let ambience = voice ? new Ambience(voice, clock.seed, world.def) : null;
+  // Quiet start: no crackle while the world settles in (see Voice.holdOutput). A map change holds
+  // only the new map's sound the same way; voices keep playing.
   voice?.holdOutput();
   let smooth = 0;
-  let held = !!voice;
-  const launchedAt = performance.now();
+  const releases: (() => void)[] = voice ? [() => voice.releaseOutput()] : [];
+  let holdSince = performance.now();
   // Compile shaders in the background where the browser supports it, so the first frames hitch less.
   if (pipeline) void pipeline.renderer.compileAsync(world.scene, world.camera).catch(() => {});
 
@@ -260,15 +265,23 @@ function launch(clock: SharedClock, session: Session | null, startCam: 'wagon' |
   }
   const voicePos = new THREE.Vector3();
 
-  if (session) connect(session, world, panel, pause, code, refreshSeats);
+  if (session) connect(session, () => world, panel, pause, code, refreshSeats, (id) => swapMap(id));
+  else if (!bench)
+    pause.onMap = (id) => {
+      // Solo: your own room setting is the map, so the next room starts here too.
+      updateSettings({ room: { ...settings.room, map: id } });
+      swapMap(id);
+    };
 
-  // Minigames ("Wer bin ich?", "Sag's anders"): over the room, or solo against bots on the other seats.
+  // Minigames ("Wer bin ich?", "Sag's anders", "Gleich gedacht"): over the room, or solo against bots on the other seats.
   let bots: WhoamiBots | null = null;
   let sagsBots: SagsBots | null = null;
+  let ggBots: GleichBots | null = null;
   let gameNet: GameNet;
   // Solo: your own settings for the next room stand in for the host's.
   const roomOpts = () => session?.opts ?? settings.room;
   const sagsRoom = { decks: () => roomOpts().decks, turnS: () => roomOpts().turnS, teams: () => roomOpts().sagsTeams };
+  const gleichRoom = { decks: () => roomOpts().decks };
   if (session) gameNet = sessionNet(session);
   else {
     const members = players.people.map((p, i) => ({ id: i === players.active ? 'me' : `bot${i}`, seat: i, name: i === players.active ? profile.name : p.name }));
@@ -279,17 +292,20 @@ function launch(clock: SharedClock, session: Session | null, startCam: 'wagon' |
     const ids = members.slice(1).map((m) => m.id);
     bots = new WhoamiBots(room, ids);
     sagsBots = new SagsBots(room, ids, sagsRoom);
+    ggBots = new GleichBots(room, ids, gleichRoom);
   }
   // Dev only: ?voteS=120 stretches votes, so slow test browsers don't run out of time.
   const devVoteS = import.meta.env.DEV ? Number(params.get('voteS')) || undefined : undefined;
   const whoami = new WhoamiGame(gameNet, devVoteS);
   whoami.roomVoteS = () => session?.opts.voteS;
   const sags = new SagsGame(gameNet, sagsRoom, () => ({ pid: playerId(), cards: customCards() }));
+  const gleich = new GleichGame(gameNet, gleichRoom);
   // Someone reloaded and came back: they keep seat, points and their place in the round.
   session?.listen({
     rejoin: (oldId, newId) => {
       whoami.rejoin(oldId, newId);
       sags.rejoin(oldId, newId);
+      gleich.rejoin(oldId, newId);
     },
   });
   const hostName = () => gameNet.members().find((m) => m.id === gameNet.hostId())?.name || 'der Host';
@@ -304,13 +320,11 @@ function launch(clock: SharedClock, session: Session | null, startCam: 'wagon' |
   const startGame = (id: GameId) => {
     wiUi.closeDone();
     saUi.close();
-    if (id === 'whoami') {
-      if (sags.running) sags.end();
-      whoami.start();
-    } else {
-      if (whoamiRunning()) whoami.end();
-      sags.start();
-    }
+    ggUi.close();
+    if (id !== 'whoami' && whoamiRunning()) whoami.end();
+    if (id !== 'sags' && sags.running) sags.end();
+    if (id !== 'gleich' && gleich.running) gleich.end();
+    ({ whoami, sags, gleich })[id].start();
     lobby.pick(id);
   };
   const wiUi = new WhoamiUi(document.body, whoami, () => gameNet.members(), { hostName, start: () => startGame('whoami'), micWarning });
@@ -320,14 +334,21 @@ function launch(clock: SharedClock, session: Session | null, startCam: 'wagon' |
     flash: (title, big, tone, sub) => wiUi.flash(title, big, tone, sub),
     micWarning,
   });
+  const ggUi = new GleichUi(document.body, gleich, () => gameNet.members(), {
+    hostName,
+    start: () => startGame('gleich'),
+    flash: (title, big, tone, sub) => wiUi.flash(title, big, tone, sub),
+    micWarning,
+  });
   const lobby = new GameLobby(document.body, {
     isHost: () => gameNet.isHost(),
     hostName,
     players: () => gameNet.members().length,
-    idle: () => !whoamiRunning() && !sags.running && !wiUi.doneOpen && !saUi.doneOpen,
+    idle: () => !whoamiRunning() && !sags.running && !gleich.running && !wiUi.doneOpen && !saUi.doneOpen && !ggUi.doneOpen,
     solo: !session,
     start: startGame,
   });
+  if (session) absentBar(session, [whoami, sags, gleich]);
   // The game last started owns the scoreboard; the other one's board steps aside.
   let current: GameId | null = null;
   const own = (id: GameId) => {
@@ -335,6 +356,7 @@ function launch(clock: SharedClock, session: Session | null, startCam: 'wagon' |
     current = id;
     wiUi.shown = id === 'whoami';
     saUi.shown = id === 'sags';
+    ggUi.shown = id === 'gleich';
   };
   const cards = new CardsView(document.body, players, world.camera, stage);
   // Phase changes that need the screen: a new card to make or the end of round close the Esc menu.
@@ -354,9 +376,18 @@ function launch(clock: SharedClock, session: Session | null, startCam: 'wagon' |
     lastSags = phase;
     syncHint();
   });
+  let lastGleich = '';
+  gleich.onChange(() => {
+    const phase = gleich.state?.phase ?? '';
+    if (gleich.running) own('gleich');
+    if (phase !== lastGleich && phase === 'done' && pause.isOpen) pause.close();
+    lastGleich = phase;
+    syncHint();
+  });
   const cardOf = (seat: number): string | '?' | null => {
     const s = whoami.state;
     const id = gameNet.members().find((m) => m.seat === seat)?.id;
+    if (current === 'gleich') return id ? ggUi.boardOf(id) : null;
     if (current !== 'whoami' || !s || s.phase === 'cards' || !id || !s.players.includes(id)) return null;
     // Your own card stays a question mark until you have solved it.
     if (id === gameNet.selfId) return whoami.cards.get(id) ?? '?';
@@ -365,7 +396,7 @@ function launch(clock: SharedClock, session: Session | null, startCam: 'wagon' |
   pause.gameControls = () => {
     const box = el('div', 'room-box');
     box.append(el('span', 'eyebrow', 'Minigame'));
-    const running: GameId | null = whoamiRunning() ? 'whoami' : sags.running ? 'sags' : null;
+    const running: GameId | null = whoamiRunning() ? 'whoami' : sags.running ? 'sags' : gleich.running ? 'gleich' : null;
     const row = el('div', 'row');
     if (gameNet.isHost()) {
       const enough = gameNet.members().length >= 2;
@@ -377,6 +408,7 @@ function launch(clock: SharedClock, session: Session | null, startCam: 'wagon' |
         b.addEventListener('click', () => {
           if (running === 'whoami') whoami.end();
           else if (running === 'sags') sags.end();
+          else if (running === 'gleich') gleich.end();
           else startGame(g.id);
           pause.onResume();
         });
@@ -389,7 +421,7 @@ function launch(clock: SharedClock, session: Session | null, startCam: 'wagon' |
   };
 
   // The Schaffner: the host listens for shouting in everyone's audio and calls him.
-  const schaffner = new SchaffnerFigure(world.map.root);
+  let schaffner = new SchaffnerFigure(world.map.root);
   const loud = new LoudTracker();
   const callSchaffner = (id: string) => {
     const m = gameNet.members().find((x) => x.id === id);
@@ -397,7 +429,7 @@ function launch(clock: SharedClock, session: Session | null, startCam: 'wagon' |
     schaffner.show(world.map.seats[m.seat] ? world.map.scoldSpot(m.seat) : null, clock.now());
     // Room setting: 'warn' only tells off, 'fine' also costs a point (only while a round is played).
     const fineOn = (session?.opts.schaffner ?? 'fine') === 'fine';
-    const fined = fineOn && (gameNet.isHost() ? whoami.penalize(id, SCHAFFNER.penalty) || sags.penalize(id, SCHAFFNER.penalty) : whoami.state?.phase === 'play' || sags.running);
+    const fined = fineOn && (gameNet.isHost() ? whoami.penalize(id, SCHAFFNER.penalty) || sags.penalize(id, SCHAFFNER.penalty) || gleich.penalize(id, SCHAFFNER.penalty) : whoami.state?.phase === 'play' || sags.running || gleich.writing);
     ambience?.announce(`Durchsage für ${m.name || 'Fahrgast'}: Etwas leiser bitte!${fined ? ' Das kostet einen Punkt.' : ''}`, true);
     const mine = m.id === gameNet.selfId;
     wiUi.flash(
@@ -510,12 +542,9 @@ function launch(clock: SharedClock, session: Session | null, startCam: 'wagon' |
     const rawMs = now - last;
     const dt = Math.min(0.05, Math.max(0.001, rawMs / 1000));
     last = now;
-    if (held) {
+    if (releases.length) {
       smooth = rawMs < AMBIENCE.stableFrameMs ? smooth + 1 : 0;
-      if (smooth >= AMBIENCE.stableFrames || now - launchedAt > AMBIENCE.maxHoldS * 1000) {
-        held = false;
-        voice?.releaseOutput();
-      }
+      if (smooth >= AMBIENCE.stableFrames || now - holdSince > AMBIENCE.maxHoldS * 1000) for (const release of releases.splice(0)) release();
     }
     fps = fps * 0.92 + (1 / dt) * 0.08;
     const t = clock.now();
@@ -540,12 +569,15 @@ function launch(clock: SharedClock, session: Session | null, startCam: 'wagon' |
     world.update(t, dt, settings);
     whoami.tick(now);
     sags.tick(now);
+    gleich.tick(now);
     bots?.tick(now);
     sagsBots?.tick(now);
+    ggBots?.tick(now);
     wiUi.tick();
     saUi.tick();
+    ggUi.tick();
     lobby.update();
-    players.showMarkers = !whoamiRunning() && !sags.running;
+    players.showMarkers = !whoamiRunning() && !sags.running && !gleich.running;
     cards.update(cardOf, (seat) => players.people[seat].name, world.cam === 'pov');
     // A card carries the name; the separate tag steps aside meanwhile.
     tags.update(world.cam === 'pov', (i) => Math.max(0, levels[i]), (i) => cards.shown.has(i));
@@ -596,54 +628,110 @@ function launch(clock: SharedClock, session: Session | null, startCam: 'wagon' |
   }
   requestAnimationFrame(frame);
 
+  /**
+   * Same room, another place: build the new map, carry over everything that belongs to the room
+   * (seats, looks, camera, speed, blackouts, minigames untouched), point the renderer and the
+   * overlays at it, then free the old map's GPU memory. Seed and clock stay, so the people look the
+   * same and everything ambient stays in step across clients.
+   */
+  function swapMap(id: MapId): void {
+    if (id === world.def.id) return;
+    const prev = world;
+    let next: World;
+    try {
+      next = new World(clock, id);
+    } catch (e) {
+      console.error('Map change failed', e);
+      return;
+    }
+    next.adopt(prev);
+    world = next;
+    players = next.players;
+    if (panel.state.sight) {
+      // Originals back first, so the old map frees its own materials and not the shared wireframes.
+      setSightMode(prev.scene, false);
+      setSightMode(next.scene, true);
+    }
+    pipeline?.setView(next.scene, next.camera);
+    tags.setView(players, next.camera);
+    cards.setView(players, next.camera);
+    panel.setPlayers(players);
+    // The old figure went with the old map's scene graph.
+    schaffner = new SchaffnerFigure(next.map.root);
+    if (voice) {
+      ambience?.dispose();
+      const amb = (ambience = new Ambience(voice, clock.seed, next.def, true));
+      smooth = 0;
+      holdSince = performance.now();
+      releases.push(() => amb.release());
+    }
+    pause.setMap(id);
+    resize();
+    const freed = prev.dispose(next);
+    if (import.meta.env.DEV) console.info(`Map ${prev.def.id} -> ${id}: freed`, freed);
+    if (pipeline) void pipeline.renderer.compileAsync(next.scene, next.camera).catch(() => {});
+    const by = gameNet.isHost() ? '' : `${hostName()} hat die Map gewechselt.`;
+    wiUi.flash('Neue Map', next.def.name, 'plain', by);
+    syncHint();
+  }
+
   if (import.meta.env.DEV) {
-    // Hook for Playwright checks; not shipped in the production bundle.
-    Object.assign(window, { __hyper: { world, panel, pipeline, clock, session, pause, voice, ambience, whoami, sags, callSchaffner } });
+    // Hook for Playwright checks; not shipped in the production bundle. Getters: the world changes with the map.
+    const hook = { panel, pipeline, clock, session, pause, voice, whoami, sags, gleich, callSchaffner, swapMap, tags, cards };
+    Object.defineProperties(hook, {
+      world: { get: () => world, enumerable: true },
+      ambience: { get: () => ambience, enumerable: true },
+      schaffner: { get: () => schaffner, enumerable: true },
+    });
+    Object.assign(window, { __hyper: hook });
   }
 }
 
 /** Wire a joined room into the scene: roster -> seats, poses -> heads, host speed and blackouts. */
-function connect(session: Session, world: World, panel: DebugPanel, pause: PauseMenu, code: string, onSeats: () => void): void {
-  const players = world.players;
+function connect(session: Session, w: () => World, panel: DebugPanel, pause: PauseMenu, code: string, onSeats: () => void, onMap: (id: MapId) => void): void {
+  // The world changes with the map: always the current one, never a captured copy.
   const roomInfo = () =>
     pause.setRoom({
       code,
       role: session.role,
-      rttMs: world.clock.rttMs,
+      rttMs: w().clock.rttMs,
       players: [...session.roster.values()].map((e) => ({ id: e.id, name: e.state.name, seat: e.seat, me: e.id === session.selfId, host: e.id === session.hostId })),
       opts: session.opts,
     });
   pause.onRoomOpts = (o) => session.setOpts(o);
   const roster = (includeMe: boolean) => {
-    players.applyRoster([...session.roster.values()], session.mySeat, includeMe);
+    w().players.applyRoster([...session.roster.values()], session.mySeat, includeMe);
     panel.setNetRole(session.role);
     onSeats();
     roomInfo();
   };
-  players.remotePose = (seat) => session.poseForSeat(seat);
+  // Carried over to a new map's players by Players.adopt.
+  w().players.remotePose = (seat) => session.poseForSeat(seat);
   roster(true);
   // A fresh room starts with the host's slider speed; a joiner takes what the welcome said.
-  if (session.role === 'host' && session.train.kmh === 0) session.setSpeed(panel.state.kmh, world.clock.now());
-  world.train = session.train;
+  if (session.role === 'host' && session.train.kmh === 0) session.setSpeed(panel.state.kmh, w().clock.now());
+  w().train = session.train;
   panel.showTempo(session.train.kmh);
-  if (session.blackoutAt !== null) world.forcedBlackoutAt = session.blackoutAt;
+  if (session.blackoutAt !== null) w().forcedBlackoutAt = session.blackoutAt;
   session.listen({
     roster: () => roster(false),
     status: () => roster(false),
     train: (t) => {
-      world.train = t;
+      w().train = t;
       panel.showTempo(t.kmh);
     },
-    blackout: (at) => (world.forcedBlackoutAt = at),
+    blackout: (at) => (w().forcedBlackoutAt = at),
     opts: (o) => {
       getVoice()?.setRoomVoice(o.voice);
+      // The host picked another map (the host gets its own change here too): same room, new place.
+      if (o.map !== w().def.id) onMap(o.map);
       applyOpts(o);
       roomInfo();
     },
   });
   applyOpts(session.opts);
   function applyOpts(o: RoomOpts): void {
-    world.blackouts = o.blackouts;
+    w().blackouts = o.blackouts;
   }
   setInterval(roomInfo, 2000);
 }
@@ -681,6 +769,38 @@ function rejoinCode(): string | null {
   } catch {
     return null;
   }
+}
+
+/**
+ * Someone in the running round dropped out: say so at the top, and let the others either wait for
+ * them (nothing to do, their turn is skipped and their place kept) or play on without them.
+ */
+function absentBar(session: Session, games: Minigame[]): void {
+  const bar = el('div', 'absent-bar');
+  bar.setAttribute('role', 'status');
+  bar.hidden = true;
+  document.body.append(bar);
+  let shown = '';
+  setInterval(() => {
+    const ids = [...new Set(games.flatMap((g) => g.absent()))];
+    const key = ids.join(',');
+    if (key === shown) return;
+    shown = key;
+    bar.replaceChildren();
+    bar.hidden = !ids.length;
+    for (const id of ids) {
+      const name = session.goneName(id) || 'Jemand';
+      const row = el('div', 'absent-row');
+      row.append(el('span', '', `${name} ist getrennt, der Platz bleibt frei.`));
+      const b = el('button', 'btn small', `Ohne ${name} weiterspielen`);
+      b.type = 'button';
+      b.addEventListener('click', () => {
+        for (const g of games) if (g.absent().includes(id)) g.drop(id);
+      });
+      row.append(b);
+      bar.append(row);
+    }
+  }, 500);
 }
 
 let problemEl: HTMLElement | null = null;

@@ -7,6 +7,7 @@ import { Players } from '../game/players';
 import { mapDef } from '../maps';
 import type { MapDef, MapId, MapScene } from '../maps/types';
 import { trainDistance, type Train } from '../net/protocol';
+import { collectResources, disposeExcept } from './dispose';
 
 /** Overview of the map, or first person from the head of the local player. */
 export type CamMode = 'wagon' | 'pov';
@@ -53,6 +54,26 @@ export class World {
     this.players = new Players(this.map.root, clock.seed, this.map.seats);
     this.npcs = new Npcs(this.map.root, clock.seed, this.map.npcs);
     this.update(0, 0, { shakeMm: 0, shakeOn: false });
+  }
+
+  /**
+   * Take over what belongs to the room, not to the place: camera mode, speed profile, blackout
+   * setting, zoom and the people on their seats (see Players.adopt). Used on a map change.
+   */
+  adopt(prev: World): void {
+    this.cam = prev.cam;
+    this.train = prev.train;
+    this.blackouts = prev.blackouts;
+    this.forcedBlackoutAt = prev.forcedBlackoutAt;
+    this.zoom = prev.zoom;
+    this.zoomK = prev.zoomK;
+    this.players.adopt(prev.players);
+    this.update(this.clock.now(), 0, { shakeMm: 0, shakeOn: false });
+  }
+
+  /** Free this world's GPU memory, except what `next` (the world replacing it) uses too. */
+  dispose(next: World | null): ReturnType<typeof disposeExcept> {
+    return disposeExcept(this.scene, next ? collectResources(next.scene) : null);
   }
 
   /** Supply of the map right now (1 normal, 0 blackout). */

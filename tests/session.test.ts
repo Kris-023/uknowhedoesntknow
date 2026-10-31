@@ -113,11 +113,11 @@ describe('Session', () => {
       hub.flush();
     }
     expect(Math.abs(c.clock.now(t.ms - 800) - b.clock.now(t.ms + 500))).toBeLessThan(0.001);
-    // A newcomer is welcomed by the new host into the free seat 0.
+    // A newcomer is welcomed by the new host; seat 0 stays free for the old host to come back to.
     const d = peer(hub, 'd', false, 0, t);
     hub.flush();
     expect(d.events).toContain('welcome');
-    expect(d.s.mySeat).toBe(0);
+    expect(d.s.mySeat).toBe(3);
   });
 
   it('speed changes keep the distance continuous', () => {
@@ -210,5 +210,91 @@ describe('rejoin', () => {
     expect(b2.mySeat).toBe(seatB);
     expect(rejoins).toEqual(['b1->b2']);
     expect(c.roster.has('b2')).toBe(true);
+  });
+
+  it('from another browser the name is enough, if it is unambiguous', () => {
+    const hub = new MemoryHub();
+    const t = { ms: 1_000_000 };
+    const now = () => t.ms;
+    const host = new Session(hub.connect('h'), new SharedClock(1, now()), true, state(1), now, 'tok-h');
+    const rejoins: string[] = [];
+    host.listen({ rejoin: (o, n) => rejoins.push(`${o}->${n}`) });
+    new Session(hub.connect('b1'), new SharedClock(2, now()), false, state(2), now, 'tok-b', 'pid-b');
+    hub.flush();
+    const seatB = host.roster.get('b1')!.seat;
+    hub.disconnect('b1');
+    hub.flush();
+    // Someone else joins meanwhile: they don't get b's seat.
+    const c = new Session(hub.connect('c1'), new SharedClock(3, now()), false, state(3), now, 'tok-c', 'pid-c');
+    hub.flush();
+    expect(c.mySeat).not.toBe(seatB);
+    t.ms += 20 * 60_000;
+    const other = new Session(hub.connect('b2'), new SharedClock(4, now()), false, state(2), now, 'tok-new', 'pid-new');
+    hub.flush();
+    expect(other.mySeat).toBe(seatB);
+    expect(rejoins).toEqual(['b1->b2']);
+  });
+
+  it('a new host still recognises everyone, the old host included', () => {
+    const hub = new MemoryHub();
+    const t = { ms: 1_000_000 };
+    const now = () => t.ms;
+    new Session(hub.connect('a'), new SharedClock(1, now()), true, state(1), now, 'tok-a', 'pid-a');
+    const b = new Session(hub.connect('b'), new SharedClock(2, now()), false, state(2), now, 'tok-b', 'pid-b');
+    const c = new Session(hub.connect('c'), new SharedClock(3, now()), false, state(3), now, 'tok-c', 'pid-c');
+    hub.flush();
+    const seatA = b.roster.get('a')!.seat;
+    hub.disconnect('a');
+    hub.flush();
+    expect(b.role).toBe('host');
+    const rejoins: string[] = [];
+    b.listen({ rejoin: (o, n) => rejoins.push(`${o}->${n}`) });
+    // a comes back in a new tab of the same browser, under a different name even.
+    const a2 = new Session(hub.connect('a2'), new SharedClock(4, now()), false, { ...state(1), name: 'Neu' }, now, 'tok-a2', 'pid-a');
+    hub.flush();
+    expect(a2.mySeat).toBe(seatA);
+    expect(rejoins).toEqual(['a->a2']);
+    expect(c.roster.has('a2')).toBe(true);
+  });
+
+  it('a name shared by two who left is not enough', () => {
+    const hub = new MemoryHub();
+    const t = { ms: 1_000_000 };
+    const now = () => t.ms;
+    const host = new Session(hub.connect('h'), new SharedClock(1, now()), true, state(1), now, 'tok-h');
+    const rejoins: string[] = [];
+    host.listen({ rejoin: (o, n) => rejoins.push(`${o}->${n}`) });
+    new Session(hub.connect('x'), new SharedClock(2, now()), false, state(2), now, 'tok-x');
+    new Session(hub.connect('y'), new SharedClock(3, now()), false, state(2), now, 'tok-y');
+    hub.flush();
+    hub.disconnect('x');
+    hub.disconnect('y');
+    hub.flush();
+    new Session(hub.connect('z'), new SharedClock(4, now()), false, state(2), now, 'tok-z');
+    hub.flush();
+    expect(rejoins).toEqual([]);
+    expect(host.roster.has('z')).toBe(true);
+  });
+
+  it('two hosts after a split: the smaller room gives way and joins the bigger one', () => {
+    const hub = new MemoryHub();
+    const t = { ms: 1_000_000 };
+    const now = () => t.ms;
+    const big = new Session(hub.connect('m'), new SharedClock(1, now()), true, state(1), now, 'tok-m');
+    new Session(hub.connect('n'), new SharedClock(2, now()), false, state(2), now, 'tok-n');
+    hub.flush();
+    const lone = new Session(hub.connect('a'), new SharedClock(3, now()), true, state(3), now, 'tok-a');
+    const status: string[] = [];
+    lone.listen({ status: (s) => status.push(s) });
+    hub.flush();
+    // The hello goes out on the next tick.
+    lone.tick();
+    hub.flush();
+    expect(status).toContain('client');
+    expect(lone.role).toBe('client');
+    expect(lone.hostId).toBe('m');
+    expect(big.role).toBe('host');
+    expect(big.roster.has('a')).toBe(true);
+    expect(lone.mySeat).toBeGreaterThanOrEqual(0);
   });
 });

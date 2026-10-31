@@ -238,6 +238,13 @@ export class DebugPanel {
     });
   }
 
+  /** Another world (map change): the same seats with new people. */
+  setPlayers(players: Players): void {
+    this.players = players;
+    this.syncButtons();
+    this.refreshTree();
+  }
+
   /** Per frame: drives the side-glance demo. */
   tick(): void {
     if (this.demoStart === null) return;

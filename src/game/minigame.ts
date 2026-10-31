@@ -20,7 +20,7 @@ export interface GameNet {
   onMessage(h: (type: string, data: unknown, from: string) => void): void;
 }
 
-/** Every minigame plugs in through these four calls; new games need nothing else from the coach. */
+/** Every minigame plugs in through these calls; new games need nothing else from the coach. */
 export interface Minigame {
   /** Host only: begin a round. */
   start(): void;
@@ -28,6 +28,10 @@ export interface Minigame {
   tick(now: number): void;
   /** Host only: stop the round for everyone. */
   end(): void;
+  /** Players of the running round who are not in the room right now (dropped out, maybe coming back). */
+  absent(): string[];
+  /** Play on without someone who dropped out; anyone may ask, the host only drops people who are really gone. */
+  drop(id: string): void;
 }
 
 export function sessionNet(session: Session): GameNet {

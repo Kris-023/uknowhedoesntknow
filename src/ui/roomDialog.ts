@@ -1,4 +1,5 @@
 import { ROOM } from '../config';
+import { mapDef, mapList } from '../maps';
 import type { RoomOpts, SchaffnerMode } from '../net/protocol';
 import { DECK_NAMES } from '../words';
 import { DECK_IDS, type DeckId } from '../words/types';
@@ -14,8 +15,9 @@ export function roomSummary(o: RoomOpts): string {
 /**
  * Room settings as a modal dialog: before creating a room (saved for next time) and for the host
  * in the Esc menu (applies to everyone at once). Every click is applied immediately.
+ * `withMap`: the map choice too (in a running room; the main menu has its own map row).
  */
-export function openRoomDialog(host: HTMLElement, current: RoomOpts, onChange: (o: RoomOpts) => void, title = 'Raum-Einstellungen'): void {
+export function openRoomDialog(host: HTMLElement, current: RoomOpts, onChange: (o: RoomOpts) => void, title = 'Raum-Einstellungen', withMap = false): void {
   let opts = { ...current };
   const dlg = el('dialog', 'room-dialog');
   dlg.setAttribute('aria-label', title);
@@ -61,16 +63,24 @@ export function openRoomDialog(host: HTMLElement, current: RoomOpts, onChange: (
     row.append(el('span', 'field-label', label), group, el('span', 'field-hint', hint));
     return row;
   };
+  // Same names and blurbs as the main menu's map row; the hint follows the choice.
+  const map = () => {
+    const row = seg('Map', 'map', mapList().map((m) => [m.name, m.id] as const), '');
+    const hint = row.querySelector('.field-hint')!;
+    syncs.push(() => (hint.textContent = `${mapDef(opts.map).blurb} Runde und Punkte bleiben beim Wechsel.`));
+    return row;
+  };
   const done = el('button', 'btn big', 'Fertig');
   done.type = 'button';
   done.addEventListener('click', () => dlg.close());
   dlg.append(
     el('h2', 'room-dialog-title', title),
+    ...(withMap ? [map()] : []),
     seg('Sprachchat', 'voice', [['An', true], ['Aus', false]], 'Aus, wenn ihr schon im TeamSpeak oder Discord seid.'),
     seg('Schaffner', 'schaffner', [['Aus', 'off'], ['Nur ermahnen', 'warn'], ['Mit Punktabzug', 'fine']], 'Kommt, wenn jemand zu lange zu laut ist. Punktabzug nur während einer Runde.'),
     seg('Abstimmung', 'voteS', ROOM.voteChoices.map((s) => [`${s} s`, s] as const), 'So lange bleibt eine Abstimmung bei „Wer bin ich?“ offen.'),
     seg('Stromausfälle', 'blackouts', [['An', true], ['Aus', false]], 'Ab und zu geht kurz das Licht aus, jede Map auf ihre Art.'),
-    decks('Wörter', 'Für „Sag’s anders“. NSFW ist richtig derb. Eigene = die Listen aller im Raum (Menü → Wörter).'),
+    decks('Wörter', 'Für „Sag’s anders“. NSFW ist richtig derb und bringt auch derbe Startfragen in „Gleich gedacht“. Eigene = die Listen aller im Raum (Menü → Wörter).'),
     seg('Modus', 'sagsTeams', [['Teams', true], ['Jeder gegen jeden', false]], 'Für „Sag’s anders“. Teams gehen nur zu viert (2 gegen 2); mit 2–3 Spielern spielt immer jeder gegen jeden.'),
     seg('Erklärzeit', 'turnS', ROOM.turnChoices.map((s) => [`${s} s`, s] as const), 'So lange erklärt jemand bei „Sag’s anders“, bevor der Nächste dran ist.'),
     done,

@@ -209,8 +209,13 @@ export const NET = {
   poseEpsilon: 0.002,
   /** Smoothing rate for remote heads; together with ~50 ms send interval stays well under 150 ms. */
   remoteRate: 18,
-  /** Someone who comes back within this long (reload, short drop) gets their seat back. */
-  rejoinMs: 5 * 60_000,
+  /**
+   * Someone who comes back within this long (reload, drop, other browser) gets their seat and their
+   * place in a running round back. Long enough for a router restart or a fetched charger.
+   */
+  rejoinMs: 30 * 60_000,
+  /** How long a "play on without them" request waits for the host to notice they're gone, too. */
+  dropWaitMs: 30_000,
   /** Joiner repeats its hello until a host answers (host may still be connecting). */
   helloRetryMs: 2000,
   /** Quick pings right after joining for a good clock offset, then occasional ones. */
@@ -288,6 +293,10 @@ export const AMBIENCE = {
   maxHoldS: 8,
   /** Announcement this many seconds before the halt countdown reaches zero. */
   announceAt: 12,
+  /** Only every n-th halt gets an announcement; every halt was too chatty over a long evening. */
+  announceEveryHalts: 2,
+  /** Gong level into the speaker chain. */
+  gong: 0.2,
   /** "Ruhige Umgebung": the steady bed drops to this share; one-off noises stay as they are. */
   quietBed: 0.2,
 } as const;
@@ -312,9 +321,12 @@ export const WHOAMI = {
   points: [3, 2, 1, 1],
   /** A vote closes after this long with the votes that came in. */
   voteS: 20,
-  /** Absent player (reload, dropout): their turn passes after this long, they leave the round after that. */
+  /**
+   * Absent player (reload, dropout): their turn passes after this long. They keep their place in the
+   * round as long as their seat is held (NET.rejoinMs), unless the others play on without them.
+   */
   absentPassS: 8,
-  absentLeaveS: 60,
+  absentLeaveS: 30 * 60,
   /** Card image: longest side in px, JPEG quality. Kept in memory only, never uploaded. */
   cardPx: 512,
   cardQuality: 0.82,
@@ -380,9 +392,32 @@ export const SAGS = {
   ffaFoul: 1,
   /** After each word its card is shown to all; this long anyone may still call a foul (free for all). */
   challengeS: 8,
-  /** Absent explainer (reload, dropout): the turn ends after this long, they leave the round after that. */
+  /** Absent explainer (reload, dropout): the turn ends after this long; their place is kept like in WHOAMI. */
   absentPassS: 8,
-  absentLeaveS: 60,
+  absentLeaveS: 30 * 60,
+} as const;
+
+/** "Gleich gedacht": everyone writes a word until all have written the same one. */
+export const GLEICH = {
+  /** Seconds to write and lock a word. */
+  writeS: 45,
+  /** A "Zählt als gleich?" vote closes after this long with the votes that came in. */
+  voteS: 15,
+  /** After the words are shown the next try starts when all are ready, or after this long. */
+  revealS: 25,
+  /** After a lost vote the others get at least this long to read before the next try. */
+  afterVoteS: 8,
+  /** Host waits this long for the revealed words of players who locked one before it judges with what it has. */
+  collectS: 4,
+  maxTries: 10,
+  /** Points for everyone in the round by the try it was solved in. */
+  points: [10, 8, 7, 6, 5, 4, 3, 2, 2, 1],
+  /** Longest word in code points. */
+  maxWordLen: 24,
+  /** Absent player: how long the others' round keeps their place (like WHOAMI). */
+  absentLeaveS: 30 * 60,
+  /** Word board image over a head, in canvas pixels: wide, because words are wider than pictures. */
+  boardPx: { w: 384, h: 240 },
 } as const;
 
 /** Room settings dialog: the choices on offer. */

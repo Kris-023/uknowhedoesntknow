@@ -221,7 +221,12 @@ const LINE = {
   lang: table([[0, 0.98], [0.6, 1.12], [1.1, 1.6], [1.6, 1.95], [Math.PI, 2.15]]),
   dutt: table([[0, 1.04], [0.6, 1.14], [1.2, 1.52], [1.5, 1.72], [Math.PI, 2.12]]),
   locken: table([[0, 1.06], [0.7, 1.22], [1.3, 1.78], [1.75, 1.8], [Math.PI, 2.1]]),
+  // Parted hair sweeps sideways: a higher forehead line, then down over the temples to the ears.
+  mitte: table([[0, 1.0], [0.5, 1.12], [1.0, 1.5], [1.35, 1.82], [1.65, 1.96], [Math.PI, 2.12]]),
 };
+
+/** Middle part: gap between the two hair halves (each is shifted this far from the midline) and how wide the shifted zone is. */
+const PART = { gap: 0.0045, reach: 0.07 };
 
 /** Rim pulled in towards the scalp, so the hairline hugs the skin instead of standing off as a ledge. */
 const rim = (v: number, k = 0.04) => 1 - k * smooth01(0.7, 1, v);
@@ -251,6 +256,33 @@ function capGeo(style: 'kurz' | 'lang' | 'dutt' | 'fuzz'): THREE.BufferGeometry 
       segU: 64,
       segV: 14,
     });
+  });
+}
+
+/**
+ * Middle-parted cap, one half per side. The halves are pushed apart along x near the midline, so a
+ * thin slit of scalp shows from the forehead to the crown (the back is covered by the curtain).
+ */
+function partedCapGeo(side: -1 | 1): THREE.BufferGeometry {
+  return cached(`cap_mitte_${side}`, () => {
+    const g = shell({
+      phi0: side > 0 ? 0 : -Math.PI,
+      phi1: side > 0 ? Math.PI : 0,
+      th0: () => 0,
+      th1: (phi) => LINE.mitte(Math.abs(phi)),
+      r: (_phi, th, _d, v) => (1 + 0.025 * Math.max(0, Math.cos(th))) * rim(v),
+      minY: minY(HAIR),
+      segU: 40,
+      segV: 14,
+    });
+    const pos = g.attributes.position;
+    for (let i = 0; i < pos.count; i++) {
+      // Positions are in unit space (scaled by HAIR.rx later), hence the unit reach.
+      const k = 1 - smooth01(0, PART.reach / HAIR.rx, Math.abs(pos.getX(i)));
+      pos.setX(i, pos.getX(i) + (side * PART.gap * k) / HAIR.rx);
+    }
+    pos.needsUpdate = true;
+    return g;
   });
 }
 
@@ -294,14 +326,17 @@ function curlGeo(amp = 0.15): THREE.BufferGeometry {
  * Long hair: an outer layer from the crown down the back and sides, open at the face. Split at the
  * mouth plane: the upper part flips open with the skull, the lower part hangs from the jaw.
  */
-function curtainGeo(part: 'top' | 'bottom'): THREE.BufferGeometry {
-  return cached(`curtain_${part}`, () => {
-    const a0 = 1.2;
+function curtainGeo(part: 'top' | 'bottom', style: 'lang' | 'mitte' = 'lang'): THREE.BufferGeometry {
+  return cached(`curtain_${style}_${part}`, () => {
+    // Middle part: chin-length bob that frames the face (opens less than the long curtain), shorter at
+    // the nape, ends flipping out a little.
+    const mitte = style === 'mitte';
+    const a0 = mitte ? 1.0 : 1.2;
     const top = HAIR.y + HAIR.ry;
     return surface(40, part === 'top' ? 14 : 12, (u, t) => {
       const phi = a0 + (Math.PI * 2 - 2 * a0) * u;
       const b = backness(phi);
-      const len = 0.49 + 0.12 * b;
+      const len = mitte ? 0.345 - 0.05 * b : 0.49 + 0.12 * b;
       const vCut = (top - CUT_Y) / len;
       const v = part === 'top' ? t * vCut : vCut + t * (1 - vCut);
       const y = top - v * len;
@@ -309,8 +344,9 @@ function curtainGeo(part: 'top' | 'bottom'): THREE.BufferGeometry {
       const cap = (r: number) => 1.03 * r * Math.sqrt(Math.max(0, 1 - ((y - HAIR.y) / HAIR.ry) ** 2));
       const fall = Math.sqrt(Math.max(0, (HAIR.y - y) / 0.4));
       const below = y < HAIR.y ? 1 : 0;
-      const rx = Math.max(cap(HAIR.rx), (0.155 + 0.03 * fall) * below);
-      const rz = Math.max(cap(HAIR.rz), (0.166 + 0.02 * fall - 0.03 * v * b) * below);
+      const flare = mitte && part === 'bottom' ? 0.022 * t * t : 0;
+      const rx = Math.max(cap(HAIR.rx), (0.155 + 0.03 * fall + flare) * below);
+      const rz = Math.max(cap(HAIR.rz), (0.166 + 0.02 * fall - 0.03 * v * b + flare) * below);
       // Soft wave at the ends instead of a straight cut.
       const yy = y - (part === 'bottom' ? t * t * 0.015 * Math.sin(phi * 9) : 0);
       return new THREE.Vector3(Math.sin(phi) * rx, yy, Math.cos(phi) * rz + HAIR.z);
@@ -362,7 +398,17 @@ function crestGeo(): THREE.BufferGeometry {
 const ringGeo = new THREE.TorusGeometry(0.148, 0.024, 8, 24);
 
 /** Height of the hair's top in head space, where head items sit. */
-export const HAIR_TOP: Record<HairStyle, number> = { kurz: 0.372, lang: 0.372, dutt: 0.368, irokese: 0.37, locken: 0.395, muetze: 0.42 };
+export const HAIR_TOP: Record<HairStyle, number> = {
+  kurz: 0.372,
+  lang: 0.372,
+  dutt: 0.368,
+  irokese: 0.37,
+  locken: 0.395,
+  mittelscheitel: 0.372,
+  // Bare skull: HEAD_C.y + HEAD_C.ry.
+  glatze: 0.36,
+  muetze: 0.42,
+};
 
 /**
  * Hair on the skull `S` (flips open with the mouth); long strands hang from the jaw side `H`.
@@ -392,12 +438,23 @@ export function addHair(S: THREE.Group, H: THREE.Group, L: Look, hat = false): T
     part(S, curlGeo(), cm, 0, CURL.y, CURL.z, CURL.rx, CURL.ry, CURL.rz);
     return cm;
   }
+  if (L.hair === 'glatze') return null;
+  if (L.hair === 'mittelscheitel') return addParted(S, H, hm);
   part(S, capGeo(L.hair), hm, 0, y, z, rx, ry, rz);
   if (L.hair === 'lang') {
     part(S, curtainGeo('top'), hm, 0, 0, 0);
     part(H, curtainGeo('bottom'), hm, 0, 0, 0);
   }
   if (L.hair === 'dutt') part(S, bunGeo(), hm, 0, 0.335, -0.125, 0.07, 0.068, 0.07);
+  return hm;
+}
+
+/** Middle part: two cap halves with a scalp slit between them, plus a chin-length curtain around the back. */
+function addParted(S: THREE.Group, H: THREE.Group, hm: THREE.Material): THREE.Material {
+  const { y, z, rx, ry, rz } = HAIR;
+  for (const side of [-1, 1] as const) part(S, partedCapGeo(side), hm, 0, y, z, rx, ry, rz);
+  part(S, curtainGeo('top', 'mitte'), hm, 0, 0, 0);
+  part(H, curtainGeo('bottom', 'mitte'), hm, 0, 0, 0);
   return hm;
 }
 
@@ -418,6 +475,9 @@ function hairUnderHat(S: THREE.Group, H: THREE.Group, L: Look): THREE.Material {
     part(S, curlGeo(0.025), cm, 0, y, z, rx, ry, rz);
     return cm;
   }
+  // Bald under a hat stays bald; the hat's crown has room for the bare skull.
+  if (L.hair === 'glatze') return hm;
+  if (L.hair === 'mittelscheitel') return addParted(S, H, hm);
   part(S, capGeo(L.hair === 'muetze' ? 'kurz' : L.hair), hm, 0, y, z, rx, ry, rz);
   if (L.hair === 'lang') {
     part(S, curtainGeo('top'), hm, 0, 0, 0);

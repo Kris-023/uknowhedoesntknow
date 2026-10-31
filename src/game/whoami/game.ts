@@ -163,7 +163,42 @@ export class WhoamiGame implements Minigame {
     for (const [target, img] of this.cards) if (target !== newId && target !== oldId && target !== this.selfId) this.net.send('wi:card', { target, img }, newId);
   }
 
+
+  absent(): string[] {
+    const s = this.state;
+    if (!s || s.phase === 'done') return [];
+    const here = new Set(this.net.members().map((m) => m.id));
+    return s.players.filter((p) => !here.has(p));
+  }
+
+  drop(id: string): void {
+    if (this.isHost) this.dropNow(id);
+    else {
+      const h = this.net.hostId();
+      if (h) this.net.send('wi:drop', id, h);
+    }
+  }
+
+  /**
+   * Host: someone asked to play on without `id`. Only someone who really isn't in the room is dropped;
+   * the asker may see them gone a moment before the host does, so the request waits a little.
+   */
+  private dropAsked = new Map<string, number>();
+
+  private dropNow(id: string): void {
+    if (!this.host) return;
+    if (this.net.members().some((m) => m.id === id)) {
+      this.dropAsked.set(id, Date.now());
+      return;
+    }
+    this.dropAsked.delete(id);
+    this.goneSince.delete(id);
+    if (this.host.removePlayer(id, Date.now())) this.publish();
+  }
+
   tick(now: number): void {
+    // Gave way to another host (network split): their state counts from now on.
+    if (this.host && !this.isHost) this.host = null;
     // A new host (the old one left) takes over a running round from its public state.
     if (!this.host && this.isHost && this.state) {
       this.host = WhoamiHost.fromState(this.state, this.voteS);
@@ -171,9 +206,9 @@ export class WhoamiGame implements Minigame {
       this.publish(now);
     }
     if (!this.host) return;
-    let changed = this.host.tick(Date.now());
-    // Absent players get a grace time to come back (reload); their turn passes meanwhile.
+    // Absent players keep their place; their turn passes meanwhile and votes don't wait for them.
     const here = new Set(this.net.members().map((m) => m.id));
+    let changed = this.host.closeIfAllIn(here) || this.host.tick(Date.now());
     const t = Date.now();
     for (const p of [...this.host.state.players]) {
       if (here.has(p)) {
@@ -182,6 +217,15 @@ export class WhoamiGame implements Minigame {
       }
       const since = this.goneSince.get(p) ?? t;
       this.goneSince.set(p, since);
+      const asked = this.dropAsked.get(p);
+      if (asked !== undefined) {
+        this.dropAsked.delete(p);
+        if (t - asked < NET.dropWaitMs) {
+          this.dropNow(p);
+          changed = true;
+          continue;
+        }
+      }
       const s = this.host.state;
       if (t - since > WHOAMI.absentPassS * 1000 && s.phase === 'play' && s.turn === p && !s.vote) changed = this.host.intent(p, { a: 'pass' }, t, false) || changed;
       if (t - since > WHOAMI.absentLeaveS * 1000) {
@@ -205,6 +249,8 @@ export class WhoamiGame implements Minigame {
       // Someone came back: as an author, give them my card again (unless it's theirs).
       const d = data as { new?: unknown; old?: unknown };
       if (from === this.net.hostId() && typeof d?.new === 'string' && typeof d.old === 'string' && d.new !== this.selfId) this.resendTo(d.new, d.old);
+    } else if (type === 'wi:drop') {
+      if (typeof data === 'string') this.dropNow(data);
     } else if (type === 'wi:intent') {
       const i = parseIntent(data);
       if (i && this.host) this.applyIntent(from, i);

@@ -11,6 +11,7 @@ import { SettingsView } from './settingsView';
 import { settings, updateSettings } from './store';
 import { WordsView } from './wordsView';
 import { mapDef, mapList } from '../maps';
+import type { MapId } from '../maps/types';
 
 export type LobbyChoice = { kind: 'create'; code: string; opts: RoomOpts } | { kind: 'join'; code: string } | { kind: 'bench' };
 
@@ -346,17 +347,22 @@ export class PauseMenu extends MenuShell {
   onRoomOpts: ((o: RoomOpts) => void) | null = null;
   /** Minigame block in the game tab (start/end a round), built by the game. */
   gameControls: (() => HTMLElement | null) | null = null;
+  /** Solo: switch the map right here (in a room it's part of the host's room settings). */
+  onMap: ((id: MapId) => void) | null = null;
+  private kicker: HTMLElement;
 
   constructor(
     private host: HTMLElement,
     profile: PersonState,
     onProfile: (p: PersonState) => void,
     private bench = false,
-    mapName = 'Hypertrain',
+    private mapId: MapId = 'hypertrain',
   ) {
     const title = el('div', 'brand');
-    title.append(el('span', 'brand-kicker', `Map · ${mapName}`), el('h1', 'brand-name small', 'Menü'));
+    const kicker = el('span', 'brand-kicker', `Map · ${mapDef(mapId).name}`);
+    title.append(kicker, el('h1', 'brand-name small', 'Menü'));
     super(profile, onProfile, 'Spiel', title);
+    this.kicker = kicker;
     this.root.classList.add('pause');
     this.root.addEventListener('keydown', (e) => {
       if (e.key === 'Escape') {
@@ -375,6 +381,13 @@ export class PauseMenu extends MenuShell {
 
   close(): void {
     if (this.isOpen) this.unmount();
+  }
+
+  /** The map changed (host or solo): title and room box follow. */
+  setMap(id: MapId): void {
+    this.mapId = id;
+    this.kicker.textContent = `Map · ${mapDef(id).name}`;
+    if (this.isOpen && this.tab === 'play' && !this.panel.contains(document.activeElement)) this.show('play');
   }
 
   setRoom(info: RoomInfo | null): void {
@@ -396,6 +409,34 @@ export class PauseMenu extends MenuShell {
     });
     box.append(input, out);
     return box;
+  }
+
+  /** Everyone in a room sees where it plays; only the host changes it (room settings). */
+  private mapLine(): HTMLElement {
+    const m = mapDef(this.mapId);
+    const row = el('div', 'map-row');
+    row.append(el('span', 'field-label', 'Map'), el('span', 'map-name', m.name), el('span', 'note', m.blurb));
+    return row;
+  }
+
+  private mapPicker(): HTMLElement {
+    const row = el('div', 'map-row');
+    const maps = el('div', 'seg');
+    maps.setAttribute('role', 'group');
+    maps.setAttribute('aria-label', 'Map');
+    for (const m of mapList()) {
+      const b = el('button', '', m.name);
+      b.type = 'button';
+      b.setAttribute('aria-pressed', String(m.id === this.mapId));
+      b.addEventListener('click', () => {
+        // Focus inside the panel would block the refresh that marks the new map.
+        b.blur();
+        if (m.id !== this.mapId) this.onMap?.(m.id);
+      });
+      maps.append(b);
+    }
+    row.append(el('span', 'field-label', 'Map'), maps, el('span', 'note', mapDef(this.mapId).blurb));
+    return row;
   }
 
   protected renderPlay(): void {
@@ -446,14 +487,15 @@ export class PauseMenu extends MenuShell {
         t.addEventListener('click', () => {
           // Focus inside the panel blocks the refresh (volume sliders); this button may refresh.
           t.blur();
-          openRoomDialog(document.body, r.opts, (o) => this.onRoomOpts?.(o), 'Raum-Einstellungen (für alle)');
+          openRoomDialog(document.body, r.opts, (o) => this.onRoomOpts?.(o), 'Raum-Einstellungen (für alle)', true);
         });
         vrow.append(t);
       }
       vrow.append(el('span', 'note', roomSummary(r.opts)));
-      sec.append(vrow);
+      sec.append(this.mapLine(), vrow);
     } else {
       sec.append(el('span', 'eyebrow', this.bench ? 'Benchmark' : 'Allein'), el('p', 'note', 'Ohne Netzwerk, die drei Mitspieler sind simuliert.'));
+      if (this.onMap && !this.bench) sec.append(this.mapPicker());
     }
     this.panel.append(sec);
     const game = this.gameControls?.();

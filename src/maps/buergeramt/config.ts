@@ -81,13 +81,13 @@ export const QUEUE = {
   step: 0.32,
 } as const;
 
-/** Number display: a new number every `stepS`, announced on some of them (never more than every 40 s). */
+/** Number display: a new number every `stepS`, announced on some of them (never more than every ~85 s). */
 export const NUMBERS = {
   stepS: 17,
   /** Absurd call order. The players' own number (`mine`) is never in it. */
   pool: ['0815', '4711', '0003', '9999', '0042', '0007', '1001', '0123', '2000', '0404', '5555', '0012', '3333', '1234', '0099', '7777', '0110', '8080'],
   mine: '4712',
-  announceEvery: 3,
+  announceEvery: 5,
   announceChance: 0.55,
 } as const;
 
