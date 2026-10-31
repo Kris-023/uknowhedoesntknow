@@ -484,7 +484,8 @@ describe('Gleich gedacht over the network', async () => {
     expect(await g.b.lock('das auto')).toBe(true);
     room.pump();
     // Nothing but commitments is public while writing.
-    const wire = JSON.stringify(g.c.state);
+    // Questions are drawn at random and may mention the word themselves; everything else must not.
+    const wire = JSON.stringify({ ...g.c.state, questions: null });
     expect(wire).not.toMatch(/[Aa]uto/);
     expect(g.c.state!.words).toBeNull();
     expect(await g.c.lock('Autos')).toBe(true);
