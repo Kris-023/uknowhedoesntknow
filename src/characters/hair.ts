@@ -221,12 +221,20 @@ const LINE = {
   lang: table([[0, 0.98], [0.6, 1.12], [1.1, 1.6], [1.6, 1.95], [Math.PI, 2.15]]),
   dutt: table([[0, 1.04], [0.6, 1.14], [1.2, 1.52], [1.5, 1.72], [Math.PI, 2.12]]),
   locken: table([[0, 1.06], [0.7, 1.22], [1.3, 1.78], [1.75, 1.8], [Math.PI, 2.1]]),
-  // Parted hair sweeps sideways: a higher forehead line, then down over the temples to the ears.
-  mitte: table([[0, 1.0], [0.5, 1.12], [1.0, 1.5], [1.35, 1.82], [1.65, 1.96], [Math.PI, 2.12]]),
+  // 90s curtains: high at the part (an inverted V of forehead shows), the two halves sweep down and
+  // out to brow height at the temples, the sides cover the ears, the back ends at the nape.
+  mitte: table([[0, 0.78], [0.1, 0.9], [0.28, 1.15], [0.5, 1.3], [0.8, 1.38], [1.05, 1.46], [1.25, 1.74], [1.6, 1.9], [2.3, 2.0], [Math.PI, 2.2]]),
 };
 
 /** Middle part: gap between the two hair halves (each is shifted this far from the midline) and how wide the shifted zone is. */
 const PART = { gap: 0.0045, reach: 0.07 };
+/**
+ * Curtain volume (unit radius): `lift` raises the two mounds beside the part, `flip` turns the front
+ * ends out off the forehead, `sweep` pushes them sideways towards the temples, `side` puffs the sides
+ * over the ears. Under a hat only flip and side volume below polar angle `brim` stay, so every hat
+ * fits over the crown.
+ */
+const CURTAINS = { lift: 0.24, flip: 0.13, sweep: 0.12, side: 0.1, brim: 1.25 };
 
 /** Rim pulled in towards the scalp, so the hairline hugs the skin instead of standing off as a ledge. */
 const rim = (v: number, k = 0.04) => 1 - k * smooth01(0.7, 1, v);
@@ -261,25 +269,48 @@ function capGeo(style: 'kurz' | 'lang' | 'dutt' | 'fuzz'): THREE.BufferGeometry 
 
 /**
  * Middle-parted cap, one half per side. The halves are pushed apart along x near the midline, so a
- * thin slit of scalp shows from the forehead to the crown (the back is covered by the curtain).
+ * thin slit of scalp shows from the forehead to the crown. Beside the part each half rises into a
+ * mound and its front sweeps down and out over the temples (90s curtains). Under a hat the crown
+ * lies flat and only what shows below the brim keeps its body.
  */
-function partedCapGeo(side: -1 | 1): THREE.BufferGeometry {
-  return cached(`cap_mitte_${side}`, () => {
+function partedCapGeo(side: -1 | 1, hat = false): THREE.BufferGeometry {
+  return cached(`cap_mitte_${side}_${hat}`, () => {
+    const C = CURTAINS;
+    const SEG = { u: 48, v: 18 };
     const g = shell({
       phi0: side > 0 ? 0 : -Math.PI,
       phi1: side > 0 ? Math.PI : 0,
       th0: () => 0,
-      th1: (phi) => LINE.mitte(Math.abs(phi)),
-      r: (_phi, th, _d, v) => (1 + 0.025 * Math.max(0, Math.cos(th))) * rim(v),
+      // Choppy ends over the ears and at the nape, a clean sweep at the front.
+      th1: (phi) => LINE.mitte(Math.abs(phi)) + 0.03 * smooth01(1.1, 1.6, Math.abs(phi)) * Math.sin(phi * 11),
+      r: (phi, th, d, v) => {
+        const ax = Math.abs(d.x);
+        const front = smooth01(-0.35, 0.55, d.z);
+        const back = backness(phi);
+        // Mounds on the front of the crown: lower right at the part (it reads as a groove), full a
+        // finger's width out, fading towards the back of the head.
+        const mound = Math.exp(-(((th - 0.45) / 0.5) ** 2)) * (0.15 + 0.85 * smooth01(0, 0.14, ax)) * (1 - 0.85 * back);
+        // Front ends lift off the forehead and turn outward; the back ends tuck in at the nape.
+        const edge = smooth01(0.55, 1, v) ** 2;
+        const flip = edge * (C.flip * front - 0.1 * back);
+        // Sides fall over the ears with some body, widest around temple height.
+        const sides = C.side * Math.sin(Math.abs(phi)) ** 2 * smooth01(0.7, 1.4, th) * smooth01(2.6, 1.5, Math.abs(phi));
+        const below = hat ? smooth01(C.brim, C.brim + 0.25, th) : 1;
+        return (1 + 0.025 * Math.max(0, Math.cos(th)) + (hat ? 0 : C.lift * mound) + below * (flip + sides)) * rim(v, 0.04 * (1 - front));
+      },
       minY: minY(HAIR),
-      segU: 40,
-      segV: 14,
+      segU: SEG.u,
+      segV: SEG.v,
     });
     const pos = g.attributes.position;
     for (let i = 0; i < pos.count; i++) {
+      // Curtain ends sweep sideways, away from the face, not only off the forehead.
+      const v = Math.floor(i / (SEG.u + 1)) / SEG.v;
+      const sweep = (hat ? 0 : C.sweep) * smooth01(0.5, 1, v) ** 2 * smooth01(0.1, 0.6, pos.getZ(i));
       // Positions are in unit space (scaled by HAIR.rx later), hence the unit reach.
-      const k = 1 - smooth01(0, PART.reach / HAIR.rx, Math.abs(pos.getX(i)));
-      pos.setX(i, pos.getX(i) + (side * PART.gap * k) / HAIR.rx);
+      // The part runs from the forehead to the crown; behind it the halves close again.
+      const t = (1 - smooth01(0, PART.reach / HAIR.rx, Math.abs(pos.getX(i)))) * smooth01(-0.45, -0.1, pos.getZ(i));
+      pos.setX(i, pos.getX(i) + side * ((PART.gap * t) / HAIR.rx + sweep));
     }
     pos.needsUpdate = true;
     return g;
@@ -326,17 +357,14 @@ function curlGeo(amp = 0.15): THREE.BufferGeometry {
  * Long hair: an outer layer from the crown down the back and sides, open at the face. Split at the
  * mouth plane: the upper part flips open with the skull, the lower part hangs from the jaw.
  */
-function curtainGeo(part: 'top' | 'bottom', style: 'lang' | 'mitte' = 'lang'): THREE.BufferGeometry {
-  return cached(`curtain_${style}_${part}`, () => {
-    // Middle part: chin-length bob that frames the face (opens less than the long curtain), shorter at
-    // the nape, ends flipping out a little.
-    const mitte = style === 'mitte';
-    const a0 = mitte ? 1.0 : 1.2;
+function curtainGeo(part: 'top' | 'bottom'): THREE.BufferGeometry {
+  return cached(`curtain_${part}`, () => {
+    const a0 = 1.2;
     const top = HAIR.y + HAIR.ry;
     return surface(40, part === 'top' ? 14 : 12, (u, t) => {
       const phi = a0 + (Math.PI * 2 - 2 * a0) * u;
       const b = backness(phi);
-      const len = mitte ? 0.345 - 0.05 * b : 0.49 + 0.12 * b;
+      const len = 0.49 + 0.12 * b;
       const vCut = (top - CUT_Y) / len;
       const v = part === 'top' ? t * vCut : vCut + t * (1 - vCut);
       const y = top - v * len;
@@ -344,9 +372,8 @@ function curtainGeo(part: 'top' | 'bottom', style: 'lang' | 'mitte' = 'lang'): T
       const cap = (r: number) => 1.03 * r * Math.sqrt(Math.max(0, 1 - ((y - HAIR.y) / HAIR.ry) ** 2));
       const fall = Math.sqrt(Math.max(0, (HAIR.y - y) / 0.4));
       const below = y < HAIR.y ? 1 : 0;
-      const flare = mitte && part === 'bottom' ? 0.022 * t * t : 0;
-      const rx = Math.max(cap(HAIR.rx), (0.155 + 0.03 * fall + flare) * below);
-      const rz = Math.max(cap(HAIR.rz), (0.166 + 0.02 * fall - 0.03 * v * b + flare) * below);
+      const rx = Math.max(cap(HAIR.rx), (0.155 + 0.03 * fall) * below);
+      const rz = Math.max(cap(HAIR.rz), (0.166 + 0.02 * fall - 0.03 * v * b) * below);
       // Soft wave at the ends instead of a straight cut.
       const yy = y - (part === 'bottom' ? t * t * 0.015 * Math.sin(phi * 9) : 0);
       return new THREE.Vector3(Math.sin(phi) * rx, yy, Math.cos(phi) * rz + HAIR.z);
@@ -404,7 +431,7 @@ export const HAIR_TOP: Record<HairStyle, number> = {
   dutt: 0.368,
   irokese: 0.37,
   locken: 0.395,
-  mittelscheitel: 0.372,
+  mittelscheitel: 0.4,
   // Bare skull: HEAD_C.y + HEAD_C.ry.
   glatze: 0.36,
   muetze: 0.42,
@@ -439,7 +466,7 @@ export function addHair(S: THREE.Group, H: THREE.Group, L: Look, hat = false): T
     return cm;
   }
   if (L.hair === 'glatze') return null;
-  if (L.hair === 'mittelscheitel') return addParted(S, H, hm);
+  if (L.hair === 'mittelscheitel') return addParted(S, hm);
   part(S, capGeo(L.hair), hm, 0, y, z, rx, ry, rz);
   if (L.hair === 'lang') {
     part(S, curtainGeo('top'), hm, 0, 0, 0);
@@ -449,12 +476,10 @@ export function addHair(S: THREE.Group, H: THREE.Group, L: Look, hat = false): T
   return hm;
 }
 
-/** Middle part: two cap halves with a scalp slit between them, plus a chin-length curtain around the back. */
-function addParted(S: THREE.Group, H: THREE.Group, hm: THREE.Material): THREE.Material {
+/** Middle part: two cap halves with a scalp slit between them; under a hat the volume lies flat. */
+function addParted(S: THREE.Group, hm: THREE.Material, hat = false): THREE.Material {
   const { y, z, rx, ry, rz } = HAIR;
-  for (const side of [-1, 1] as const) part(S, partedCapGeo(side), hm, 0, y, z, rx, ry, rz);
-  part(S, curtainGeo('top', 'mitte'), hm, 0, 0, 0);
-  part(H, curtainGeo('bottom', 'mitte'), hm, 0, 0, 0);
+  for (const side of [-1, 1] as const) part(S, partedCapGeo(side, hat), hm, 0, y, z, rx, ry, rz);
   return hm;
 }
 
@@ -477,7 +502,7 @@ function hairUnderHat(S: THREE.Group, H: THREE.Group, L: Look): THREE.Material {
   }
   // Bald under a hat stays bald; the hat's crown has room for the bare skull.
   if (L.hair === 'glatze') return hm;
-  if (L.hair === 'mittelscheitel') return addParted(S, H, hm);
+  if (L.hair === 'mittelscheitel') return addParted(S, hm, true);
   part(S, capGeo(L.hair === 'muetze' ? 'kurz' : L.hair), hm, 0, y, z, rx, ry, rz);
   if (L.hair === 'lang') {
     part(S, curtainGeo('top'), hm, 0, 0, 0);
