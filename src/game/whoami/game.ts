@@ -68,6 +68,11 @@ export class WhoamiGame implements Minigame {
     return !!this.state?.ready.includes(this.selfId);
   }
 
+  /** A round is on: cards being made or played. */
+  get running(): boolean {
+    return !!this.state && this.state.phase !== 'done';
+  }
+
   /** Seconds left in the running vote. */
   get voteLeftS(): number {
     const v = this.state?.vote;

@@ -14,6 +14,8 @@ export class NameTags {
   private placers: Placer[] = [];
   private v = new THREE.Vector3();
   private size: Size;
+  /** Seat being picked by looking at it ("Zeig drauf"), -1 for none: its tag stands out. */
+  picked = -1;
 
   constructor(
     host: HTMLElement,
@@ -57,6 +59,8 @@ export class NameTags {
         return;
       }
       if (t.hidden) t.hidden = false;
+      const picked = i === this.picked;
+      if (t.classList.contains('picked') !== picked) t.classList.toggle('picked', picked);
       const talking = level(i) > 0.12;
       if (t.classList.contains('talking') !== talking) t.classList.toggle('talking', talking);
       if (t.textContent !== name) t.textContent = name;

@@ -86,6 +86,11 @@ export class WhoamiUi {
     return !this.done.hidden;
   }
 
+  /** Same as closeDone, under the name every game's screens share (GameUi). */
+  close(): void {
+    this.closeDone();
+  }
+
   /** Close the end-of-round screen (a new game is starting). */
   closeDone(): void {
     const s = this.game.state;

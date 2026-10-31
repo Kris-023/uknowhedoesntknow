@@ -34,6 +34,29 @@ export interface Minigame {
   drop(id: string): void;
 }
 
+/** What the coach needs of a game besides the Minigame calls: its state, a change signal and the host's levers. */
+export interface PlayableGame extends Minigame {
+  readonly state: { readonly phase: string } | null;
+  /** A round is on (not over). */
+  readonly running: boolean;
+  onChange(f: () => void): () => void;
+  /** Host: someone reloaded and came back with a new id. */
+  rejoin(oldId: string, newId: string): void;
+  /** Host: the Schaffner's fine; false if this game doesn't take it right now. */
+  penalize(id: string, points: number): boolean;
+}
+
+/** Screens of a game as the coach drives them: one game's screens are shown at a time. */
+export interface GameUi {
+  set shown(on: boolean);
+  /** End screen open (or about to open): the lobby waits. */
+  readonly doneOpen: boolean;
+  /** Close the end screen (a new game starts). */
+  close(): void;
+  /** Per frame: countdowns. */
+  tick(): void;
+}
+
 export function sessionNet(session: Session): GameNet {
   return {
     selfId: session.selfId,

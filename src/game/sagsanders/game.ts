@@ -256,6 +256,11 @@ export class SagsGame implements Minigame {
     }
   }
 
+  /** Profile id of a member, as far as their words have arrived ("Ahnungslos" keeps a clueless player's own word away from them). */
+  pidOf(id: string): string | undefined {
+    return id === this.selfId ? this.mine().pid : this.shared.get(id)?.pid;
+  }
+
   /** Every submission in the room: from the others as they arrived, mine fresh from storage. */
   roomCards(): WordCard[] {
     const out: WordCard[] = [...this.mine().cards];
