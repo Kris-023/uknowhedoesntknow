@@ -1,10 +1,11 @@
 import { el } from '../ui/dom';
 
-export type GameId = 'whoami' | 'sags';
+export type GameId = 'whoami' | 'sags' | 'gleich';
 
 export const GAMES: readonly { id: GameId; title: string; blurb: string }[] = [
   { id: 'whoami', title: 'Wer bin ich?', blurb: 'Bild über dem Kopf, Ja/Nein-Fragen, geheime Abstimmung.' },
   { id: 'sags', title: "Sag's anders", blurb: 'Wort erklären, ohne die verbotenen Wörter.' },
+  { id: 'gleich', title: 'Gleich gedacht', blurb: 'Alle schreiben ein Wort, bis alle dasselbe denken. Ohne Absprache.' },
 ];
 
 export interface LobbyRoom {

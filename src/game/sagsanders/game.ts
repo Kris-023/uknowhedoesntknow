@@ -151,8 +151,42 @@ export class SagsGame implements Minigame {
     this.publish();
   }
 
+
+  absent(): string[] {
+    const s = this.state;
+    if (!s || s.phase === 'done') return [];
+    const here = new Set(this.net.members().map((m) => m.id));
+    return s.players.filter((p) => !here.has(p));
+  }
+
+  drop(id: string): void {
+    if (this.isHost) this.dropNow(id);
+    else {
+      const h = this.net.hostId();
+      if (h) this.net.send('sa:drop', id, h);
+    }
+  }
+
+  /**
+   * Host: someone asked to play on without `id`. Only someone who really isn't in the room is dropped;
+   * the asker may see them gone a moment before the host does, so the request waits a little.
+   */
+  private dropAsked = new Map<string, number>();
+
+  private dropNow(id: string): void {
+    if (!this.host) return;
+    if (this.net.members().some((m) => m.id === id)) {
+      this.dropAsked.set(id, Date.now());
+      return;
+    }
+    this.dropAsked.delete(id);
+    this.goneSince.delete(id);
+    if (this.host.removePlayer(id)) this.publish();
+  }
+
   tick(now: number): void {
     this.shareWords();
+    if (this.host && !this.isHost) this.host = null;
     if (!this.host && this.isHost && this.state && this.state.phase !== 'done') {
       // A new host (the old one left) takes over a running round from its public state.
       this.host = SagsHost.fromState(this.state);
@@ -170,6 +204,15 @@ export class SagsGame implements Minigame {
       }
       const since = this.goneSince.get(p) ?? t;
       this.goneSince.set(p, since);
+      const asked = this.dropAsked.get(p);
+      if (asked !== undefined) {
+        this.dropAsked.delete(p);
+        if (t - asked < NET.dropWaitMs) {
+          this.dropNow(p);
+          changed = true;
+          continue;
+        }
+      }
       const s = this.host.state;
       // An absent explainer: their turn ends after a moment, they leave the round after a while.
       if (t - since > SAGS.absentPassS * 1000 && s.explainer === p && s.phase !== 'done') changed = this.host.pass() || changed;
@@ -189,6 +232,8 @@ export class SagsGame implements Minigame {
         this.hostSkew = s.sentAt - Date.now();
         this.applyState(s);
       }
+    } else if (type === 'sa:drop') {
+      if (typeof data === 'string') this.dropNow(data);
     } else if (type === 'sa:intent') {
       const i = parseIntent(data);
       if (i && this.host) this.applyIntent(from, i);

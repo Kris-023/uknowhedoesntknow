@@ -2,8 +2,11 @@ import * as THREE from 'three';
 import { SLOTS } from '../characters/accessories';
 import { Person, type PersonState } from '../characters/person';
 
+/** Resting angle in radians. */
+const PREVIEW_YAW = 0.35;
+
 /**
- * Small turntable with your own character for the menus. Its own renderer, so it works before the
+ * Small preview of your own character for the menus (drag to turn it, it never spins on its own). Its own renderer, so it works before the
  * game world exists; `dispose()` frees the WebGL context when the menu closes.
  */
 export class CharacterPreview {
@@ -15,7 +18,8 @@ export class CharacterPreview {
   private person: Person;
   private raf = 0;
   private last = 0;
-  private spin = 0;
+  /** Turn angle: starts at the resting angle, only dragging changes it. */
+  private spin = PREVIEW_YAW;
   private drag: { x: number; spin: number } | null = null;
 
   constructor(state: PersonState) {
@@ -86,7 +90,6 @@ export class CharacterPreview {
       this.camera.aspect = w / h;
       this.camera.updateProjectionMatrix();
     }
-    if (!this.drag) this.spin += dt * 0.35;
     this.turn.rotation.y = this.spin;
     const t = now / 1000;
     // Idle: look around a little, so the head reads as alive.

@@ -3,7 +3,7 @@
 Browser-Partyspiel für 2 bis 4 Freunde: Ihr sitzt euch in einem viel zu schnellen U-Bahn-Wagen gegenüber,
 draußen rast der Tunnel vorbei, drinnen flackert das Neon, und die Mitreisenden starren aufs Handy.
 Sechs Maps: Hypertrain (der U-Bahn-Wagen), Waschsalon, Bürgeramt, Späti 3 Uhr, WG-Wohnzimmer und Diner. Die Minigames
-sind „Wer bin ich?“ und „Sag's anders“.
+sind „Wer bin ich?“, „Sag's anders“ und „Gleich gedacht“.
 Nur PC, nur Browser, nur private Räume, kein Server.
 
 **Stand: M7 (alle Meilensteine aus dem Auftrag umgesetzt).** Details und offene Fragen: `teamlead/SUPERDOC.md`.
@@ -16,7 +16,8 @@ Nur PC, nur Browser, nur private Räume, kein Server.
 3. Figur und Accessoires im Tab **Charakter**, Ton und Grafik in **Einstellungen**. Umgebung, Musik und Durchsagen haben
    eigene Regler; „Ruhige Umgebung“ dämpft das Dauerrauschen der Map. Der Browser merkt sich alles.
 
-Die **Map** wählst du im Spielen-Tab vor dem Erstellen; sie gilt für den ganzen Raum. Jede Map hat ihre eigenen
+Die **Map** wählst du im Spielen-Tab vor dem Erstellen; sie gilt für den ganzen Raum. Der Host kann sie im Esc-Menü unter
+Raum-Einstellungen jederzeit wechseln, auch mitten in einer Runde: Raum, Plätze und Punkte bleiben. Jede Map hat ihre eigenen
 Mitreisenden, Geräusche und ein eigenes Ereignis (Unwucht, Systemausfall, Streife, Nachbar klopft, Fritteuse brennt).
 
 Neben „Raum erstellen“ liegen die **Raum-Einstellungen**: Sprachchat an/aus (aus, wenn ihr schon im TeamSpeak oder
@@ -52,6 +53,18 @@ Ein Wort erklären, ohne das Wort selbst und ohne die rot durchgestrichenen Wör
   im Menü-Tab **Wörter** ein; sie bleiben in deinem Browser und kommen im Raum zu allen, ohne dass sie vorher jemand sieht.
   Mit „Liste kopieren“ oder als Datei gibst du sie weiter; am Rundenende kannst du gespielte Wörter anderer übernehmen.
 
+### Gleich gedacht
+
+Alle schreiben ein Wort, bis alle dasselbe denken. Ohne Absprache, alle gewinnen zusammen.
+
+- Im ersten Versuch bekommt jeder eine andere Frage und antwortet mit einem Wort. Danach schreibt jeder ein Wort, das die
+  Wörter des letzten Versuchs verbindet.
+- Festlegen mit <kbd>Enter</kbd>. Aufgedeckt wird erst, wenn alle festgelegt haben, dann stehen die Wörter über den Köpfen.
+  Vorher sieht niemand ein fremdes Wort, auch der Host nicht.
+- Groß-/Kleinschreibung, Artikel, Umlaute, einfache Mehrzahl und ein Tippfehler zählen automatisch als gleich. Für alles
+  andere (Synonyme, andere Sprache) stimmt ihr mit <kbd>F</kbd> ab: „Zählt als gleich?“, <kbd>1</kbd> Ja, <kbd>2</kbd> Nein.
+- Höchstens 10 Versuche; je schneller, desto mehr Punkte für alle. Reden während des Schreibens ruft den Schaffner.
+
 ### Steuerung
 
 | Taste | Was |
@@ -71,8 +84,10 @@ Kopfhörer sind am besten. Chrome rechnet Spielton nicht aus dem Mikro heraus, F
 
 ### Wenn etwas hakt
 
-- **Neu geladen oder kurz raus:** Im selben Tab geht es automatisch zurück in den Raum, auf denselben Platz, mit Punkten
-  und Karten (innerhalb von 5 Minuten).
+- **Neu geladen oder rausgeflogen:** Im selben Tab geht es automatisch zurück in den Raum, auf denselben Platz, mit Punkten
+  und Karten (innerhalb von 30 Minuten). Aus einem anderen Tab oder Browser reicht der Raumcode mit demselben Namen.
+  Solange jemand fehlt, wird der Zug übersprungen und der Platz bleibt frei. Oben links steht, wer fehlt, und mit
+  „Ohne … weiterspielen“ kann die Runde auch ohne die Person weitergehen.
 - **Host weg:** Wer am längsten dabei ist, übernimmt, auch mitten in einer Runde.
 - **Mikro geht nicht:** Einstellungen → Stimme → Test zeigt den Grund des Browsers.
 - **Andere hören Tippen, Lüfter oder Rauschen:** Einstellungen → Stimme → Rauschfilter auf **KI** (Standard). Pumpt das

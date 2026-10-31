@@ -21,21 +21,34 @@ export class Ambience implements SoundKit {
   /** Relay: one quiet clunk per outage, not one per flicker of the stuttering start. */
   private lastClunk = -Infinity;
   private restoreSince: number | null = null;
+  /**
+   * All three channels pass through here on their way to the bus: one switch to hold this map's
+   * sound while a new map settles in, and one plug to pull when the map goes away (voices share the
+   * bus and must keep playing through a map change).
+   */
+  private level: GainNode;
+  private unsubscribe: () => void;
+  /** Endless sources the map started when it was built; stopped when the map goes away. */
+  private loops: AudioScheduledSourceNode[];
+  private disposed = false;
 
-  constructor(voice: Voice, seed: number, map: MapDef) {
+  /** `held`: start silent until `release()` (a map change while the room keeps running). */
+  constructor(voice: Voice, seed: number, map: MapDef, held = false) {
     const ctx = (this.ctx = voice.ctx);
-    // Three channels straight to the bus, so each has its own volume; the bed sits under the ambience.
+    this.level = new GainNode(ctx, { gain: held ? 0 : 1 });
+    this.level.connect(voice.bus);
+    // Three channels, so each has its own volume; the bed sits under the ambience.
     const bedLevel = () => (settings.quietAmbience ? AMBIENCE.quietBed : 1);
     const musicLevel = () => (settings.musicOn ? settings.musicVolume : 0);
     this.out = new GainNode(ctx, { gain: settings.ambientVolume });
-    this.out.connect(voice.bus);
+    this.out.connect(this.level);
     this.bed = new GainNode(ctx, { gain: bedLevel() });
     this.bed.connect(this.out);
     this.music = new GainNode(ctx, { gain: musicLevel() });
-    this.music.connect(voice.bus);
+    this.music.connect(this.level);
     const announceOut = new GainNode(ctx, { gain: settings.announceVolume });
-    announceOut.connect(voice.bus);
-    onSettings(() => {
+    announceOut.connect(this.level);
+    this.unsubscribe = onSettings(() => {
       const now = ctx.currentTime;
       this.out.gain.setTargetAtTime(settings.ambientVolume, now, 0.05);
       this.bed.gain.setTargetAtTime(bedLevel(), now, 0.15);
@@ -47,7 +60,7 @@ export class Ambience implements SoundKit {
     const d = this.noise.getChannelData(0);
     for (let i = 0; i < d.length; i++) d[i] = Math.random() * 2 - 1;
 
-    this.speaker = new GainNode(ctx, { gain: 0.5 });
+    this.speaker = new GainNode(ctx, { gain: AMBIENCE.gong });
     const hp = new BiquadFilterNode(ctx, { type: 'highpass', frequency: 380 });
     const lp = new BiquadFilterNode(ctx, { type: 'lowpass', frequency: 3200 });
     const room = new ConvolverNode(ctx, { buffer: impulse(ctx, 0.9) });
@@ -55,12 +68,45 @@ export class Ambience implements SoundKit {
     this.speaker.connect(hp).connect(lp);
     lp.connect(announceOut);
     lp.connect(room).connect(wet).connect(announceOut);
-    this.map = map.sound(this, seed);
+    const built = startedDuring(() => map.sound(this, seed));
+    this.map = built.value;
+    this.loops = built.sources;
+  }
+
+  /** Fade in after a held start. */
+  release(fadeS = 1.5): void {
+    const t = this.ctx.currentTime;
+    this.level.gain.cancelScheduledValues(t);
+    this.level.gain.setValueAtTime(this.level.gain.value, t);
+    this.level.gain.linearRampToValueAtTime(1, t + fadeS);
+  }
+
+  /**
+   * The map is gone: quick fade (no click), then unplug and stop the endless sources. One-off
+   * noises already scheduled end by themselves; unplugged, nobody hears them.
+   */
+  dispose(): void {
+    if (this.disposed) return;
+    this.disposed = true;
+    this.unsubscribe();
+    const t = this.ctx.currentTime;
+    const g = this.level.gain;
+    g.cancelScheduledValues(t);
+    g.setValueAtTime(g.value, t);
+    g.linearRampToValueAtTime(0, t + 0.08);
+    for (const s of this.loops) {
+      try {
+        s.stop(t + 0.1);
+      } catch {
+        // Never started or already stopped: nothing to do.
+      }
+    }
+    setTimeout(() => this.level.disconnect(), 150);
   }
 
   /** Per frame. `power` 0..1 supply of the map (coach, laundromat fuse, …). */
   update(t: number, kmh: number, power: number): void {
-    if (this.ctx.state !== 'running') return;
+    if (this.disposed || this.ctx.state !== 'running') return;
     const now = this.ctx.currentTime;
     this.map.update(t, power, kmh);
     if (power < 0.5 && this.lastPower >= 0.5 && now - this.lastClunk > 3) {
@@ -130,14 +176,47 @@ export class Ambience implements SoundKit {
    */
   private speak(text: string, important = false): void {
     // Stop announcements can be switched off; a Schaffner call is part of the game and always speaks.
-    if ((!settings.announcements && !important) || typeof speechSynthesis === 'undefined') return;
+    // A map change between gong and speech: the old map's line no longer fits.
+    if (this.disposed) return;
+    if ((!settings.announcements && !important) || settings.announceVolume <= 0 || typeof speechSynthesis === 'undefined') return;
     const u = new SpeechSynthesisUtterance(text);
     u.lang = 'de-DE';
     const de = speechSynthesis.getVoices().find((v) => v.lang.startsWith('de'));
     if (de) u.voice = de;
     u.rate = 0.95;
     u.pitch = 0.85;
-    u.volume = Math.min(1, settings.announceVolume);
+    // Browser speech starts at full loudness and sits on top of everything; squared, so the slider
+    // the default lands well below half. Some engines ignore it; at 0 there is no speech at all.
+    u.volume = Math.min(1, (settings.announceVolume / 1.5) ** 2 * 1.5);
     speechSynthesis.speak(u);
+  }
+}
+
+/**
+ * Runs `f` and records every Web Audio source started meanwhile. Map sounds start their endless
+ * layers (hum, rumble, jukebox noise) while being built and keep no handle on them; this way every
+ * map gets stopped on a map change without each one having to list its nodes. Only the build is
+ * watched, not the per-frame update: patching prototypes every frame would cost more than it saves,
+ * and sources started later always come with their own stop time.
+ */
+function startedDuring<T>(f: () => T): { value: T; sources: AudioScheduledSourceNode[] } {
+  const sources: AudioScheduledSourceNode[] = [];
+  // AudioBufferSourceNode has its own start (offset, duration); the others inherit the base one.
+  const protos = [AudioScheduledSourceNode.prototype, AudioBufferSourceNode.prototype].filter((p) => Object.prototype.hasOwnProperty.call(p, 'start'));
+  const saved = protos.map((p) => Object.getOwnPropertyDescriptor(p, 'start')!);
+  protos.forEach((p, i) => {
+    const orig = saved[i].value as (this: AudioScheduledSourceNode, ...a: unknown[]) => void;
+    Object.defineProperty(p, 'start', {
+      ...saved[i],
+      value(this: AudioScheduledSourceNode, ...a: unknown[]) {
+        sources.push(this);
+        return orig.apply(this, a);
+      },
+    });
+  });
+  try {
+    return { value: f(), sources };
+  } finally {
+    protos.forEach((p, i) => Object.defineProperty(p, 'start', saved[i]));
   }
 }

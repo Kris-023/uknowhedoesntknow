@@ -64,6 +64,12 @@ export class CardsView {
     host.append(this.root);
   }
 
+  /** Another world (map change): same seats, new people and camera. */
+  setView(players: Players, camera: THREE.PerspectiveCamera): void {
+    this.players = players;
+    this.camera = camera;
+  }
+
   /** `cardOf(seat)`: image for that seat, '?' for a hidden own card, null for none. */
   update(cardOf: (seat: number) => string | '?' | null, nameOf: (seat: number) => string, pov: boolean): void {
     const { w, h } = this.size;

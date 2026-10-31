@@ -107,6 +107,7 @@ function sound(kit: SoundKit, seed: number): MapSound {
       const cycle = Math.floor(t / HALT_CYCLE_S);
       if (haltCountdown(t, HALT_CYCLE_S) === AMBIENCE.announceAt && cycle !== lastAnnounce) {
         lastAnnounce = cycle;
+        if (cycle % AMBIENCE.announceEveryHalts !== 0) return;
         const lines = LINES[STATIONS[nextStopIndex(t, HALT_CYCLE_S, STATIONS.length)]];
         kit.announce(lines[Math.floor(hash01(seed, cycle, 5) * lines.length) % lines.length]);
       }

@@ -12,6 +12,8 @@ const HAIR_LABEL: Record<HairStyle, string> = {
   dutt: 'Dutt',
   irokese: 'Irokese',
   locken: 'Locken',
+  mittelscheitel: 'Mittelscheitel',
+  glatze: 'Glatze',
   muetze: 'Mütze',
 };
 

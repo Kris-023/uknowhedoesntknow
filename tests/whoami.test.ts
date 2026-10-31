@@ -181,3 +181,71 @@ describe('Wer bin ich? resilience', async () => {
     expect([...g.b2.cards.keys()].sort()).toEqual(['a', 'c']);
   });
 });
+
+describe('dropped-out players', async () => {
+  const { LocalGameRoom } = await import('../src/game/minigame');
+  const { WhoamiGame } = await import('../src/game/whoami/game');
+  const card = (n: string) => `data:image/jpeg;base64,${btoa(n)}`;
+
+  it('without the absent one, a vote closes once everyone here has voted', () => {
+    const h = new WhoamiHost(['a', 'b', 'c', 'd']);
+    ['a', 'b', 'c', 'd'].forEach((p) => h.intent(p, { a: 'ready' }, 0, p === 'a'));
+    h.intent('a', { a: 'ask' }, 0, true);
+    h.intent('b', { a: 'vote', v: 'yes' }, 0, false);
+    const here = new Set(['a', 'b', 'c']);
+    expect(h.closeIfAllIn(here)).toBe(false);
+    h.intent('c', { a: 'vote', v: 'yes' }, 0, false);
+    expect(h.closeIfAllIn(here)).toBe(true);
+    expect(h.state.last?.result).toBe('yes');
+    expect(h.state.players).toContain('d');
+  });
+
+  it('they keep their place until someone plays on without them, and only then', () => {
+    const room = new LocalGameRoom([
+      { id: 'a', seat: 0, name: 'A' },
+      { id: 'b', seat: 2, name: 'B' },
+      { id: 'c', seat: 1, name: 'C' },
+    ]);
+    const g = Object.fromEntries(['a', 'b', 'c'].map((id) => [id, new WhoamiGame(room.net(id))]));
+    g.a.start();
+    room.pump();
+    // c drops out before making a card: still in the round, the others see who is missing.
+    room.roster.pop();
+    for (let i = 0; i < 3; i++) g.a.tick(performance.now());
+    room.pump();
+    expect(g.a.state?.players).toContain('c');
+    expect(g.b.absent()).toEqual(['c']);
+    // Nobody can drop someone who is still here.
+    g.b.drop('a');
+    room.pump();
+    expect(g.a.state?.players).toContain('a');
+    // b decides to play on: c is out, the circle is redrawn for a and b.
+    g.b.drop('c');
+    room.pump();
+    expect(g.a.state?.players).toEqual(['a', 'b']);
+    room.pump();
+    expect(g.b.absent()).toEqual([]);
+    for (const id of ['a', 'b']) g[id].submitCard(card(id));
+    room.pump();
+    expect(g.a.state?.phase).toBe('play');
+  });
+
+  it('a request to play on waits until the host sees them gone too', () => {
+    const room = new LocalGameRoom([
+      { id: 'a', seat: 0, name: 'A' },
+      { id: 'b', seat: 2, name: 'B' },
+      { id: 'c', seat: 1, name: 'C' },
+    ]);
+    const g = Object.fromEntries(['a', 'b', 'c'].map((id) => [id, new WhoamiGame(room.net(id))]));
+    g.a.start();
+    room.pump();
+    // b already saw c leave, the host not yet.
+    g.b.drop('c');
+    room.pump();
+    expect(g.a.state?.players).toContain('c');
+    room.roster.pop();
+    g.a.tick(performance.now());
+    room.pump();
+    expect(g.a.state?.players).toEqual(['a', 'b']);
+  });
+});

@@ -130,6 +130,31 @@ export class Players {
     }
   }
 
+  /**
+   * Same room, new map: take over who sits where, who I am, where I look and what everyone looks
+   * like (including debug changes). Seat indices stay; only the spots in the map differ.
+   */
+  adopt(prev: Players): void {
+    this.active = prev.active;
+    this.mode = prev.mode;
+    this.instant = prev.instant;
+    this.talkTest = prev.talkTest;
+    this.showMarkers = prev.showMarkers;
+    this.remotePose = prev.remotePose;
+    this.voiceLevel = prev.voiceLevel;
+    Object.assign(this.look, prev.look);
+    prev.occupied.forEach((o, i) => (this.occupied[i] = o));
+    prev.people.forEach((p, i) => {
+      const key = JSON.stringify(p.state());
+      // Same seed, same start looks: an untouched seat needs no rebuild.
+      if (key === JSON.stringify(this.people[i].state())) this.applied[i] = prev.applied[i];
+      else this.applyState(i, p.state());
+      // Head where it was, so remote heads don't swing in from straight ahead.
+      this.people[i].yaw = p.yaw;
+      this.people[i].pitch = p.pitch;
+    });
+  }
+
   /** Put a full state (name, look, items) on a seat; skips the rebuild if nothing changed. */
   applyState(seat: number, state: PersonState): void {
     const key = JSON.stringify(state);

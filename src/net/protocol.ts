@@ -21,6 +21,23 @@ export interface RosterEntry {
   id: string;
   seat: number;
   state: PersonState;
+  /**
+   * Hashes of the player's tab token and browser id. Everyone holds them, so whoever becomes host
+   * can still recognise a returning player; the secrets themselves only ever go to the host.
+   */
+  keys?: string[];
+}
+
+/** Short non-cryptographic hash (two FNV-1a passes): enough to tell a few players apart, not to guess back. */
+export function idHash(s: string): string {
+  let a = 0x811c9dc5;
+  let b = 0x01000193 ^ s.length;
+  for (let i = 0; i < s.length; i++) {
+    const c = s.charCodeAt(i);
+    a = Math.imul(a ^ c, 0x01000193);
+    b = Math.imul(b ^ c, 0x5bd1e995) ^ (b >>> 15);
+  }
+  return (a >>> 0).toString(36) + (b >>> 0).toString(36);
 }
 
 export const SCHAFFNER_MODES = ['off', 'warn', 'fine'] as const;
@@ -42,7 +59,10 @@ export interface RoomOpts {
   turnS: number;
   /** "Sag's anders" with four players: two teams, or everyone against everyone (fewer always play alone). */
   sagsTeams: boolean;
-  /** Where the room plays; fixed when the room is created (the world is built from it). */
+  /**
+   * Where the room plays. The host may change it any time: every client rebuilds its world from the
+   * new map on the opts event; room, seats, voice and minigame scores stay.
+   */
   map: MapId;
 }
 
@@ -136,7 +156,9 @@ export function parseRoster(v: unknown): RosterEntry[] | null {
     const seat = num(e.seat, 0, NET.maxPlayers - 1);
     const state = parseState(e.state);
     if (seat === null || !Number.isInteger(seat) || !state) return null;
-    out.push({ id: e.id, seat, state });
+    // Keys are optional: an older host simply sends none.
+    const keys = Array.isArray(e.keys) ? e.keys.filter((k): k is string => typeof k === 'string' && k.length <= 32).slice(0, 2) : undefined;
+    out.push(keys ? { id: e.id, seat, state, keys } : { id: e.id, seat, state });
   }
   return out;
 }

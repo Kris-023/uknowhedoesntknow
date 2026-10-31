@@ -1,7 +1,7 @@
 import { LOOKS } from '../config';
 import { pick, type Rand } from '../core/rng';
 
-export const HAIRSTYLES = ['kurz', 'lang', 'dutt', 'irokese', 'locken', 'muetze'] as const;
+export const HAIRSTYLES = ['kurz', 'lang', 'dutt', 'irokese', 'locken', 'mittelscheitel', 'glatze', 'muetze'] as const;
 export type HairStyle = (typeof HAIRSTYLES)[number];
 
 /** Body build, independent of male/female. 'xxl' spills over the seat on purpose. */

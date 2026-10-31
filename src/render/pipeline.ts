@@ -32,6 +32,7 @@ export class Pipeline {
   readonly renderer: THREE.WebGLRenderer;
   private composer: EffectComposer;
   private bloom: UnrealBloomPass;
+  private scenePass: RenderPass;
   bloomOn = true;
   /** Multiplier on BLOOM.strength (player setting). */
   bloomStrength = 1;
@@ -55,10 +56,17 @@ export class Pipeline {
     const samples = Math.min(RENDER.msaaSamples, r.capabilities.maxSamples);
     const target = new THREE.WebGLRenderTarget(1, 1, { type: THREE.HalfFloatType, samples });
     this.composer = new EffectComposer(r, target);
-    this.composer.addPass(new RenderPass(scene, camera));
+    this.scenePass = new RenderPass(scene, camera);
+    this.composer.addPass(this.scenePass);
     this.bloom = new ScaledBloomPass(BLOOM.resolutionScale, BLOOM.strength, BLOOM.radius, LIGHTS.bloomThreshold);
     this.composer.addPass(this.bloom);
     this.composer.addPass(new OutputPass());
+  }
+
+  /** Another world (map change): same renderer, canvas and passes, new scene and camera. */
+  setView(scene: THREE.Scene, camera: THREE.Camera): void {
+    this.scenePass.scene = scene;
+    this.scenePass.camera = camera;
   }
 
   /** Device pixels per CSS pixel actually rendered: screen density, capped, times the quality setting. */
