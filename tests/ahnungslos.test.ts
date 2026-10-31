@@ -1,9 +1,10 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, onTestFinished } from 'vitest';
 import { AHNUNG } from '../src/config';
 import { mulberry32 } from '../src/core/rng';
 import { botClue, botGuess, botSuspect } from '../src/game/ahnungslos/bots';
 import { AhnHost, cleanClue, givesAway, parseIntent, turnOrder, type AhnState } from '../src/game/ahnungslos/logic';
 import type { WordCard } from '../src/words/types';
+import { FIXTURE, useFixture } from './fixtures/content';
 
 const P = ['a', 'b', 'c', 'd'];
 // A word no test clue, name or id contains.
@@ -325,17 +326,30 @@ describe('Ahnungslos: bots', () => {
   });
 
   it('the caught bot guesses the card whose forbidden words match the clues', () => {
+    onTestFinished(
+      useFixture({
+        ...FIXTURE,
+        words: {
+          normal: [
+            ['Spieluhr', 'Kurbel', 'Melodie', 'Ballerina'],
+            ['Gartenschlauch', 'Wasser', 'Grün', 'Spritzen'],
+            ['Kletterwand', 'Griffe', 'Seil', 'Halle'],
+          ],
+          nsfw: [],
+        },
+      }),
+    );
     // Clues from a built-in card's forbidden words lead back to it.
     const g = botGuess(
       [
-        { by: 'a', word: 'Spieß' },
-        { by: 'b', word: 'Fladenbrot' },
-        { by: 'c', word: 'Soße' },
+        { by: 'a', word: 'Kurbel' },
+        { by: 'b', word: 'Melodie' },
+        { by: 'c', word: 'Ballerina' },
       ],
       ['normal'],
       () => 0,
     );
-    expect(g).toBe('Döner');
+    expect(g).toBe('Spieluhr');
     // Nothing matches: one of the clues.
     expect(botGuess([{ by: 'a', word: 'Qwxyz' }], ['normal'], () => 0)).toBe('Qwxyz');
   });

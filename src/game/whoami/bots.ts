@@ -23,7 +23,7 @@ export class WhoamiBots {
       const s = b.game.state;
       if (!s) return;
       // One pending action per situation; the key tells when the situation changed.
-      const key = `${s.round}|${s.phase}|${s.turn}|${s.vote?.guesser}|${s.vote?.kind}|${s.last?.result}|${s.questions[b.game.selfId]}`;
+      const key = `${s.round}.${s.undo}|${s.phase}|${s.turn}|${s.vote?.guesser}|${s.vote?.kind}|${s.last?.result}|${s.questions[b.game.selfId]}`;
       if (key !== b.key) {
         b.key = key;
         b.wait = now + 900 + Math.random() * 1600;

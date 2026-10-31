@@ -15,7 +15,7 @@ export class SagsBots {
     ids: string[],
     opts: SagsRoom,
   ) {
-    for (const id of ids) this.bots.push({ game: new SagsGame(room.net(id), opts, () => ({ pid: `bot-${id}`, cards: [] })), wait: 0, key: '' });
+    for (const id of ids) this.bots.push({ game: new SagsGame(room.net(id), opts), wait: 0, key: '' });
   }
 
   tick(now: number): void {
@@ -25,7 +25,7 @@ export class SagsBots {
       const s = b.game.state;
       if (!s || s.phase === 'done') continue;
       const me = b.game.selfId;
-      const key = `${s.round}|${s.phase}|${s.explainer}|${s.cardNo}`;
+      const key = `${s.round}.${s.undo}|${s.phase}|${s.explainer}|${s.cardNo}`;
       if (key !== b.key) {
         b.key = key;
         b.wait = now + (s.phase === 'turn' ? 3500 + Math.random() * 5000 : 1200 + Math.random() * 1500);

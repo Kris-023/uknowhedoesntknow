@@ -3,7 +3,7 @@ import { GleichGame, type GleichRoom } from './game';
 import { matches, type Words } from './logic';
 
 /** First-try answers of the bots: ordinary things everybody might say. */
-const FIRST = ['Katze', 'Pizza', 'Mond', 'Kaffee', 'Banane', 'Hund', 'Auto', 'Eis', 'Regen', 'Buch', 'Schuh', 'Sonne'];
+const FIRST = ['Katze', 'Nudeln', 'Mond', 'Tee', 'Banane', 'Hund', 'Auto', 'Eis', 'Regen', 'Buch', 'Schuh', 'Sonne'];
 
 /** How likely a bot is to follow the group on the given try; rises, so a solo round converges in a few tries. */
 export const followChance = (tryNo: number) => Math.min(0.95, 0.4 + 0.18 * (tryNo - 1));
@@ -43,7 +43,7 @@ export class GleichBots {
       if (!s || s.phase === 'done') continue;
       const me = b.game.selfId;
       // One pending action per situation; the key tells when the situation changed.
-      const key = `${s.round}|${s.tryNo}|${s.phase}|${!!s.words}|${!!s.vote}`;
+      const key = `${s.round}.${s.undo}|${s.tryNo}|${s.phase}|${!!s.words}|${!!s.vote}`;
       if (key !== b.key) {
         b.key = key;
         b.wait = now + (s.phase === 'write' ? 2500 + Math.random() * 6000 : 1200 + Math.random() * 3000);

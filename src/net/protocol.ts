@@ -41,6 +41,7 @@ export function idHash(s: string): string {
 }
 
 export const SCHAFFNER_MODES = ['off', 'warn', 'fine'] as const;
+export type SlfMode = 'text' | 'bild';
 export type SchaffnerMode = (typeof SCHAFFNER_MODES)[number];
 
 /** Room settings the host decides for everyone. */
@@ -59,6 +60,8 @@ export interface RoomOpts {
   turnS: number;
   /** "Sag's anders" with four players: two teams, or everyone against everyone (fewer always play alone). */
   sagsTeams: boolean;
+  /** "Stadt, Land, Fluss": write the answers, or find a picture for each category. */
+  slfMode: SlfMode;
   /**
    * Where the room plays. The host may change it any time: every client rebuilds its world from the
    * new map on the opts event; room, seats, voice and minigame scores stay.
@@ -77,6 +80,7 @@ export function parseOpts(v: unknown): RoomOpts {
     decks: Array.isArray(o.decks) ? DECK_IDS.filter((d) => (o.decks as unknown[]).includes(d)) : ['normal', 'custom'],
     turnS: (ROOM.turnChoices as readonly number[]).includes(o.turnS as number) ? (o.turnS as number) : SAGS.turnS,
     sagsTeams: o.sagsTeams !== false,
+    slfMode: o.slfMode === 'bild' ? 'bild' : 'text',
     map: MAP_IDS.includes(o.map as MapId) ? (o.map as MapId) : 'hypertrain',
   };
 }

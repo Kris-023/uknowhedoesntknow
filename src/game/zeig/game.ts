@@ -1,6 +1,7 @@
 import { NET, ZEIG } from '../../config';
 import { mulberry32 } from '../../core/rng';
-import { ZEIG_NORMAL, ZEIG_NSFW } from '../../words/zeig';
+import { content } from '../../words/content';
+import { questionPool } from '../../words/lists';
 import type { DeckId } from '../../words/types';
 import { PickState, type GazeTarget } from '../gaze';
 import type { GameNet, Minigame } from '../minigame';
@@ -38,6 +39,8 @@ function parseState(v: unknown): (ZeigState & { sentAt: number }) | null {
 /** Room settings the game reads when it draws questions. */
 export interface ZeigRoom {
   decks(): readonly DeckId[];
+  /** The room's own questions (lists "Zeig drauf"), used with the deck "Eigene". */
+  custom?(): readonly string[];
 }
 
 /**
@@ -152,7 +155,8 @@ export class ZeigGame implements Minigame, GazeTarget {
     const order = [...this.net.members()].sort((a, b) => NET.seatOrder.indexOf(a.seat) - NET.seatOrder.indexOf(b.seat)).map((m) => m.id);
     if (order.length < ZEIG.minPlayers) return;
     if (this.host) this.scores = { ...this.host.state.scores };
-    const pool = this.room.decks().includes('nsfw') ? [...ZEIG_NORMAL, ...ZEIG_NSFW] : ZEIG_NORMAL;
+    const { normal, nsfw } = content().zeig;
+    const pool = questionPool(this.room.decks(), normal, nsfw, this.room.custom?.() ?? [], ZEIG.questions);
     if (this.asked.size > pool.length - ZEIG.questions) this.asked.clear();
     const rng = mulberry32((Date.now() ^ (Math.random() * 2 ** 31)) | 0);
     const questions = drawQuestions(ZEIG.questions, pool, rng, this.asked);
@@ -164,6 +168,16 @@ export class ZeigGame implements Minigame, GazeTarget {
 
   end(): void {
     this.toHost({ a: 'end' });
+  }
+
+  /** Host: there is a decision of this round to take back. */
+  get canUndo(): boolean {
+    return this.isHost && !!this.host?.canUndo;
+  }
+
+  /** Host: take back the last reveal ("Zug zurück"): that question is looked at again. */
+  undo(): void {
+    if (this.isHost && this.host?.undo(Date.now())) this.publish();
   }
 
   /** The Schaffner's fine, any time in a running round. */
@@ -303,9 +317,11 @@ export class ZeigGame implements Minigame, GazeTarget {
   }
 
   private applyState(s: ZeigState): void {
+    s.undo ??= 0;
     this.state = s;
     if (s.phase === 'look') {
-      this.pick.reset(`${s.round}|${s.qNo}`);
+      // With the undo count: a question looked at again after an undo starts with no pick.
+      this.pick.reset(`${s.round}|${s.qNo}|${s.undo}`);
       // After a reload the host still has my lock; the pick behind it is no longer mine to show.
       if (s.locked.includes(this.selfId) && !this.pick.locked) this.pick.locked = true;
     }

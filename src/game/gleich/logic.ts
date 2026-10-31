@@ -1,6 +1,7 @@
 import { GLEICH } from '../../config';
 import type { Rand } from '../../core/rng';
-import { QUESTIONS_NORMAL } from '../../words/questions';
+import { content } from '../../words/content';
+import { keepFines, renameDeep, UndoStack } from '../undo';
 
 // Rules of "Gleich gedacht" as a pure state machine on the host. Cooperative: everyone writes a
 // word without talking; if they all wrote the same one, everybody scores, else they try again
@@ -45,6 +46,14 @@ export interface GleichState {
   /** The try it was solved in, or null. */
   solvedTry: number | null;
   scores: Record<string, number>;
+  /** Moves the host took back this round. */
+  undo: number;
+}
+
+/** What the host needs to go back to: the state and the words that had come in while collecting. */
+interface Snap {
+  state: GleichState;
+  revealed: [string, string | null][];
 }
 
 export type Intent = { a: 'lock'; c: string } | { a: 'call' } | { a: 'vote'; v: boolean } | { a: 'ready' } | { a: 'end' };
@@ -188,6 +197,14 @@ export class GleichHost {
   private votes = new Map<string, boolean>();
   /** Verified words of this try as they came in; null = revealed something that doesn't match its commitment. */
   private revealed = new Map<string, string | null>();
+  /**
+   * "Zug zurück". A decision is the judgment of a try: the automatic "all the same" win, the
+   * outcome of a "Zählt als gleich?" vote, and moving on to the next try. Each goes back to the
+   * reveal of that try with the words shown, before the vote, so it can be called and voted anew.
+   */
+  private history = new UndoStack<Snap>();
+  /** The state right before the running vote was called, saved when it closes. */
+  private beforeVote: Snap | null = null;
 
   constructor(
     players: string[],
@@ -195,7 +212,7 @@ export class GleichHost {
     round = 1,
     now = Date.now(),
     rng: Rand = Math.random,
-    pool: readonly string[] = QUESTIONS_NORMAL,
+    pool: readonly string[] = content().gleich.normal,
     avoid?: ReadonlySet<string>,
   ) {
     this.state = {
@@ -217,7 +234,34 @@ export class GleichHost {
       history: [],
       solvedTry: null,
       scores: Object.fromEntries(players.map((p) => [p, scores[p] ?? 0])),
+      undo: 0,
     };
+  }
+
+  private snap(): Snap {
+    return { state: structuredClone(this.state), revealed: [...this.revealed] };
+  }
+
+  get canUndo(): boolean {
+    return this.history.size > 0;
+  }
+
+  /** Back to before the last judgment, points with it (fines stay), with a fresh timer for the phase it lands in. */
+  undo(now: number): boolean {
+    const r = this.history.pop();
+    if (!r) return false;
+    const s = r.snap.state;
+    s.undo = this.state.undo + 1;
+    s.vote = null;
+    // Everyone pressed "Weiter" to get past it; they decide again.
+    s.ready = [];
+    s.deadline = now + (s.phase === 'write' ? GLEICH.writeS : s.words ? GLEICH.revealS : GLEICH.collectS) * 1000;
+    keepFines(s.scores, r.later);
+    this.state = s;
+    this.revealed = new Map(r.snap.revealed);
+    this.votes.clear();
+    this.beforeVote = null;
+    return true;
   }
 
   /** Continue a round from its public state: the new host after the old one left. Secret votes are gone with the old host. */
@@ -226,6 +270,7 @@ export class GleichHost {
     h.state = structuredClone(state);
     h.state.vote = null;
     h.state.voted = false;
+    h.state.undo ??= 0;
     // The collecting window starts over; the clients' verified words are fed back in by the game.
     if (h.state.phase === 'reveal' && !h.state.words) h.state.deadline = now + GLEICH.collectS * 1000;
     return h;
@@ -241,6 +286,7 @@ export class GleichHost {
     const s = this.state;
     if (i.a === 'end') {
       if (!isHost || s.phase === 'done') return false;
+      this.history.push(this.beforeVote ?? this.snap(), now);
       this.finish(false);
       return true;
     }
@@ -254,6 +300,7 @@ export class GleichHost {
         return true;
       case 'call':
         if (s.phase !== 'reveal' || !s.words || s.solved || s.vote || s.voted) return false;
+        this.beforeVote = this.snap();
         s.vote = { voters: [], deadline: now + GLEICH.voteS * 1000 };
         s.voted = true;
         s.last = null;
@@ -304,6 +351,8 @@ export class GleichHost {
     if (s.phase === 'reveal' && s.words) {
       const v = s.vote;
       if (v ? late(v.deadline) || here.every((p) => v.voters.includes(p)) : late(s.deadline) || (here.length > 0 && here.every((p) => s.ready.includes(p)))) {
+        this.history.push(v ? (this.beforeVote ?? this.snap()) : this.snap(), now);
+        this.beforeVote = null;
         if (v) this.closeVote(now);
         else this.nextTry(now);
         changed = true;
@@ -337,7 +386,10 @@ export class GleichHost {
     s.last = null;
     s.deadline = now + GLEICH.revealS * 1000;
     // Two people at least, or "everyone agrees" would be a one-man victory.
-    if (here.length >= 2 && s.group.length === here.length) this.finish(true);
+    if (here.length >= 2 && s.group.length === here.length) {
+      this.history.push(this.snap(), now);
+      this.finish(true);
+    }
   }
 
   private closeVote(now: number): void {
@@ -389,7 +441,9 @@ export class GleichHost {
 
   /** The Schaffner's fine, only while people are writing (talking = trying to agree). */
   penalize(id: string, points: number): void {
-    if (id in this.state.scores) this.state.scores[id] -= points;
+    if (!(id in this.state.scores)) return;
+    this.state.scores[id] -= points;
+    this.history.fine(id, points);
   }
 
   /** A player came back under a new id (reload): everything that names them follows. */
@@ -403,6 +457,8 @@ export class GleichHost {
         delete rec[oldId];
       }
     };
+    this.history.rename(oldId, newId);
+    if (this.beforeVote) this.beforeVote = renameDeep(this.beforeVote, oldId, newId);
     s.players = s.players.map(r);
     s.group = s.group.map(r);
     s.ready = s.ready.map(r);
@@ -433,6 +489,9 @@ export class GleichHost {
     const s = this.state;
     if (!s.players.includes(id)) return false;
     const not = (p: string) => p !== id;
+    // An undo would bring them back into a round they left: the history ends here.
+    this.history.clear();
+    this.beforeVote = null;
     s.players = s.players.filter(not);
     s.group = s.group.filter(not);
     s.ready = s.ready.filter(not);

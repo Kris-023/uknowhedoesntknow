@@ -186,7 +186,9 @@ export class AhnungGame implements Minigame, GazeTarget {
     if (order.length < AHNUNG.minPlayers) return;
     if (this.host) this.scores = { ...this.host.state.scores };
     const decks = this.room.decks().length ? this.room.decks() : (['normal'] as const);
-    const pool = wordPool(decks, this.room.cards());
+    let pool = wordPool(decks, this.room.cards());
+    // Only "Eigene" on and nobody brought any: the normal deck steps in rather than no round at all.
+    if (!pool.length) pool = wordPool(['normal'], []);
     if (pool.every((c) => this.drawn.has(c.id))) this.drawn.clear();
     const rng = mulberry32((Date.now() ^ (Math.random() * 2 ** 31)) | 0);
     // Uniform, and before the word: the clueless one must not get a word they submitted.
@@ -216,6 +218,16 @@ export class AhnungGame implements Minigame, GazeTarget {
 
   end(): void {
     this.toHost({ a: 'end' });
+  }
+
+  /** Host: there is a decision of this round to take back. */
+  get canUndo(): boolean {
+    return this.isHost && !!this.host?.canUndo;
+  }
+
+  /** Host: take back the last vote or guess outcome ("Zug zurück"). */
+  undo(): void {
+    if (this.isHost && this.host?.undo(Date.now())) this.publish();
   }
 
   /** The Schaffner's fine, only while the clues go round. */
@@ -386,9 +398,11 @@ export class AhnungGame implements Minigame, GazeTarget {
   }
 
   private applyState(s: AhnState): void {
+    s.undo ??= 0;
     this.state = s;
     if (s.phase === 'vote') {
-      this.pick.reset(`${s.round}|vote`);
+      // With the undo count: a vote taken back starts with no pick.
+      this.pick.reset(`${s.round}|vote|${s.undo}`);
       if (s.locked.includes(this.selfId) && !this.pick.locked) this.pick.locked = true;
     }
     this.emit();

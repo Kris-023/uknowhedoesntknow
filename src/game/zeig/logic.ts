@@ -1,5 +1,6 @@
 import { ZEIG } from '../../config';
 import type { Rand } from '../../core/rng';
+import { keepFines, UndoStack } from '../undo';
 
 // Rules of "Zeig drauf" as a pure state machine on the host. Per question everyone looks at the
 // person they choose; the picks stay with the host until the countdown is over (or all locked)
@@ -38,6 +39,8 @@ export interface ZeigState {
   /** The round ended early with too few players. */
   short: boolean;
   scores: Record<string, number>;
+  /** Moves the host took back this round. */
+  undo: number;
 }
 
 export type Intent = { a: 'aim'; id: string | null; lock: boolean } | { a: 'ready' } | { a: 'end' };
@@ -75,6 +78,13 @@ export class ZeigHost {
   present: ReadonlySet<string> | null = null;
   /** Picks of the running question as they came in; secret until the reveal. */
   private aims = new Map<string, string | null>();
+  /**
+   * "Zug zurück". A decision is the reveal of a question (with its points); taking it back goes to
+   * the looking of that question again, picks and locks cleared and a fresh timer, so everyone
+   * points anew. Going on to the next question is no decision of its own: from there an undo goes
+   * back to looking at the previous one.
+   */
+  private history = new UndoStack<ZeigState>();
 
   constructor(players: string[], questions: string[], scores: Record<string, number> = {}, round = 1, now = Date.now()) {
     this.state = {
@@ -89,13 +99,34 @@ export class ZeigHost {
       history: [],
       short: false,
       scores: Object.fromEntries(players.map((p) => [p, scores[p] ?? 0])),
+      undo: 0,
     };
+  }
+
+  get canUndo(): boolean {
+    return this.history.size > 0;
+  }
+
+  /** Back to before the last reveal (or the host's end), points with it; fines stay. */
+  undo(now: number): boolean {
+    const r = this.history.pop();
+    if (!r) return false;
+    const s = r.snap;
+    s.undo = this.state.undo + 1;
+    s.locked = [];
+    s.ready = [];
+    s.deadline = now + (s.phase === 'look' ? ZEIG.lookS : ZEIG.revealS) * 1000;
+    keepFines(s.scores, r.later);
+    this.state = s;
+    this.aims.clear();
+    return true;
   }
 
   /** Continue a round from its public state: the new host after the old one left. The clients send their picks again. */
   static fromState(state: ZeigState, now = Date.now()): ZeigHost {
     const h = new ZeigHost(state.players, state.questions, state.scores, state.round, now);
     h.state = structuredClone(state);
+    h.state.undo ??= 0;
     if (h.state.phase === 'look') {
       // Locks went with the old host's picks; the clients send both again.
       h.state.locked = [];
@@ -118,6 +149,7 @@ export class ZeigHost {
     const s = this.state;
     if (i.a === 'end') {
       if (!isHost || s.phase === 'done') return false;
+      this.history.push(s, now);
       this.finish();
       return true;
     }
@@ -146,6 +178,7 @@ export class ZeigHost {
     const here = this.here();
     const late = now >= (s.deadline ?? Infinity);
     if (s.phase === 'look' && here.length > 0 && (late || here.every((p) => s.locked.includes(p)))) {
+      this.history.push(s, now);
       this.reveal(now);
       return true;
     }
@@ -196,7 +229,9 @@ export class ZeigHost {
 
   /** The Schaffner's fine, any time in a running round. */
   penalize(id: string, points: number): void {
-    if (id in this.state.scores) this.state.scores[id] -= points;
+    if (!(id in this.state.scores)) return;
+    this.state.scores[id] -= points;
+    this.history.fine(id, points);
   }
 
   /** A player came back under a new id (reload): everything that names them follows. */
@@ -209,6 +244,7 @@ export class ZeigHost {
       for (const [k, v] of Object.entries(picks)) out[r(k)] = v === null ? null : r(v);
       return out;
     };
+    this.history.rename(oldId, newId);
     s.players = s.players.map(r);
     s.locked = s.locked.map(r);
     s.ready = s.ready.map(r);
@@ -231,6 +267,8 @@ export class ZeigHost {
     const s = this.state;
     if (!s.players.includes(id)) return false;
     const not = (p: string) => p !== id;
+    // An undo would bring them back into a round they left: the history ends here.
+    this.history.clear();
     s.players = s.players.filter(not);
     s.locked = s.locked.filter(not);
     s.ready = s.ready.filter(not);

@@ -1,6 +1,7 @@
 import { AHNUNG } from '../../config';
 import type { Rand } from '../../core/rng';
 import { cleanWord, matches, normalize } from '../gleich/logic';
+import { keepFines, UndoStack } from '../undo';
 import { tally, type Picks } from '../zeig/logic';
 
 // Rules of "Ahnungslos" as a pure state machine on the host. Everyone gets the same word but one
@@ -51,6 +52,8 @@ export interface AhnState {
   outcome: Outcome | null;
   why: AbortReason | null;
   scores: Record<string, number>;
+  /** Moves the host took back this round. */
+  undo: number;
 }
 
 export interface Secret {
@@ -107,6 +110,12 @@ export class AhnHost {
   /** Null after a host change: the new host never learned it. */
   secret: Secret | null;
   private aims = new Map<string, string | null>();
+  /**
+   * "Zug zurück". A decision is the outcome of the vote and of the guess (and the host's end); an
+   * undo goes back to that vote (picks cleared) or that guess, with a fresh timer. The word and who
+   * is clueless stay the same: it is the same round. Clues are no decision: they were heard.
+   */
+  private history = new UndoStack<AhnState>();
 
   constructor(players: string[], card: { word: string; taboo: readonly string[] }, clueless: string, start: number, scores: Record<string, number> = {}, round = 1, now = Date.now()) {
     this.secret = { word: card.word, taboo: [...card.taboo], clueless };
@@ -127,7 +136,32 @@ export class AhnHost {
       outcome: null,
       why: null,
       scores: Object.fromEntries(players.map((p) => [p, scores[p] ?? 0])),
+      undo: 0,
     };
+  }
+
+  get canUndo(): boolean {
+    return this.history.size > 0 && !!this.secret;
+  }
+
+  /**
+   * Back to before the last vote or guess outcome, points with it; fines stay. Whatever the end
+   * screen told (the word, who was clueless) can't be untold: the state hides it again, the
+   * players remember.
+   */
+  undo(now: number): boolean {
+    if (!this.secret) return false;
+    const r = this.history.pop();
+    if (!r) return false;
+    const s = r.snap;
+    s.undo = this.state.undo + 1;
+    s.locked = [];
+    const time = s.phase === 'clues' ? AHNUNG.clueS : s.phase === 'vote' ? AHNUNG.voteS : AHNUNG.guessS;
+    s.deadline = now + time * 1000;
+    keepFines(s.scores, r.later);
+    this.state = s;
+    this.aims.clear();
+    return true;
   }
 
   /** The clueless player and the start of the turns, both uniform. */
@@ -145,6 +179,7 @@ export class AhnHost {
   static fromState(state: AhnState): AhnHost {
     const h = new AhnHost(state.players, { word: '', taboo: [] }, '', 0, state.scores, state.round);
     h.state = structuredClone(state);
+    h.state.undo ??= 0;
     h.secret = null;
     if (h.state.phase !== 'done') h.finish('aborted', 'host');
     return h;
@@ -165,6 +200,7 @@ export class AhnHost {
     const s = this.state;
     if (i.a === 'end') {
       if (!isHost || s.phase === 'done') return false;
+      this.history.push(s, now);
       this.finish('aborted', 'ended');
       return true;
     }
@@ -191,6 +227,7 @@ export class AhnHost {
         if (s.phase !== 'guess' || from !== this.secret.clueless) return false;
         const g = cleanGuess(i.word);
         if (!g) return false;
+        this.history.push(s, now);
         this.resolve(g);
         return true;
       }
@@ -217,11 +254,13 @@ export class AhnHost {
     if (s.phase === 'vote') {
       const here = this.here();
       if (late || (here.length > 0 && here.every((p) => s.locked.includes(p)))) {
+        this.history.push(s, now);
         this.closeVote(now);
         return true;
       }
     }
     if (s.phase === 'guess' && late) {
+      this.history.push(s, now);
       this.resolve(null);
       return true;
     }
@@ -297,6 +336,7 @@ export class AhnHost {
   penalize(id: string, points: number): boolean {
     if (this.state.phase !== 'clues' || !(id in this.state.scores)) return false;
     this.state.scores[id] -= points;
+    this.history.fine(id, points);
     return true;
   }
 
@@ -305,6 +345,7 @@ export class AhnHost {
     const s = this.state;
     if (!s.players.includes(oldId)) return false;
     const r = (id: string) => (id === oldId ? newId : id);
+    this.history.rename(oldId, newId);
     s.players = s.players.map(r);
     s.seq = s.seq.map(r);
     s.locked = s.locked.map(r);
@@ -332,6 +373,8 @@ export class AhnHost {
     const s = this.state;
     if (!s.players.includes(id)) return false;
     const not = (p: string) => p !== id;
+    // An undo would bring them back into a round they left: the history ends here.
+    this.history.clear();
     s.players = s.players.filter(not);
     s.locked = s.locked.filter(not);
     // Their turns so far stay (the index keeps pointing at the same turn); those still to come are dropped.

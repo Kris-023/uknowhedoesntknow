@@ -1,5 +1,6 @@
 import { COLORS, WHOAMI } from '../../config';
 import { el, releaseMouse } from '../../ui/dom';
+import { stepKey } from '../undo';
 import type { Member } from '../minigame';
 import { cardFromBlob, cardFromUrl } from './cardImage';
 import type { WhoamiGame } from './game';
@@ -40,8 +41,8 @@ export class WhoamiUi {
   private makerFor: string | null = null;
   private lastResultKey = '';
   private bannerUntil = 0;
-  /** Round whose end screen was closed, so the heartbeat doesn't reopen it. */
-  private closedRound = -1;
+  /** Round (and undo count) whose end screen was closed, so the heartbeat doesn't reopen it; an undo out of the end does. */
+  private closedRound = '';
 
   constructor(
     host: HTMLElement,
@@ -94,7 +95,7 @@ export class WhoamiUi {
   /** Close the end-of-round screen (a new game is starting). */
   closeDone(): void {
     const s = this.game.state;
-    if (s) this.closedRound = s.round;
+    if (s) this.closedRound = stepKey(s);
     this.done.hidden = true;
     document.body.classList.remove('wi-dialog');
   }
@@ -137,7 +138,7 @@ export class WhoamiUi {
     // Dialogs need the whole attention: the bottom hint steps aside.
     document.body.classList.toggle('wi-dialog', !this.maker.hidden || !this.done.hidden);
     // Result banner, once per new result, with what follows from it.
-    const key = s.last ? `${s.round}|${s.last.guesser}|${s.last.kind}|${s.questions[s.last.guesser]}|${s.solved.length}|${s.last.result}` : '';
+    const key = s.last ? `${stepKey(s)}|${s.last.guesser}|${s.last.kind}|${s.questions[s.last.guesser]}|${s.solved.length}|${s.last.result}` : '';
     if (s.last && key !== this.lastResultKey) {
       this.lastResultKey = key;
       const l = s.last;
@@ -380,7 +381,7 @@ export class WhoamiUi {
 
   private renderDone(): void {
     const s = this.game.state!;
-    const open = s.phase === 'done' && this.closedRound !== s.round;
+    const open = s.phase === 'done' && this.closedRound !== stepKey(s);
     this.done.hidden = !open;
     if (!open) return;
     releaseMouse();

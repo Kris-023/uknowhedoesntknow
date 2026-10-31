@@ -1,9 +1,10 @@
 import { COLORS } from '../../config';
 import { el, releaseMouse } from '../../ui/dom';
-import { adoptCard, hasWord } from '../../words/custom';
+import { myLists } from '../../words/lists';
 import { DECK_NAMES } from '../../words';
 import type { WordCard } from '../../words/types';
 import type { Member } from '../minigame';
+import { stepKey } from '../undo';
 import { pts } from '../whoami/ui';
 import type { SagsGame } from './game';
 import { guessersOf, teamOf, teamScore, watchersOf, type Played, type SagsState } from './logic';
@@ -37,7 +38,8 @@ export class SagsUi {
   /** Card number → result already echoed. */
   private echoed = new Map<number, string>();
   private lastRound = -1;
-  private closedRound = -1;
+  private lastUndo = 0;
+  private closedRound = '';
   private barKey = '';
 
   constructor(
@@ -104,7 +106,12 @@ export class SagsUi {
     if (s.round !== this.lastRound) {
       this.lastRound = s.round;
       this.echoed.clear();
+    } else if (s.undo !== this.lastUndo) {
+      // The log went back: what is still in it was echoed already (a challenge taken back included).
+      this.echoed.clear();
+      for (const p of s.log) this.echoed.set(p.no, p.result);
     }
+    this.lastUndo = s.undo;
     // One echo per played card, and again when a challenge turns it into a foul.
     let news: Played | null = null;
     for (const p of s.log) {
@@ -243,7 +250,7 @@ export class SagsUi {
 
   private renderDone(): void {
     const s = this.game.state!;
-    const open = s.phase === 'done' && this.closedRound !== s.round;
+    const open = s.phase === 'done' && this.closedRound !== stepKey(s);
     this.done.hidden = !open;
     if (!open) return;
     releaseMouse();
@@ -258,9 +265,9 @@ export class SagsUi {
       li.title = `Verboten: ${p.card.taboo.join(', ')}`;
       // Someone else's submission: keep it for later games.
       if (p.card.deck === 'custom' && p.card.by) {
-        const have = hasWord(p.card.word);
+        const have = myLists.has('words', p.card.word);
         const btn = this.btn(have ? '✓ In deiner Liste' : 'Übernehmen', () => {
-          if (adoptCard(p.card)) {
+          if (myLists.adopt('words', { id: p.card.id, text: p.card.word, taboo: p.card.taboo, by: p.card.by })) {
             btn.textContent = '✓ Übernommen';
             btn.disabled = true;
           }
@@ -280,7 +287,7 @@ export class SagsUi {
 
   close(): void {
     const s = this.game.state;
-    if (s) this.closedRound = s.round;
+    if (s) this.closedRound = stepKey(s);
     this.done.hidden = true;
     document.body.classList.remove('wi-dialog');
   }

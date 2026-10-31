@@ -1,6 +1,7 @@
 import { COLORS, GLEICH } from '../../config';
 import { el, releaseMouse } from '../../ui/dom';
 import type { Member } from '../minigame';
+import { stepKey } from '../undo';
 import { pts } from '../whoami/ui';
 import { wordBoard } from './boardImage';
 import type { GleichGame } from './game';
@@ -44,9 +45,9 @@ export class GleichUi {
   /** Writing again after locking ("Ändern"). */
   private editing = false;
   private tryKey = '';
-  private closedRound = -1;
-  /** Round of the end screen that is waiting for its delay, and when it may open. */
-  private doneRound = -1;
+  private closedRound = '';
+  /** Round (and undo count) of the end screen that is waiting for its delay, and when it may open. */
+  private doneRound = '';
   private doneAt = 0;
   private lastVoteKey = '';
 
@@ -86,7 +87,7 @@ export class GleichUi {
 
   private get donePending(): boolean {
     const s = this.game.state;
-    return !!s && s.phase === 'done' && this.closedRound !== s.round && !!this.done.hidden;
+    return !!s && s.phase === 'done' && this.closedRound !== stepKey(s) && !!this.done.hidden;
   }
 
   /** Only the game played last shows its screens; the others step aside. */
@@ -123,7 +124,7 @@ export class GleichUi {
   tick(): void {
     const s = this.game.state;
     if (!s || !this.visible) return;
-    if (s.phase === 'done' && this.doneRound === s.round && this.done.hidden && this.closedRound !== s.round && performance.now() >= this.doneAt) this.renderDone();
+    if (s.phase === 'done' && this.doneRound === stepKey(s) && this.done.hidden && this.closedRound !== stepKey(s) && performance.now() >= this.doneAt) this.renderDone();
     if (s.phase === 'done') return;
     const text = s.deadline ? `${Math.ceil(this.game.leftS)} s` : '';
     if (this.timer.textContent !== text) this.timer.textContent = text;
@@ -145,8 +146,8 @@ export class GleichUi {
     this.renderBar(s);
     this.renderBoard(s);
     if (s.phase === 'done') {
-      if (this.doneRound !== s.round) {
-        this.doneRound = s.round;
+      if (this.doneRound !== stepKey(s)) {
+        this.doneRound = stepKey(s);
         // A win gets a moment on the boards; a failed round opens the screen at once.
         this.doneAt = performance.now() + (s.solved ? DONE_DELAY_MS : 0);
         if (s.solved) this.info.flash(`Versuch ${s.solvedTry}`, 'Gleich gedacht!', 'good', `+${pts(GLEICH.points[(s.solvedTry ?? 1) - 1] ?? GLEICH.points.at(-1)!)} für alle`);
@@ -162,7 +163,7 @@ export class GleichUi {
   /** The vote's outcome, once. */
   private echoVote(s: GleichState): void {
     if (!s.last) return;
-    const key = `${s.round}|${s.tryNo}|${s.last.yes}|${s.last.no}`;
+    const key = `${stepKey(s)}|${s.tryNo}|${s.last.yes}|${s.last.no}`;
     if (key === this.lastVoteKey) return;
     this.lastVoteKey = key;
     this.info.flash('Abstimmung', 'Zählt nicht', 'bad', `${s.last.yes} Ja, ${s.last.no} Nein. Ihr braucht eine Mehrheit.`);
@@ -200,7 +201,7 @@ export class GleichUi {
       const mine = this.game.myWord;
       // After a reload the commitment is still there but its word isn't: write again.
       const typing = playing && (!mine || this.editing);
-      const key = `${s.round}|${s.tryNo}`;
+      const key = `${stepKey(s)}|${s.tryNo}`;
       if (key !== this.tryKey) {
         this.tryKey = key;
         this.editing = false;
@@ -295,7 +296,7 @@ export class GleichUi {
 
   private renderDone(): void {
     const s = this.game.state!;
-    const open = s.phase === 'done' && this.closedRound !== s.round && performance.now() >= this.doneAt;
+    const open = s.phase === 'done' && this.closedRound !== stepKey(s) && performance.now() >= this.doneAt;
     if (!open) {
       this.done.hidden = true;
       return;
@@ -339,7 +340,7 @@ export class GleichUi {
 
   close(): void {
     const s = this.game.state;
-    if (s) this.closedRound = s.round;
+    if (s) this.closedRound = stepKey(s);
     this.done.hidden = true;
     document.body.classList.remove('wi-dialog');
   }

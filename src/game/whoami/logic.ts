@@ -1,4 +1,5 @@
 import { WHOAMI } from '../../config';
+import { keepFines, renameDeep, UndoStack } from '../undo';
 
 // Rules of "Wer bin ich?" as a pure state machine on the host. Clients send intents, the host
 // applies them and broadcasts the public state. Single votes stay on the host: everyone only
@@ -24,6 +25,8 @@ export interface WhoamiState {
   questions: Record<string, number>;
   solved: string[];
   scores: Record<string, number>;
+  /** Moves the host took back this round; clients reset what they keep per vote when it grows. */
+  undo: number;
 }
 
 export type Intent = { a: 'ready' } | { a: 'ask' } | { a: 'guess' } | { a: 'pass' } | { a: 'vote'; v: Vote } | { a: 'end' };
@@ -53,6 +56,14 @@ export function majority(kind: VoteKind, votes: Vote[]): Result {
 export class WhoamiHost {
   state: WhoamiState;
   private votes = new Map<string, Vote>();
+  /**
+   * "Zug zurück". A decision is the result of a vote (question or guess) and a pass; the snapshot is
+   * the state right before the vote was opened, so the guesser is on turn again and asks or guesses
+   * anew. Single votes need no saving: there are none before a vote opens.
+   */
+  private history = new UndoStack<WhoamiState>();
+  /** The state right before the running vote opened, saved when it resolves. */
+  private beforeVote: WhoamiState | null = null;
 
   constructor(
     players: string[],
@@ -73,7 +84,28 @@ export class WhoamiHost {
       questions: Object.fromEntries(players.map((p) => [p, 0])),
       solved: [],
       scores: Object.fromEntries(players.map((p) => [p, scores[p] ?? 0])),
+      undo: 0,
     };
+  }
+
+  get canUndo(): boolean {
+    return this.history.size > 0;
+  }
+
+  /** Back to the state before the last decision (scores and solved with it, fines stay). */
+  undo(): boolean {
+    const r = this.history.pop();
+    if (!r) return false;
+    const undo = this.state.undo + 1;
+    this.state = r.snap;
+    this.state.undo = undo;
+    // The banner shows the newest result; the one before the undone vote is old news.
+    this.state.last = null;
+    this.state.vote = null;
+    this.votes.clear();
+    this.beforeVote = null;
+    keepFines(this.state.scores, r.later);
+    return true;
   }
 
   /** Apply an intent from `from`. Returns whether the public state changed. */
@@ -89,21 +121,25 @@ export class WhoamiHost {
       case 'ask':
       case 'guess':
         if (s.phase !== 'play' || s.turn !== from || s.vote) return false;
+        this.beforeVote = structuredClone(s);
         s.vote = { kind: i.a === 'ask' ? 'question' : 'guess', guesser: from, voters: [], deadline: now + this.voteS * 1000 };
         this.votes.clear();
         return true;
       case 'pass':
         if (s.phase !== 'play' || s.turn !== from || s.vote) return false;
+        this.history.push(s, now);
         this.nextTurn();
         return true;
       case 'vote':
         if (!s.vote || from === s.vote.guesser || this.votes.has(from)) return false;
         this.votes.set(from, i.v);
         s.vote.voters.push(from);
-        if (s.vote.voters.length >= s.players.length - 1) this.resolve();
+        if (s.vote.voters.length >= s.players.length - 1) this.resolve(false, now);
         return true;
       case 'end':
         if (!isHost) return false;
+        // Ending by mistake can be taken back too; a vote that was running starts over then.
+        if (s.phase === 'play') this.history.push(this.beforeVote ?? s, now);
         s.phase = 'done';
         s.vote = null;
         s.turn = null;
@@ -122,7 +158,7 @@ export class WhoamiHost {
   /** Per tick: a vote closes at its deadline with whatever came in. */
   tick(now: number): boolean {
     if (this.state.vote && now >= this.state.vote.deadline) {
-      this.resolve(true);
+      this.resolve(true, now);
       return true;
     }
     return false;
@@ -136,6 +172,7 @@ export class WhoamiHost {
     const h = new WhoamiHost(state.players, state.scores, state.round, voteS);
     h.state = structuredClone(state);
     h.state.vote = null;
+    h.state.undo ??= 0;
     return h;
   }
 
@@ -159,6 +196,8 @@ export class WhoamiHost {
       }
     }
     if (s.last) s.last.guesser = r(s.last.guesser);
+    this.history.rename(oldId, newId);
+    if (this.beforeVote) this.beforeVote = renameDeep(this.beforeVote, oldId, newId);
     for (const rec of [s.scores, s.questions]) {
       if (oldId in rec) {
         rec[newId] = rec[oldId];
@@ -170,13 +209,18 @@ export class WhoamiHost {
 
   /** The Schaffner's fine. */
   penalize(id: string, points: number): void {
-    if (id in this.state.scores) this.state.scores[id] -= points;
+    if (!(id in this.state.scores)) return;
+    this.state.scores[id] -= points;
+    this.history.fine(id, points);
   }
 
   /** Someone left: drop them; in the card phase the circle is drawn anew without them. */
   removePlayer(id: string, now: number): boolean {
     const s = this.state;
     if (!s.players.includes(id)) return false;
+    // An undo would bring them back into a round they left: the history ends here.
+    this.history.clear();
+    this.beforeVote = null;
     s.players = s.players.filter((p) => p !== id);
     s.solved = s.solved.filter((p) => p !== id);
     if (s.players.length < 2) {
@@ -196,14 +240,14 @@ export class WhoamiHost {
       if (s.vote) {
         s.vote.voters = s.vote.voters.filter((v) => v !== id);
         this.votes.delete(id);
-        if (s.vote.voters.length >= s.players.length - 1) this.resolve();
+        if (s.vote.voters.length >= s.players.length - 1) this.resolve(false, now);
+        this.history.clear();
       }
       if (s.turn === id) {
         s.turn = this.nextUnsolved(s.players.indexOf(id) - 1);
         if (!s.turn) s.phase = 'done';
       }
     }
-    void now;
     return true;
   }
 
@@ -213,10 +257,12 @@ export class WhoamiHost {
     s.turn = s.players[0];
   }
 
-  private resolve(timedOut = false): void {
+  private resolve(timedOut = false, now = Date.now()): void {
     const s = this.state;
     const v = s.vote;
     if (!v) return;
+    this.history.push(this.beforeVote ?? { ...s, vote: null }, now);
+    this.beforeVote = null;
     const result = majority(v.kind, [...this.votes.values()]);
     s.vote = null;
     s.last = { kind: v.kind, guesser: v.guesser, result, timedOut, votes: this.votes.size };

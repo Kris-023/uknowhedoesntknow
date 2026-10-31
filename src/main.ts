@@ -21,6 +21,7 @@ import { GpuTimer, HeapWatch } from './debug/gpuTimer';
 import { MainMenu, PauseMenu, type LobbyChoice } from './ui/menu';
 import { MicHud } from './ui/micHud';
 import { NameTags } from './ui/nametags';
+import { UndoButton } from './ui/undoButton';
 import { LocalGameRoom, sessionNet, type GameNet, type GameUi, type Minigame, type PlayableGame } from './game/minigame';
 import { LoudTracker, SchaffnerFigure } from './game/schaffner';
 import { WhoamiBots } from './game/whoami/bots';
@@ -40,8 +41,15 @@ import { ZeigUi } from './game/zeig/ui';
 import { AhnungBots } from './game/ahnungslos/bots';
 import { AhnungGame } from './game/ahnungslos/game';
 import { AhnungUi } from './game/ahnungslos/ui';
+import { SlfBots } from './game/slf/bots';
+import { SlfGame } from './game/slf/game';
+import { SlfUi } from './game/slf/ui';
 import { Gaze, type GazeTarget } from './game/gaze';
-import { customCards, playerId } from './words/custom';
+import { playerId } from './words/custom';
+import { myLists } from './words/lists';
+import { RoomLists } from './game/roomLists';
+import { RoomKey } from './game/roomKey';
+import { deckLock } from './words/content';
 import { initUiScale } from './ui/scale';
 import { loadProfile, onSettings, saveProfile, settings, updateSettings } from './ui/store';
 import './style.css';
@@ -303,8 +311,6 @@ function launch(clock: SharedClock, session: Session | null, startCam: 'wagon' |
   let solo: { room: LocalGameRoom; ids: string[] } | null = null;
   // Solo: your own settings for the next room stand in for the host's.
   const roomOpts = () => session?.opts ?? settings.room;
-  const sagsRoom = { decks: () => roomOpts().decks, turnS: () => roomOpts().turnS, teams: () => roomOpts().sagsTeams };
-  const deckRoom = { decks: () => roomOpts().decks };
   if (session) gameNet = sessionNet(session);
   else {
     const members = players.people.map((p, i) => ({ id: i === players.active ? 'me' : `bot${i}`, seat: i, name: i === players.active ? profile.name : p.name }));
@@ -314,6 +320,16 @@ function launch(clock: SharedClock, session: Session | null, startCam: 'wagon' |
     gameNet = room.net('me');
     solo = { room, ids: members.slice(1).map((m) => m.id) };
   }
+  // Everyone's own lists ("Eigene Listen"), for every game that has a kind of them.
+  const roomLists = new RoomLists(gameNet, () => myLists.shareable(), () => roomOpts().decks.includes('custom'), () => myLists.version);
+  // The key of the built-in decks goes to everyone in the room who hasn't got it (game/roomKey.ts).
+  const roomKey = new RoomKey(gameNet, deckLock);
+  const roomCards = () => roomLists.cards();
+  const pidOf = (id: string) => roomLists.pidOf(id);
+  const sagsRoom = { decks: () => roomOpts().decks, turnS: () => roomOpts().turnS, teams: () => roomOpts().sagsTeams, cards: roomCards, pidOf };
+  const gleichRoom = { decks: () => roomOpts().decks, custom: () => roomLists.texts('fragen') };
+  const zeigRoom = { decks: () => roomOpts().decks, custom: () => roomLists.texts('zeig') };
+  const slfRoom = { decks: () => roomOpts().decks, mode: () => roomOpts().slfMode, custom: () => roomLists.texts('kategorien') };
   /** Bots for the solo round; none in a real room. */
   const botsFor = <T,>(make: (room: LocalGameRoom, ids: string[]) => T): T | null => (solo ? make(solo.room, solo.ids) : null);
   const members = () => gameNet.members();
@@ -321,12 +337,12 @@ function launch(clock: SharedClock, session: Session | null, startCam: 'wagon' |
   const devVoteS = import.meta.env.DEV ? Number(params.get('voteS')) || undefined : undefined;
   const whoami = new WhoamiGame(gameNet, devVoteS);
   whoami.roomVoteS = () => session?.opts.voteS;
-  const sags = new SagsGame(gameNet, sagsRoom, () => ({ pid: playerId(), cards: customCards() }));
-  const gleich = new GleichGame(gameNet, deckRoom);
-  const zeig = new ZeigGame(gameNet, deckRoom);
-  // Own words come through "Sag's anders", which shares everyone's submissions in the room anyway.
-  const ahnRoom = { decks: () => roomOpts().decks, cards: () => sags.roomCards(), pidOf: (id: string) => sags.pidOf(id) };
+  const sags = new SagsGame(gameNet, sagsRoom);
+  const gleich = new GleichGame(gameNet, gleichRoom);
+  const zeig = new ZeigGame(gameNet, zeigRoom);
+  const ahnRoom = { decks: () => roomOpts().decks, cards: roomCards, pidOf };
   const ahnung = new AhnungGame(gameNet, ahnRoom);
+  const slf = new SlfGame(gameNet, slfRoom);
   const hostName = () => gameNet.members().find((m) => m.id === gameNet.hostId())?.name || 'der Host';
   const micWarning = () => {
     if (!voice || !voice.roomVoice) return null;
@@ -339,6 +355,7 @@ function launch(clock: SharedClock, session: Session | null, startCam: 'wagon' |
   const ggUi = new GleichUi(document.body, gleich, members, uiInfo('gleich'));
   const zdUi = new ZeigUi(document.body, zeig, members, uiInfo('zeig'));
   const ahUi = new AhnungUi(document.body, ahnung, members, uiInfo('ahnungslos'));
+  const slfUi = new SlfUi(document.body, slf, members, uiInfo('slf'));
   const games: GameEntry[] = [
     {
       id: 'whoami',
@@ -356,9 +373,10 @@ function launch(clock: SharedClock, session: Session | null, startCam: 'wagon' |
       },
     },
     { id: 'sags', game: sags, ui: new SagsUi(document.body, sags, members, uiInfo('sags')), bots: botsFor((r, ids) => new SagsBots(r, ids, sagsRoom)), closeOn: ['done'], fineable: () => sags.running },
-    { id: 'gleich', game: gleich, ui: ggUi, bots: botsFor((r, ids) => new GleichBots(r, ids, deckRoom)), closeOn: ['done'], fineable: () => gleich.writing, board: (id) => ggUi.boardOf(id) },
-    { id: 'zeig', game: zeig, ui: zdUi, bots: botsFor((r, ids) => new ZeigBots(r, ids, deckRoom)), closeOn: ['done'], fineable: () => zeig.running, board: (id) => zdUi.boardOf(id), gaze: zeig },
+    { id: 'gleich', game: gleich, ui: ggUi, bots: botsFor((r, ids) => new GleichBots(r, ids, gleichRoom)), closeOn: ['done'], fineable: () => gleich.writing, board: (id) => ggUi.boardOf(id) },
+    { id: 'zeig', game: zeig, ui: zdUi, bots: botsFor((r, ids) => new ZeigBots(r, ids, zeigRoom)), closeOn: ['done'], fineable: () => zeig.running, board: (id) => zdUi.boardOf(id), gaze: zeig },
     { id: 'ahnungslos', game: ahnung, ui: ahUi, bots: botsFor((r, ids) => new AhnungBots(r, ids, ahnRoom)), closeOn: ['done'], fineable: () => ahnung.cluing, board: (id) => ahUi.boardOf(id), gaze: ahnung },
+    { id: 'slf', game: slf, ui: slfUi, bots: botsFor((r, ids) => new SlfBots(r, ids, slfRoom)), closeOn: ['write', 'done'], fineable: () => slf.writing, board: (id) => slfUi.boardOf(id) },
   ];
   const entry = (id: GameId | null) => games.find((g) => g.id === id) ?? null;
   const runningGame = () => games.find((g) => g.game.running) ?? null;
@@ -382,6 +400,26 @@ function launch(clock: SharedClock, session: Session | null, startCam: 'wagon' |
     idle: () => !runningGame() && !games.some((g) => g.ui.doneOpen),
     solo: !session,
     start: startGame,
+    // The host picks how "Stadt, Land, Fluss" is played right before starting (also in the room settings).
+    option: (id) =>
+      id === 'slf'
+        ? {
+            label: 'Modus',
+            choices: [['Schreiben', 'text'], ['Bilder', 'bild']] as const,
+            value: roomOpts().slfMode,
+            set: (v) => {
+              const slfMode = v === 'bild' ? 'bild' : 'text';
+              if (session) session.setOpts({ ...session.opts, slfMode });
+              else updateSettings({ room: { ...settings.room, slfMode } });
+            },
+          }
+        : null,
+    deckNote: (id) => {
+      if (id === 'whoami') return null;
+      if (deckLock.unlocked) return 'Stapel: freigeschaltet';
+      const nsfw = roomOpts().decks.includes('nsfw') ? ', NSFW gesperrt' : '';
+      return `Stapel: gesperrt (Ersatzstapel${nsfw}) · Passwort: Esc → Eigene Listen`;
+    },
   });
   if (session) absentBar(session, games.map((g) => g.game));
   // The game last started owns the scoreboard; the others' screens step aside.
@@ -392,14 +430,30 @@ function launch(clock: SharedClock, session: Session | null, startCam: 'wagon' |
     for (const g of games) g.ui.shown = g.id === id;
   };
   const cards = new CardsView(document.body, players, world.camera, stage);
+  // "Zug zurück": the host takes back a wrong decision of the game shown last, also right after its
+  // round ended (the last decision may have been the wrong one).
+  const undoTarget = () => {
+    const g = entry(current)?.game;
+    if (!g?.state) return null;
+    return { offered: gameNet.isHost() && (g.running || g.canUndo), canUndo: g.canUndo, undo: () => g.undo() };
+  };
+  const undoBtn = new UndoButton(document.body, undoTarget, () => pause.onResume());
   // Phase changes that need the screen (a card to make, the end of a round) close the Esc menu.
   for (const g of games) {
     let lastPhase = '';
+    let lastStep = { round: -1, undo: 0 };
     g.game.onChange(() => {
-      const phase = g.game.state?.phase ?? '';
+      const st = g.game.state;
+      const phase = st?.phase ?? '';
       if (g.game.running) own(g.id);
       if (phase !== lastPhase && g.closeOn.includes(phase) && pause.isOpen) pause.close();
       lastPhase = phase;
+      // Everyone hears about an undo, or a result on screen would just vanish without a word.
+      if (st && st.round === lastStep.round && (st.undo ?? 0) > lastStep.undo) {
+        wiUi.flash(gameNet.isHost() ? 'Du hast den letzten Zug zurückgenommen' : 'Der Host hat den letzten Zug zurückgenommen', 'Zug zurück', 'plain');
+      }
+      if (st) lastStep = { round: st.round, undo: st.undo ?? 0 };
+      undoBtn.sync();
       syncHint();
     });
   }
@@ -440,6 +494,18 @@ function launch(clock: SharedClock, session: Session | null, startCam: 'wagon' |
           if (running) running.game.end();
           else startGame(g.id);
           pause.onResume();
+        });
+        row.append(b);
+      }
+      const undo = undoTarget();
+      if (undo?.offered) {
+        const b = el('button', 'btn', 'Zug zurück');
+        b.type = 'button';
+        b.disabled = !undo.canUndo;
+        b.title = 'Den letzten Zug dieser Runde zurücknehmen';
+        b.addEventListener('click', () => {
+          pause.close();
+          undoBtn.open(true);
         });
         row.append(b);
       }
@@ -598,9 +664,12 @@ function launch(clock: SharedClock, session: Session | null, startCam: 'wagon' |
     measureVoices();
     world.update(t, dt, settings);
     aimGaze();
+    roomLists.tick();
+    roomKey.tick();
     for (const g of games) g.game.tick(now);
     for (const g of games) g.bots?.tick(now);
     for (const g of games) g.ui.tick();
+    undoBtn.sync();
     lobby.update();
     players.showMarkers = !runningGame();
     cards.update(cardOf, (seat) => players.people[seat].name, world.cam === 'pov');
@@ -702,7 +771,7 @@ function launch(clock: SharedClock, session: Session | null, startCam: 'wagon' |
 
   if (import.meta.env.DEV) {
     // Hook for Playwright checks; not shipped in the production bundle. Getters: the world changes with the map.
-    const hook = { panel, pipeline, clock, session, pause, voice, whoami, sags, gleich, zeig, ahnung, games, gaze, callSchaffner, swapMap, tags, cards };
+    const hook = { panel, pipeline, clock, session, pause, voice, whoami, sags, gleich, zeig, ahnung, slf, roomLists, roomKey, deckLock, games, gaze, callSchaffner, swapMap, tags, cards };
     Object.defineProperties(hook, {
       world: { get: () => world, enumerable: true },
       ambience: { get: () => ambience, enumerable: true },

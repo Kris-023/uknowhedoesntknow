@@ -354,6 +354,17 @@ export const SCHAFFNER = {
   showS: 7,
 } as const;
 
+/** "Zug zurück": the host takes back a wrong collective decision (see src/game/undo.ts). */
+export const UNDO = {
+  /** Decisions kept per round; enough to fix a mistake noticed a little late, not to replay a round. */
+  depth: 5,
+  /**
+   * A "Sag's anders" turn taken back resumes with the time it had left when the card was decided,
+   * but at least this much, so a card decided in the last second isn't over again at once.
+   */
+  resumeMinS: 10,
+} as const;
+
 /** Rolling random looks and the procedural hair/beard materials. */
 export const LOOKS = {
   /** Share of random looks with a joke face (gestreckt, länglich, Dorito). */
@@ -374,6 +385,22 @@ export const WORDS = {
   maxCustom: 500,
   /** Cards one player brings into a room. */
   maxShared: 300,
+} as const;
+
+/**
+ * Own lists ("Eigene Listen"): named lists per kind in the browser; enabled ones travel to the room
+ * when the deck "Eigene" is on. Limits keep both the storage and what a peer may send small.
+ */
+export const LISTS = {
+  /** All kinds together. */
+  maxLists: 40,
+  maxNameChars: 32,
+  /** Entries in one list (the old single word list allowed WORDS.maxCustom). */
+  maxItems: WORDS.maxCustom,
+  /** Longest entry per kind in characters. Word cards keep WORDS.maxChars; a category has to fit a board. */
+  maxChars: { words: WORDS.maxChars, zeig: 100, fragen: 80, kategorien: 24 },
+  /** What one player brings into a room per kind, all enabled lists together. */
+  maxShared: { words: WORDS.maxShared, zeig: 150, fragen: 150, kategorien: 60 },
 } as const;
 
 /** "Sag's anders": explain a word without its forbidden words. */
@@ -474,6 +501,46 @@ export const AHNUNG = {
   absentLeaveS: 30 * 60,
   /** A client without its word asks the host again this often. */
   askAgainMs: 2000,
+} as const;
+
+/** "Stadt, Land, Fluss": one letter, a few categories; written, or found as pictures. */
+export const SLF = {
+  /** Letters the host draws from: Q, X and Y leave too many categories empty. */
+  letters: 'ABCDEFGHIJKLMNOPRSTUVWZ',
+  /**
+   * Classics that stay in every text round (the game's name). The category lists themselves are
+   * content (src/words/content.ts): sealed in the vault, the classic set in the public fallback.
+   */
+  fixed: ['Stadt', 'Land', 'Fluss'],
+  /** Categories per round by mode. */
+  count: { text: 6, bild: 3 },
+  /** Seconds to write all categories; a "Stopp!" leaves the others `stopS` more. */
+  writeS: 180,
+  stopS: 10,
+  /** Picture rounds: one timer for all categories, so everyone hunts in their own order; a stop leaves more time (searching takes longer than typing). */
+  imageS: 90,
+  imageStopS: 20,
+  /** Host waits this long for the commitments of players who hadn't stopped, then this long for the reveals (pictures are bigger). */
+  lockS: 3,
+  collectS: 5,
+  collectImageS: 12,
+  /** A flag ("ungültig", "gleich wie") is a quick vote of the others. */
+  voteS: 15,
+  /** A category's answers stay this long unless everyone pressed "Weiter"; a vote extends it by afterVoteS. */
+  rateS: 45,
+  afterVoteS: 6,
+  /** Picture rounds: time to judge the pictures of one category, then to look at the result. */
+  imageVoteS: 30,
+  showS: 15,
+  /** Classic points: unique valid answer, same answer as someone else, the only valid answer of the category. */
+  points: { unique: 10, same: 5, only: 20 },
+  /** Picture rounds: each picture that counts, plus a bonus for the best one (ties: all of them). */
+  imagePoints: 10,
+  bestBonus: 5,
+  /** Longest answer and caption in code points. */
+  maxAnswerLen: 32,
+  maxCaptionLen: 24,
+  absentLeaveS: 30 * 60,
 } as const;
 
 /** Room settings dialog: the choices on offer. */

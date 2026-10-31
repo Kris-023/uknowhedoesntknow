@@ -1,7 +1,7 @@
 import { AHNUNG, ZEIG } from '../config';
 import { el } from '../ui/dom';
 
-export type GameId = 'whoami' | 'sags' | 'gleich' | 'zeig' | 'ahnungslos';
+export type GameId = 'whoami' | 'sags' | 'gleich' | 'zeig' | 'ahnungslos' | 'slf';
 
 export interface GameInfo {
   id: GameId;
@@ -17,7 +17,16 @@ export const GAMES: readonly GameInfo[] = [
   { id: 'gleich', title: 'Gleich gedacht', blurb: 'Alle schreiben ein Wort, bis alle dasselbe denken. Ohne Absprache.', min: 2 },
   { id: 'zeig', title: 'Zeig drauf', blurb: 'Wer würde am ehesten …? Alle zeigen gleichzeitig, mit dem Blick.', min: ZEIG.minPlayers },
   { id: 'ahnungslos', title: 'Ahnungslos', blurb: 'Alle kennen das Wort, nur einer nicht. Reihum ein Wort dazu, dann: Wer ist ahnungslos?', min: AHNUNG.minPlayers },
+  { id: 'slf', title: 'Stadt, Land, Fluss', blurb: 'Ein Buchstabe, sechs Kategorien. Oder: Bilder suchen statt schreiben.', min: 2 },
 ];
+
+/** A game's own switch in the lobby bar (the host picks a mode right before starting). */
+export interface LobbyOption {
+  label: string;
+  choices: readonly (readonly [text: string, value: string])[];
+  value: string;
+  set(value: string): void;
+}
 
 /** "zwei", "drei" … for "Mindestens drei Spieler." */
 export const countWord = (n: number) => ['null', 'ein', 'zwei', 'drei', 'vier'][n] ?? String(n);
@@ -31,6 +40,10 @@ export interface LobbyRoom {
   /** Solo benchmark: rounds are against bots. */
   solo: boolean;
   start(id: GameId): void;
+  /** Host only: a mode switch for the selected game, if it has one. */
+  option?(id: GameId): LobbyOption | null;
+  /** State of the built-in decks, for games that draw from them (null: the game doesn't). */
+  deckNote?(id: GameId): string | null;
 }
 
 /** Keys: G starts the chosen game, T switches it (the host keeps the mouse look). */
@@ -77,7 +90,9 @@ export class GameLobby {
   update(): void {
     const r = this.room;
     const idle = r.idle();
-    const key = `${idle}|${r.players()}|${r.isHost()}|${r.hostName()}|${this.selected}`;
+    const opt = r.isHost() ? (r.option?.(this.selected) ?? null) : null;
+    const deck = r.deckNote?.(this.selected) ?? null;
+    const key = `${idle}|${r.players()}|${r.isHost()}|${r.hostName()}|${this.selected}|${opt?.value ?? ''}|${deck}`;
     if (key === this.key) return;
     this.key = key;
     this.root.hidden = !idle;
@@ -86,6 +101,7 @@ export class GameLobby {
     l.replaceChildren();
     if (!r.isHost()) {
       l.append(el('strong', '', 'Minigame'), el('span', '', `Warte, bis ${r.hostName()} ein Spiel startet …`));
+      if (deck) l.append(el('span', 'note deck-note', deck));
       return;
     }
     const seg = el('div', 'seg');
@@ -99,6 +115,19 @@ export class GameLobby {
       seg.append(b);
     }
     l.append(seg);
+    if (opt) {
+      const mode = el('div', 'seg');
+      mode.setAttribute('role', 'group');
+      mode.setAttribute('aria-label', opt.label);
+      for (const [text, v] of opt.choices) {
+        const b = el('button', '', text);
+        b.type = 'button';
+        b.setAttribute('aria-pressed', String(v === opt.value));
+        b.addEventListener('click', () => opt.set(v));
+        mode.append(b);
+      }
+      l.append(mode);
+    }
     const game = this.game;
     const row = el('div', 'wi-actions');
     if (this.canStart) {
@@ -110,5 +139,6 @@ export class GameLobby {
     } else if (r.players() >= 2) row.append(el('span', '', `${game.title}: mindestens ${countWord(game.min)} Spieler.`), el('span', 'note', 'T wechselt das Spiel · Link teilen: Esc → Link kopieren'));
     else row.append(el('span', '', 'Warte auf Mitspieler …'), el('span', 'note', 'Link teilen: Esc → Link kopieren'));
     l.append(row);
+    if (deck) l.append(el('span', 'note deck-note', deck));
   }
 }

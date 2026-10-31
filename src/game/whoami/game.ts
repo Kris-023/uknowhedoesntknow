@@ -105,6 +105,16 @@ export class WhoamiGame implements Minigame {
     this.toHost({ a: 'end' });
   }
 
+  /** Host: there is a decision of this round to take back. */
+  get canUndo(): boolean {
+    return this.isHost && !!this.host?.canUndo;
+  }
+
+  /** Host: take back the last decision ("Zug zurück"). */
+  undo(): void {
+    if (this.isHost && this.host?.undo()) this.publish();
+  }
+
   /** The Schaffner's fine, only while a round is being played. */
   penalize(id: string, points: number): boolean {
     if (!this.host || this.host.state.phase !== 'play') return false;
@@ -286,10 +296,17 @@ export class WhoamiGame implements Minigame {
   }
 
   private applyState(s: WhoamiState): void {
+    s.undo ??= 0;
     if (!this.state || s.round !== this.state.round) {
       this.cards.clear();
       this.myCard = null;
       this.revealed.clear();
+    } else if (s.undo !== this.state.undo) {
+      // A solve was taken back. What was seen stays seen, but the own card goes back to "?" and
+      // its author sends it again when it's solved for real.
+      const open = (id: string) => s.phase !== 'done' && !s.solved.includes(id);
+      if (open(this.selfId)) this.cards.delete(this.selfId);
+      for (const t of [...this.revealed]) if (open(t)) this.revealed.delete(t);
     }
     this.state = s;
     // Reveal: the card I made goes to its target once they solved it, or when the round is over.

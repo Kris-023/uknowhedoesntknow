@@ -3,6 +3,7 @@ import { el, releaseMouse } from '../../ui/dom';
 import { wordBoard } from '../gleich/boardImage';
 import type { GleichUiInfo } from '../gleich/ui';
 import type { GameUi, Member } from '../minigame';
+import { stepKey } from '../undo';
 import { pts } from '../whoami/ui';
 import { tally } from '../zeig/logic';
 import type { AhnungGame, ClueProblem } from './game';
@@ -44,7 +45,7 @@ export class AhnungUi implements GameUi {
   private list = el('div', 'gg-body');
   private actions = el('div', 'wi-actions');
   private visible = true;
-  private closedRound = -1;
+  private closedRound = '';
   /** What the input is for right now ("round|phase|turn"), so it is cleared and focused once. */
   private formKey = '';
   private flashed = '';
@@ -81,7 +82,7 @@ export class AhnungUi implements GameUi {
 
   get doneOpen(): boolean {
     const s = this.game.state;
-    return !this.done.hidden || (!!s && s.phase === 'done' && this.closedRound !== s.round && this.visible);
+    return !this.done.hidden || (!!s && s.phase === 'done' && this.closedRound !== stepKey(s) && this.visible);
   }
 
   set shown(on: boolean) {
@@ -148,7 +149,7 @@ export class AhnungUi implements GameUi {
   /** Once per vote result: who was accused and what that means. */
   private echo(s: AhnState): void {
     if (!s.votes) return;
-    const key = `${s.round}|${s.phase}`;
+    const key = `${stepKey(s)}|${s.phase}`;
     if (key === this.flashed || (s.phase !== 'guess' && s.phase !== 'done')) return;
     this.flashed = key;
     if (s.phase === 'guess') this.info.flash('Erwischt', this.name(s.clueless), 'good', s.clueless === this.game.selfId ? 'Rate jetzt das Wort!' : 'Kann es das Wort noch erraten?');
@@ -231,7 +232,7 @@ export class AhnungUi implements GameUi {
 
   /** The input: once per turn/guess cleared, the mouse freed and the cursor in it. */
   private syncForm(s: AhnState, mode: 'clue' | 'guess' | null): void {
-    const key = mode ? `${s.round}|${s.phase}|${s.turn}` : '';
+    const key = mode ? `${stepKey(s)}|${s.phase}|${s.turn}` : '';
     this.form.hidden = !mode;
     if (!mode) this.problem.hidden = true;
     if (key === this.formKey) return;
@@ -314,7 +315,7 @@ export class AhnungUi implements GameUi {
   }
 
   private renderDone(s: AhnState): void {
-    const open = s.phase === 'done' && this.closedRound !== s.round;
+    const open = s.phase === 'done' && this.closedRound !== stepKey(s);
     if (!open) {
       this.done.hidden = true;
       return;
@@ -371,7 +372,7 @@ export class AhnungUi implements GameUi {
 
   close(): void {
     const s = this.game.state;
-    if (s) this.closedRound = s.round;
+    if (s) this.closedRound = stepKey(s);
     this.done.hidden = true;
     document.body.classList.remove('wi-dialog');
   }

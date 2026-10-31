@@ -36,7 +36,7 @@ export interface Minigame {
 
 /** What the coach needs of a game besides the Minigame calls: its state, a change signal and the host's levers. */
 export interface PlayableGame extends Minigame {
-  readonly state: { readonly phase: string } | null;
+  readonly state: { readonly phase: string; readonly round: number; readonly undo?: number } | null;
   /** A round is on (not over). */
   readonly running: boolean;
   onChange(f: () => void): () => void;
@@ -44,6 +44,10 @@ export interface PlayableGame extends Minigame {
   rejoin(oldId: string, newId: string): void;
   /** Host: the Schaffner's fine; false if this game doesn't take it right now. */
   penalize(id: string, points: number): boolean;
+  /** Host: a decision of this round can be taken back ("Zug zurück", see undo.ts). */
+  readonly canUndo: boolean;
+  /** Host: take back the last decision; everyone gets the restored state. */
+  undo(): void;
 }
 
 /** Screens of a game as the coach drives them: one game's screens are shown at a time. */

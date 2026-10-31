@@ -1,6 +1,7 @@
-import { SAGS } from '../../config';
+import { SAGS, UNDO } from '../../config';
 import { parseCard } from '../../words/custom';
 import type { WordCard } from '../../words/types';
+import { keepFines, UndoStack } from '../undo';
 
 // Rules of "Sag's anders" as a pure state machine on the host. The explainer draws their cards
 // locally and shows them only to the people allowed to see them; the host never needs the word
@@ -44,6 +45,8 @@ export interface SagsState {
   cardNo: number;
   log: Played[];
   scores: Record<string, number>;
+  /** Moves the host took back this round. */
+  undo: number;
 }
 
 export type Intent =
@@ -100,6 +103,11 @@ export function teamScore(s: SagsState, t: 0 | 1): number {
 
 export class SagsHost {
   state: SagsState;
+  /**
+   * "Zug zurück". A decision is a card's result (got, skip, foul, a challenge) and the end of a
+   * turn (time up, or passed for an absent explainer); the snapshot is the state right before it.
+   */
+  private history = new UndoStack<SagsState>();
 
   constructor(
     players: string[],
@@ -123,13 +131,38 @@ export class SagsHost {
       cardNo: 1,
       log: [],
       scores: Object.fromEntries(players.map((p) => [p, scores[p] ?? 0])),
+      undo: 0,
     };
   }
 
   static fromState(state: SagsState): SagsHost {
     const h = new SagsHost(state.players, state.scores, state.round, state.turnS);
     h.state = structuredClone(state);
+    h.state.undo ??= 0;
     return h;
+  }
+
+  get canUndo(): boolean {
+    return this.history.size > 0;
+  }
+
+  /**
+   * Back to the state before the last decision. The card that was decided is public by now (it is
+   * in the log), so the explainer draws a new one: the card number moves on instead of back, which
+   * also keeps late clicks on the old card from hitting the new one. A turn taken back resumes with
+   * the time it had left then (at least UNDO.resumeMinS).
+   */
+  undo(now: number): boolean {
+    const r = this.history.pop();
+    if (!r) return false;
+    const cur = this.state;
+    const s = r.snap;
+    s.undo = cur.undo + 1;
+    s.cardNo = Math.max(cur.cardNo, s.cardNo) + 1;
+    if (s.phase === 'turn') s.deadline = now + Math.max((s.deadline ?? r.at) - r.at, UNDO.resumeMinS * 1000);
+    keepFines(s.scores, r.later);
+    this.state = s;
+    return true;
   }
 
   /** Apply an intent from `from`. Returns whether the public state changed. */
@@ -137,6 +170,7 @@ export class SagsHost {
     const s = this.state;
     if (i.a === 'end') {
       if (!isHost || s.phase === 'done') return false;
+      this.history.push(s, now);
       this.finish();
       return true;
     }
@@ -152,6 +186,7 @@ export class SagsHost {
         if (s.phase !== 'turn' || s.explainer !== from || i.no !== s.cardNo) return false;
         const guesser = s.mode === 'ffa' ? i.by : null;
         if (s.mode === 'ffa' && (!guesser || guesser === from || !s.players.includes(guesser))) return false;
+        this.history.push(s, now);
         this.play(i.no, i.card, 'got', guesser, null, now);
         if (s.mode === 'teams') this.add(from, SAGS.teamGot);
         else {
@@ -162,11 +197,13 @@ export class SagsHost {
       }
       case 'skip':
         if (s.phase !== 'turn' || s.explainer !== from || i.no !== s.cardNo) return false;
+        this.history.push(s, now);
         this.play(i.no, i.card, 'skip', null, null, now);
         return true;
       case 'foul':
         // Live foul: only the other team sees the card while it's being explained.
         if (s.phase !== 'turn' || i.no !== s.cardNo || !s.explainer || !watchersOf(s, s.explainer).includes(from)) return false;
+        this.history.push(s, now);
         this.play(i.no, i.card, 'foul', null, from, now);
         this.add(from, SAGS.teamFoul);
         return true;
@@ -174,6 +211,7 @@ export class SagsHost {
         // Free for all: once a card is shown to everyone, anyone but its explainer may still object.
         const p = s.log.find((x) => x.no === i.no);
         if (s.mode !== 'ffa' || !p || p.result === 'foul' || p.explainer === from || now - p.at > SAGS.challengeS * 1000) return false;
+        this.history.push(s, now);
         if (p.result === 'got' && p.guesser) {
           this.add(p.guesser, -SAGS.ffaGuesser);
           this.add(p.explainer, -SAGS.ffaExplainer);
@@ -191,6 +229,7 @@ export class SagsHost {
   tick(now: number): boolean {
     const s = this.state;
     if (s.phase === 'turn' && s.deadline !== null && now >= s.deadline) {
+      this.history.push(s, now);
       this.nextTurn();
       return true;
     }
@@ -198,15 +237,18 @@ export class SagsHost {
   }
 
   /** Ends the current turn early (explainer gone); in the ready phase it passes to the next one. */
-  pass(): boolean {
+  pass(now = Date.now()): boolean {
     if (this.state.phase === 'done') return false;
+    this.history.push(this.state, now);
     this.nextTurn();
     return true;
   }
 
   /** The Schaffner's fine. */
   penalize(id: string, points: number): void {
-    if (id in this.state.scores) this.state.scores[id] -= points;
+    if (!(id in this.state.scores)) return;
+    this.state.scores[id] -= points;
+    this.history.fine(id, points);
   }
 
   /** A player came back under a new id (reload): everything that names them follows. */
@@ -217,6 +259,7 @@ export class SagsHost {
     s.players = s.players.map(r);
     if (s.teams) s.teams = [s.teams[0].map(r), s.teams[1].map(r)];
     s.explainer = s.explainer && r(s.explainer);
+    this.history.rename(oldId, newId);
     for (const p of s.log) {
       p.explainer = r(p.explainer);
       p.guesser = p.guesser && r(p.guesser);
@@ -233,6 +276,8 @@ export class SagsHost {
   removePlayer(id: string): boolean {
     const s = this.state;
     if (!s.players.includes(id)) return false;
+    // An undo would bring them back into a round they left: the history ends here.
+    this.history.clear();
     const wasOn = s.explainer === id;
     const idx = s.players.indexOf(id);
     s.players = s.players.filter((p) => p !== id);

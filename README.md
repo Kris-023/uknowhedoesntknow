@@ -3,7 +3,7 @@
 Browser-Partyspiel für 2 bis 4 Freunde: Ihr sitzt euch in einem viel zu schnellen U-Bahn-Wagen gegenüber,
 draußen rast der Tunnel vorbei, drinnen flackert das Neon, und die Mitreisenden starren aufs Handy.
 Sechs Maps: Hypertrain (der U-Bahn-Wagen), Waschsalon, Bürgeramt, Späti 3 Uhr, WG-Wohnzimmer und Diner. Die Minigames
-sind „Wer bin ich?“, „Sag's anders“, „Gleich gedacht“, „Zeig drauf“ und „Ahnungslos“.
+sind „Wer bin ich?“, „Sag's anders“, „Gleich gedacht“, „Zeig drauf“, „Ahnungslos“ und „Stadt, Land, Fluss“.
 Nur PC, nur Browser, nur private Räume, kein Server.
 
 **Stand: M7 (alle Meilensteine aus dem Auftrag umgesetzt).** Details und offene Fragen: `teamlead/SUPERDOC.md`.
@@ -49,9 +49,10 @@ Ein Wort erklären, ohne das Wort selbst und ohne die rot durchgestrichenen Wör
   Wer es erraten hat, wählt der Erklärer mit <kbd>1</kbd>–<kbd>3</kbd>. Danach sehen alle die Karte noch 8 Sekunden und
   können mit <kbd>B</kbd> anfechten: dann fallen die Punkte weg und der Erklärer verliert 1.
 - <kbd>Leertaste</kbd> startet den eigenen Zug (60 s, einstellbar), <kbd>P</kbd> überspringt eine Karte. Jeder erklärt zweimal.
-- Wortstapel: **Normal**, **NSFW** (richtig derb, nur für Leute, die das wollen) und **Eigene**. Eigene Wörter trägst du
-  im Menü-Tab **Wörter** ein; sie bleiben in deinem Browser und kommen im Raum zu allen, ohne dass sie vorher jemand sieht.
-  Mit „Liste kopieren“ oder als Datei gibst du sie weiter; am Rundenende kannst du gespielte Wörter anderer übernehmen.
+- Wortstapel: **Normal**, **NSFW** (richtig derb, nur für Leute, die das wollen) und **Eigene**. Normal und NSFW sind
+  verschlüsselt und brauchen das Stapel-Passwort (siehe „Eingebaute Stapel“); ohne gibt es einen kleinen Ersatzstapel. Eigene Wörter trägst du
+  im Menü-Tab **Eigene Listen** ein (siehe unten); sie kommen im Raum zu allen, ohne dass sie vorher jemand sieht. Am
+  Rundenende kannst du gespielte Wörter anderer übernehmen (sie landen in deiner Liste „Übernommen“).
 
 ### Gleich gedacht
 
@@ -90,6 +91,64 @@ Alle kennen das Wort, nur einer nicht. Ab drei Spielern.
 - Fällt der Host mitten in der Runde aus, wird sie abgebrochen: nur er wusste, wer ahnungslos ist. Der Host-Rechner
   kennt das Wort technisch immer, auch wenn der Host selbst ahnungslos ist; das Spiel zeigt es ihm nur nicht.
 
+### Stadt, Land, Fluss
+
+Ein Buchstabe, sechs Kategorien. Oder: Bilder suchen statt schreiben. Ab zwei Spielern; den Modus wählt der Host in der
+Leiste vor dem Start (Schreiben/Bilder) oder in den Raum-Einstellungen.
+
+- Der Host zieht einen Buchstaben (ohne Q, X, Y), alle sehen ihn. Kategorien: Stadt, Land, Fluss sind immer dabei, dazu
+  drei aus Name, Tier, Beruf, mit dem NSFW-Stapel derbe Extra-Kategorien und mit „Eigene“ eure Kategorien-Listen.
+- **Schreiben:** jeder füllt alle sechs Felder (<kbd>Enter</kbd> springt weiter). Wer alles hat, ruft **Stopp!**: die anderen
+  haben dann noch 10 Sekunden, sonst ist nach 3 Minuten Schluss. Bis dahin verlässt keine Antwort deinen Rechner, nur ein
+  Fingerabdruck (Commit/Reveal wie bei „Gleich gedacht“); abschreiben geht also nicht, auch nicht für den Host.
+- **Auswerten:** Kategorie für Kategorie stehen die Antworten über den Köpfen und unten in der Leiste. Automatisch: leer oder
+  nicht mit dem Buchstaben (ein Artikel davor ist egal, Ä zählt als A) ist ungültig, gleiche Antworten werden erkannt.
+  Antwort anklicken: **ungültig melden** (z. B. nur der Buchstabe) oder **gleich wie** eine andere. Darüber stimmen die
+  anderen kurz ab (<kbd>1</kbd> Ja, <kbd>2</kbd> Nein, 15 Sekunden), Gleichstand heißt nein; zu zweit stimmen beide ab.
+  <kbd>Enter</kbd> = Weiter.
+- Punkte: 10 für eine eigene Antwort, 5 wenn jemand dasselbe hat, 20 wenn nur du in der Kategorie etwas Gültiges hast.
+- **Bilder:** drei Kategorien, zu jeder ein Bild, das mit dem Buchstaben anfängt (Feld anklicken, dann reinziehen,
+  <kbd>Strg</kbd>+<kbd>V</kbd>, Link oder Datei), dazu optional eine Unterschrift („Bär“). 90 Sekunden für alle drei, damit
+  jeder in seiner Reihenfolge sucht; Stopp lässt den anderen 20 Sekunden. Die Bilder gehen erst nach dem Ende direkt an die
+  anderen. Dann pro Kategorie: Bilder über den Köpfen, jeder sagt zu den anderen „zählt / zählt nicht“ (Mehrheit,
+  Gleichstand zählt) und wählt das beste Bild (nicht das eigene). 10 pro Bild, das zählt, 5 extra fürs beste.
+- Am Ende eine Tabelle Kategorien × Spieler mit allen Antworten oder Bildern und Punkten.
+
+### Eigene Listen
+
+Im Menü-Tab **Eigene Listen** legst du mehrere benannte Listen an (bis zu 40) (z. B. „Büro-Insider“), getrennt nach Art:
+
+| Art | Für |
+|---|---|
+| Wörter (mit verbotenen Wörtern) | „Sag's anders“, „Ahnungslos“ |
+| Zeig drauf („Wer würde am ehesten …?“, nur das Ende) | „Zeig drauf“ |
+| Startfragen (eine Antwort, ein Wort) | „Gleich gedacht“ |
+| Kategorien | „Stadt, Land, Fluss“ |
+
+- Die Listen bleiben in deinem Browser. Jede hat einen Schalter **Im Raum**: eingeschaltete Listen schickt dein Browser im
+  Raum an alle, wenn der Host den Stapel **Eigene** an hat (Raum-Einstellungen → Stapel). Dann mischen die Spiele eure
+  Einträge zu den eingebauten; ist nur „Eigene“ an und gibt es genug davon, kommen nur eure.
+- Eigene Wörter sieht vorher niemand, und wer ein Wort eingereicht hat, bekommt es nicht zum Raten, solange andere übrig sind.
+- Teilen: „Liste kopieren“ oder „Als Datei speichern“; Freunde fügen den Text unter „Liste laden“ ein (oder laden die
+  Datei). Dort geht auch einfach eine pro Zeile, Wörter als `Wort: verboten, verboten`. Die alte Wortliste wurde beim
+  ersten Start zu „Meine Wörter“.
+
+### Eingebaute Stapel (Passwort)
+
+Die eingebauten Wörter, Fragen und Kategorien (Normal und NSFW) stehen weder im Repo noch im Bundle im Klartext, sondern
+verschlüsselt in `src/words/vault.json` (AES-256-GCM, Schlüssel per PBKDF2-SHA256 aus einem Passwort).
+
+- **Freischalten:** Menü → **Eigene Listen** → „Eingebaute Stapel“ → Passwort → **Freischalten** (auch im Dialog
+  Raum-Einstellungen unter „Stapel“). Falsches Passwort: „Passwort falsch.“
+- Der Browser merkt sich den daraus abgeleiteten Schlüssel, nicht das Passwort („Schlüssel vergessen“ löscht ihn).
+- Im Raum reicht es, wenn **einer** freigeschaltet hat: Sein Browser schickt den Schlüssel direkt an jeden im Raum, jeder
+  entschlüsselt selbst. Nie im öffentlichen Spielzustand, nie über Server.
+- Gesperrt läuft ein kleiner Ersatzstapel (64 Wörter, 25 Startfragen, 25 Zeig-Fragen, die klassischen Kategorien);
+  **NSFW** ist dann gesperrt (Raum-Dialog und Lobby zeigen „Stapel: gesperrt“). Eigene Listen gehen immer.
+- Pflege: Der Klartext liegt nur lokal in `private/content/` (per `.gitignore` ausgeschlossen, Aufbau steht in
+  `private/content/README.md`). Nach Änderungen `npm run seal` (Passwort aus `~/.config/ukhdk/deck-pass`), prüfen mit
+  `npm run seal:check`. Ein neues Passwort heißt: alle schalten einmal neu frei.
+
 ### Steuerung
 
 | Taste | Was |
@@ -127,7 +186,13 @@ npm run dev        # http://localhost:5190
 npm run dev:lan    # https://<LAN-IP>:5190 für Tests mit anderen Rechnern (Zertifikatswarnung einmal bestätigen)
 npm test           # Unit-Tests: Uhr, Netz-Logik, Regeln, Geheimhaltung, Schaffner
 npm run build      # Bundle nach dist/
+npm run seal       # private/content/ → src/words/vault.json (Passwort aus ~/.config/ukhdk/deck-pass)
+npm run seal:check # geht der Tresor mit dem lokalen Passwort auf? (gibt nur Anzahlen aus)
 ```
+
+Passwortdatei einmal anlegen (nichts landet in der Shell-History):
+`mkdir -p ~/.config/ukhdk && (umask 077; read -rs -p 'Stapel-Passwort: ' p && printf '%s' "$p" > ~/.config/ukhdk/deck-pass); echo`.
+Andere Datei: `UKHDK_DECK_PASS_FILE=/pfad npm run seal`. CI und `npm test` brauchen kein Passwort.
 
 Nur im Dev-Server oder mit `?debug`: <kbd>^</kbd> öffnet das Debug-Panel (Kamera, Sitzwahl, Kopf-Regler, Accessoires,
 „Meine Sicht“, Draw-Calls, Szenengraph). `?seed=1234` überspringt das Menü (deterministische Solo-Szene),
@@ -148,7 +213,8 @@ GitHub Pages ist öffentlich: Jeder mit dem Link kann die Seite laden. Einen Rau
 - Direkte Verbindungen zeigen euren Mitspielern eure öffentliche IP. Das ist bei P2P unvermeidbar.
 - Kartenbilder werden im Browser verkleinert, bleiben im Speicher und gehen nur an die Mitspieler, nie an die Person,
   für die sie sind, und nirgendwo sonst hin. Bei einem Bild-Link lädt nur der Ersteller das Bild; verschickt werden die Daten.
-- Ein clientseitiges Passwort wäre nur eine Hürde. Echten Zugangsschutz gäbe es erst mit Cloudflare Access vor einem
+- Die eingebauten Stapel sind verschlüsselt (siehe oben); wer das Passwort oder den Schlüssel hat, kann sie lesen, und
+  jeder in einem freigeschalteten Raum bekommt den Schlüssel. Fürs Betreten des Spiels wäre ein clientseitiges Passwort nur eine Hürde. Echten Zugangsschutz gäbe es erst mit Cloudflare Access vor einem
   Cloudflare-Pages-Hosting.
 - Durchsagen und Schaffner sprechen mit der Sprachausgabe des Browsers; welche Stimme kommt, hängt vom System ab.
 

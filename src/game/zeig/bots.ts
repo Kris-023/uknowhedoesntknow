@@ -41,7 +41,7 @@ export class ZeigBots {
       b.game.tick(now);
       const s = b.game.state;
       if (!s || s.phase === 'done') continue;
-      const key = `${s.round}|${s.qNo}|${s.phase}`;
+      const key = `${s.round}.${s.undo}|${s.qNo}|${s.phase}`;
       if (key !== b.key) {
         b.key = key;
         b.wait = now + (s.phase === 'look' ? 2000 + Math.random() * 5000 : 2500 + Math.random() * 3000);

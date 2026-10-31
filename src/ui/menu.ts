@@ -9,7 +9,8 @@ import { CharacterPreview } from './preview';
 import { openRoomDialog, roomSummary } from './roomDialog';
 import { SettingsView } from './settingsView';
 import { settings, updateSettings } from './store';
-import { WordsView } from './wordsView';
+import { ListsView } from './listsView';
+import { deckLock } from '../words/content';
 import { mapDef, mapList } from '../maps';
 import type { MapId } from '../maps/types';
 
@@ -35,7 +36,7 @@ abstract class MenuShell {
   private previewBox = el('div', 'me-preview');
   protected editor: CharacterEditor;
   private settingsView: SettingsView | null = null;
-  private wordsView: WordsView | null = null;
+  private wordsView: ListsView | null = null;
   /** Used when the name field stays empty. */
   protected readonly fallbackName = randomName();
 
@@ -51,7 +52,7 @@ abstract class MenuShell {
     const head = el('header', 'menu-head');
     const nav = el('div', 'tabs');
     nav.setAttribute('role', 'tablist');
-    for (const [id, label] of [['play', playLabel], ['character', 'Charakter'], ['words', 'Wörter'], ['settings', 'Einstellungen']] as const) {
+    for (const [id, label] of [['play', playLabel], ['character', 'Charakter'], ['words', 'Eigene Listen'], ['settings', 'Einstellungen']] as const) {
       const b = el('button', 'tab', label);
       b.type = 'button';
       b.id = `tab-${id}`;
@@ -79,6 +80,10 @@ abstract class MenuShell {
 
     this.editor = new CharacterEditor(profile, (p) => this.setProfile(p));
     this.editor.setFallbackName(this.fallbackName);
+    // The room summary in the play tab names the deck state; a key may come from the room any time.
+    deckLock.onChange(() => {
+      if (this.isOpen && this.tab === 'play' && !this.panel.contains(document.activeElement)) this.show('play');
+    });
   }
 
   protected abstract renderPlay(): void;
@@ -142,7 +147,7 @@ abstract class MenuShell {
     if (id === 'play') this.renderPlay();
     else if (id === 'character') this.panel.append(this.editor.root);
     else if (id === 'words') {
-      this.wordsView = new WordsView(() => this.profile.name || this.fallbackName);
+      this.wordsView = new ListsView();
       this.panel.append(this.wordsView.root);
     } else {
       this.settingsView = new SettingsView(this.settingsExtra());

@@ -1,4 +1,6 @@
+/// <reference types="vitest/config" />
 import basicSsl from '@vitejs/plugin-basic-ssl';
+import { configDefaults } from 'vitest/config';
 import { defineConfig } from 'vite';
 
 // Relative base so the bundle works under any GitHub Pages path (/<repo>/) without config.
@@ -8,6 +10,8 @@ export default defineConfig(({ mode }) => ({
   // which browsers only offer in secure contexts (https or localhost), not on http://<LAN-IP>.
   plugins: mode === 'lan' ? [basicSsl()] : [],
   // allowedHosts: Vite rejects unknown Host headers (DNS-rebinding guard); the LAN name must be listed.
+  // Agent worktrees under .claude/ hold copies of the tests; only this project's own are run.
+  test: { exclude: [...configDefaults.exclude, '.claude/**'] },
   server: { port: 5190, strictPort: false, allowedHosts: ['odessa.fritz.box'] },
   build: {
     target: 'es2022',

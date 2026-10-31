@@ -1,7 +1,7 @@
-import { NORMAL } from './decks/normal';
-import { NSFW } from './decks/nsfw';
+import { content } from './content';
 import { normWord } from './custom';
-import type { DeckEntry, DeckId, WordCard } from './types';
+import { FALLBACK } from './fallback';
+import type { Content, DeckEntry, DeckId, WordCard } from './types';
 
 export type { DeckId, WordCard } from './types';
 
@@ -13,19 +13,26 @@ function build(deck: DeckId, prefix: string, entries: readonly DeckEntry[]): Wor
   return entries.map(([word, ...taboo]) => ({ id: `${prefix}:${slug(word)}`, deck, word, taboo }));
 }
 
-let builtin: Record<'normal' | 'nsfw', WordCard[]> | null = null;
+let built: { from: Content; cards: Record<'normal' | 'nsfw', WordCard[]> } | null = null;
 
-/** Built-in decks as cards. Ids come from the word, so they stay put when the list is reordered. */
-export function builtinDeck(deck: 'normal' | 'nsfw'): readonly WordCard[] {
-  builtin ??= { normal: build('normal', 'n', NORMAL), nsfw: build('nsfw', 'x', NSFW) };
-  return builtin[deck];
+/**
+ * Built-in decks as cards, from the unlocked vault or the fallback. Ids come from the word, so they
+ * stay put when the list is reordered; fallback cards have their own prefix, so a card played before
+ * the decks were unlocked never counts as one of the sealed deck.
+ */
+export function builtinDeck(deck: 'normal' | 'nsfw', from: Content = content()): readonly WordCard[] {
+  if (built?.from !== from) {
+    const n = from === FALLBACK ? 'f' : 'n';
+    built = { from, cards: { normal: build('normal', n, from.words.normal), nsfw: build('nsfw', 'x', from.words.nsfw) } };
+  }
+  return built.cards[deck];
 }
 
 /**
  * Pool for a round: the chosen built-in decks plus everyone's submissions in the room, without
  * duplicate words (the first one wins, so a built-in word beats the same submission).
  */
-export function wordPool(decks: readonly DeckId[], custom: Iterable<WordCard>): WordCard[] {
+export function wordPool(decks: readonly DeckId[], custom: Iterable<WordCard>, from: Content = content()): WordCard[] {
   const out: WordCard[] = [];
   const seen = new Set<string>();
   const add = (c: WordCard) => {
@@ -34,7 +41,7 @@ export function wordPool(decks: readonly DeckId[], custom: Iterable<WordCard>): 
     seen.add(n);
     out.push(c);
   };
-  for (const d of decks) if (d !== 'custom') builtinDeck(d).forEach(add);
+  for (const d of decks) if (d !== 'custom') builtinDeck(d, from).forEach(add);
   if (decks.includes('custom')) for (const c of custom) add(c);
   return out;
 }

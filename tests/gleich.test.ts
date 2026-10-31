@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, onTestFinished } from 'vitest';
 import { GLEICH } from '../src/config';
 import { mulberry32 } from '../src/core/rng';
 import { botWord } from '../src/game/gleich/bots';
@@ -15,7 +15,10 @@ import {
   parseIntent,
   verifyReveal,
 } from '../src/game/gleich/logic';
-import { QUESTIONS_NORMAL, QUESTIONS_NSFW } from '../src/words/questions';
+import { FALLBACK } from '../src/words/fallback';
+import { FIXTURE, useFixture } from './fixtures/content';
+
+const QUESTIONS = FIXTURE.gleich.normal;
 
 describe('Gleich gedacht: matching', () => {
   it('normalizes case, articles, umlauts and punctuation', () => {
@@ -126,19 +129,19 @@ function play(h: GleichHost, words: Record<string, string | null>, t = 0): void 
 
 describe('Gleich gedacht: rules', () => {
   it('draws a different question for everyone', () => {
-    const q = drawQuestions(['a', 'b', 'c', 'd'], QUESTIONS_NORMAL, mulberry32(1));
+    const q = drawQuestions(['a', 'b', 'c', 'd'], QUESTIONS, mulberry32(1));
     expect(new Set(Object.values(q)).size).toBe(4);
-    for (const v of Object.values(q)) expect(QUESTIONS_NORMAL).toContain(v);
+    for (const v of Object.values(q)) expect(QUESTIONS).toContain(v);
     // Questions of an earlier round are avoided while enough are left.
-    const avoid = new Set(QUESTIONS_NORMAL.slice(0, QUESTIONS_NORMAL.length - 4));
-    const again = drawQuestions(['a', 'b', 'c', 'd'], QUESTIONS_NORMAL, mulberry32(2), avoid);
+    const avoid = new Set(QUESTIONS.slice(0, QUESTIONS.length - 4));
+    const again = drawQuestions(['a', 'b', 'c', 'd'], QUESTIONS, mulberry32(2), avoid);
     for (const v of Object.values(again)) expect(avoid.has(v)).toBe(false);
   });
 
-  it('has enough questions, and the crude ones are kept apart', () => {
-    expect(QUESTIONS_NORMAL.length).toBeGreaterThanOrEqual(55);
-    expect(QUESTIONS_NSFW.length).toBeGreaterThanOrEqual(20);
-    expect(new Set([...QUESTIONS_NORMAL, ...QUESTIONS_NSFW]).size).toBe(QUESTIONS_NORMAL.length + QUESTIONS_NSFW.length);
+  it('the public fallback has enough questions for a few rounds, none twice, no NSFW', () => {
+    expect(FALLBACK.gleich.normal.length).toBeGreaterThanOrEqual(25);
+    expect(FALLBACK.gleich.nsfw).toHaveLength(0);
+    expect(new Set(FALLBACK.gleich.normal).size).toBe(FALLBACK.gleich.normal.length);
   });
 
   it('writing ends when everybody has locked; only commitments are public', () => {
@@ -258,7 +261,7 @@ describe('Gleich gedacht: rules', () => {
   it('a vote with a majority of yes solves it; ties and silence do not', () => {
     const run = (votes: [string, boolean][]) => {
       const h = new GleichHost(P, {}, 1, 0);
-      play(h, { a: 'Kaffee', b: 'Tasse', c: 'Café' }, 10);
+      play(h, { a: 'Tee', b: 'Kanne', c: 'Teestube' }, 10);
       expect(h.state.solved).toBe(false);
       expect(h.intent('a', { a: 'call' }, 11, true)).toBe(true);
       // Only once per try.
@@ -285,7 +288,7 @@ describe('Gleich gedacht: rules', () => {
 
   it('secret votes: nobody learns who voted what', () => {
     const h = new GleichHost(P, {}, 1, 0);
-    play(h, { a: 'Kaffee', b: 'Tasse', c: 'Café' }, 10);
+    play(h, { a: 'Tee', b: 'Kanne', c: 'Teestube' }, 10);
     h.intent('a', { a: 'call' }, 11, true);
     h.intent('b', { a: 'vote', v: true }, 12, false);
     expect(JSON.stringify(h.state.vote)).not.toContain('true');
@@ -295,14 +298,14 @@ describe('Gleich gedacht: rules', () => {
   it('nobody can start a vote when it is solved, before the words are shown, or twice', () => {
     const h = new GleichHost(P, {}, 1, 0);
     expect(h.intent('a', { a: 'call' }, 1, true)).toBe(false);
-    play(h, { a: 'Kaffee', b: 'Tasse', c: 'Café' }, 10);
+    play(h, { a: 'Tee', b: 'Kanne', c: 'Teestube' }, 10);
     expect(h.intent('a', { a: 'call' }, 11, true)).toBe(true);
     expect(h.intent('b', { a: 'call' }, 11, false)).toBe(false);
   });
 
   it('after a lost vote the others get time to read before the next try', () => {
     const h = new GleichHost(P, {}, 1, 0);
-    play(h, { a: 'Kaffee', b: 'Tasse', c: 'Café' }, 10);
+    play(h, { a: 'Tee', b: 'Kanne', c: 'Teestube' }, 10);
     const end = 10 + GLEICH.revealS * 1000;
     h.intent('a', { a: 'call' }, end - 2000, true);
     P.forEach((p) => h.intent(p, { a: 'vote', v: false }, end - 1000, p === 'a'));
@@ -378,12 +381,12 @@ describe('Gleich gedacht: absent and returning players', () => {
 
   it('replace follows the new id into words, history, ready, votes and scores', () => {
     const h = new GleichHost(P, { b: 4 }, 1, 0);
-    play(h, { a: 'Kaffee', b: 'Tasse', c: 'Café' }, 10);
+    play(h, { a: 'Tee', b: 'Kanne', c: 'Teestube' }, 10);
     h.intent('b', { a: 'ready' }, 11, false);
     h.intent('a', { a: 'call' }, 11, true);
     h.intent('b', { a: 'vote', v: true }, 12, false);
     h.replace('b', 'b2');
-    expect(h.state.words).toEqual({ a: 'Kaffee', b2: 'Tasse', c: 'Café' });
+    expect(h.state.words).toEqual({ a: 'Tee', b2: 'Kanne', c: 'Teestube' });
     expect(h.state.ready).toEqual(['b2']);
     expect(h.state.vote?.voters).toEqual(['b2']);
     expect(h.state.scores).toEqual({ a: 0, b2: 4, c: 0 });
@@ -392,7 +395,7 @@ describe('Gleich gedacht: absent and returning players', () => {
     h.intent('a', { a: 'vote', v: true }, 13, true);
     h.intent('c', { a: 'vote', v: true }, 13, false);
     expect(h.state.solved).toBe(true);
-    expect(h.state.history).toEqual([{ a: 'Kaffee', b2: 'Tasse', c: 'Café' }]);
+    expect(h.state.history).toEqual([{ a: 'Tee', b2: 'Kanne', c: 'Teestube' }]);
     expect(h.replace('nobody', 'x')).toBe(false);
   });
 
@@ -597,8 +600,18 @@ describe('Gleich gedacht over the network', async () => {
     expect(gg.c.state!.solved).toBe(true);
   });
 
+  it('locked decks: the fallback questions, also in a room with NSFW on', () => {
+    const plain = new Set(FALLBACK.gleich.normal);
+    const { room, g } = make(['normal', 'nsfw']);
+    g.a.start();
+    room.pump();
+    for (const q of Object.values(g.b.state!.questions)) expect(plain.has(q)).toBe(true);
+  });
+
   it('only rooms with the NSFW deck get the crude questions', () => {
-    const crude = new Set(QUESTIONS_NSFW);
+    const undo = useFixture();
+    onTestFinished(undo);
+    const crude = new Set(FIXTURE.gleich.nsfw);
     for (let i = 0; i < 25; i++) {
       const { room, g } = make(['normal']);
       g.a.start();

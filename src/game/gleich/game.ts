@@ -1,6 +1,7 @@
 import { GLEICH, NET } from '../../config';
 import { mulberry32 } from '../../core/rng';
-import { QUESTIONS_NORMAL, QUESTIONS_NSFW } from '../../words/questions';
+import { content } from '../../words/content';
+import { questionPool } from '../../words/lists';
 import type { DeckId } from '../../words/types';
 import type { GameNet, Minigame } from '../minigame';
 import { cleanWord, commitOf, GleichHost, newSalt, parseIntent, verifyReveal, type GleichState, type Intent, type Words } from './logic';
@@ -31,6 +32,8 @@ function parseState(v: unknown): (GleichState & { sentAt: number }) | null {
 /** Room settings the game reads when it draws questions. */
 export interface GleichRoom {
   decks(): readonly DeckId[];
+  /** The room's own start questions (lists "Startfragen"), used with the deck "Eigene". */
+  custom?(): readonly string[];
 }
 
 interface Secret {
@@ -119,7 +122,7 @@ export class GleichGame implements Minigame {
 
   get iVoted(): boolean {
     const s = this.state;
-    return !!s && this.votedKey === `${s.round}|${s.tryNo}`;
+    return !!s && this.votedKey === `${s.round}|${s.tryNo}|${s.undo}`;
   }
 
   nameOf(id: string | null): string {
@@ -152,7 +155,8 @@ export class GleichGame implements Minigame {
     const order = [...this.net.members()].sort((a, b) => NET.seatOrder.indexOf(a.seat) - NET.seatOrder.indexOf(b.seat)).map((m) => m.id);
     if (order.length < 2) return;
     if (this.host) this.scores = { ...this.host.state.scores };
-    const pool = this.room.decks().includes('nsfw') ? [...QUESTIONS_NORMAL, ...QUESTIONS_NSFW] : QUESTIONS_NORMAL;
+    const { normal, nsfw } = content().gleich;
+    const pool = questionPool(this.room.decks(), normal, nsfw, this.room.custom?.() ?? [], order.length);
     if (this.asked.size > pool.length - order.length * 2) this.asked.clear();
     this.host = new GleichHost(order, this.scores, (this.host?.state.round ?? 0) + 1, Date.now(), mulberry32((Date.now() ^ (Math.random() * 2 ** 31)) | 0), pool, this.asked);
     for (const q of Object.values(this.host.state.questions)) this.asked.add(q);
@@ -162,6 +166,16 @@ export class GleichGame implements Minigame {
 
   end(): void {
     this.toHost({ a: 'end' });
+  }
+
+  /** Host: there is a decision of this round to take back. */
+  get canUndo(): boolean {
+    return this.isHost && !!this.host?.canUndo;
+  }
+
+  /** Host: take back the last judgment ("Zug zurück"): back to the shown words of that try. */
+  undo(): void {
+    if (this.isHost && this.host?.undo(Date.now())) this.publish();
   }
 
   /** The Schaffner's fine, only while words are being written. */
@@ -195,7 +209,8 @@ export class GleichGame implements Minigame {
   vote(v: boolean): void {
     const s = this.state;
     if (!s?.vote || this.iVoted) return;
-    this.votedKey = `${s.round}|${s.tryNo}`;
+    // With the undo count: a vote taken back may be cast again.
+    this.votedKey = `${s.round}|${s.tryNo}|${s.undo}`;
     this.toHost({ a: 'vote', v });
     this.emit();
   }
@@ -332,6 +347,7 @@ export class GleichGame implements Minigame {
   }
 
   private applyState(s: GleichState): void {
+    s.undo ??= 0;
     const key = `${s.round}|${s.tryNo}`;
     if (key !== this.verifiedKey) {
       this.verifiedKey = key;

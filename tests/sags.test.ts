@@ -3,35 +3,62 @@ import { SAGS } from '../src/config';
 import { SagsGame } from '../src/game/sagsanders/game';
 import { guessersOf, parseIntent, SagsHost, watchersOf } from '../src/game/sagsanders/logic';
 import { LocalGameRoom, type Member } from '../src/game/minigame';
+import { RoomLists } from '../src/game/roomLists';
 import { normWord, parseCard } from '../src/words/custom';
-import { NORMAL } from '../src/words/decks/normal';
-import { NSFW } from '../src/words/decks/nsfw';
 import { builtinDeck, drawCard, wordPool } from '../src/words';
+import { FALLBACK } from '../src/words/fallback';
 import type { WordCard } from '../src/words/types';
+import { FIXTURE, useFixture } from './fixtures/content';
 
 const card = (word: string, by?: string): WordCard => ({ id: `t:${word}`, deck: by ? 'custom' : 'normal', word, taboo: ['x'], by: by ? { id: by, name: by } : undefined });
 
 describe('word decks', () => {
-  it('every built-in card has 4–5 forbidden words, none of them the word itself', () => {
-    for (const [word, ...taboo] of [...NORMAL, ...NSFW]) {
-      expect(taboo.length, word).toBeGreaterThanOrEqual(4);
+  it('the public fallback: enough cards, 3–5 forbidden words each, none of them the word itself, no NSFW', () => {
+    expect(FALLBACK.words.normal.length).toBeGreaterThanOrEqual(60);
+    expect(FALLBACK.words.nsfw).toHaveLength(0);
+    for (const [word, ...taboo] of FALLBACK.words.normal) {
+      expect(taboo.length, word).toBeGreaterThanOrEqual(3);
       expect(taboo.length, word).toBeLessThanOrEqual(5);
       for (const t of taboo) expect(normWord(t), word).not.toBe(normWord(word));
     }
   });
 
   it('no word appears twice across the decks, and ids are unique', () => {
-    const all = [...builtinDeck('normal'), ...builtinDeck('nsfw')];
-    expect(new Set(all.map((c) => normWord(c.word))).size).toBe(all.length);
-    expect(new Set(all.map((c) => c.id)).size).toBe(all.length);
+    for (const from of [FALLBACK, FIXTURE]) {
+      const all = [...builtinDeck('normal', from), ...builtinDeck('nsfw', from)];
+      expect(new Set(all.map((c) => normWord(c.word))).size).toBe(all.length);
+      expect(new Set(all.map((c) => c.id)).size).toBe(all.length);
+    }
+  });
+
+  it('fallback cards have their own ids, so they never pass for cards of the sealed decks', () => {
+    expect(builtinDeck('normal', FALLBACK).every((c) => c.id.startsWith('f:'))).toBe(true);
+    expect(builtinDeck('normal', FIXTURE).every((c) => c.id.startsWith('n:'))).toBe(true);
+    expect(builtinDeck('nsfw', FIXTURE).every((c) => c.id.startsWith('x:'))).toBe(true);
   });
 
   it('the pool joins the chosen decks and drops duplicate submissions', () => {
-    const normal = builtinDeck('normal');
+    const normal = builtinDeck('normal', FIXTURE);
     const dup = { ...card(normal[0].word.toUpperCase(), 'p1') };
-    const pool = wordPool(['normal', 'custom'], [dup, card('Eigenes Wort', 'p1')]);
+    const pool = wordPool(['normal', 'custom'], [dup, card('Eigenes Wort', 'p1')], FIXTURE);
     expect(pool.length).toBe(normal.length + 1);
-    expect(wordPool(['nsfw'], [card('Eigenes Wort', 'p1')]).length).toBe(builtinDeck('nsfw').length);
+    expect(wordPool(['nsfw'], [card('Eigenes Wort', 'p1')], FIXTURE).length).toBe(builtinDeck('nsfw', FIXTURE).length);
+    // Locked: NSFW is empty, the normal deck is the fallback.
+    expect(wordPool(['nsfw'], [], FALLBACK)).toHaveLength(0);
+    expect(wordPool(['normal'], [], FALLBACK)).toHaveLength(FALLBACK.words.normal.length);
+  });
+
+  it('unlocked mid-session: the next draw sees the new decks', () => {
+    const before = wordPool(['normal', 'nsfw'], []);
+    expect(before.every((c) => c.id.startsWith('f:'))).toBe(true);
+    const undo = useFixture();
+    try {
+      const after = wordPool(['normal', 'nsfw'], []);
+      expect(after.length).toBe(FIXTURE.words.normal.length + FIXTURE.words.nsfw.length);
+      expect(after.some((c) => c.deck === 'nsfw')).toBe(true);
+    } finally {
+      undo();
+    }
   });
 
   it('skips used cards and the guessers’ own submissions while anything else is left', () => {
@@ -145,15 +172,20 @@ describe("Sag's anders over the network", () => {
   const room = (n: number) => {
     const members: Member[] = Array.from({ length: n }, (_, i) => ({ id: `p${i}`, seat: [0, 2, 1, 3][i], name: `P${i}` }));
     const r = new LocalGameRoom(members);
-    const opts = { decks: () => ['normal', 'custom'] as const, turnS: () => 60, teams: () => true };
-    const games = members.map((m) => new SagsGame(r.net(m.id), opts, () => ({ pid: `pid-${m.id}`, cards: [card(`Wort von ${m.id}`, `pid-${m.id}`)] })));
+    const decks = () => ['normal', 'custom'] as const;
+    // Own words travel through the shared room lists, one instance per client like in main.ts.
+    const lists = members.map(
+      (m) => new RoomLists(r.net(m.id), () => ({ pid: `pid-${m.id}`, words: [card(`Wort von ${m.id}`, `pid-${m.id}`)], zeig: [], fragen: [], kategorien: [] }), () => true),
+    );
+    const games = members.map((m, i) => new SagsGame(r.net(m.id), { decks, turnS: () => 60, teams: () => true, cards: () => lists[i].cards(), pidOf: (id) => lists[i].pidOf(id) }));
     const run = () => {
       for (let k = 0; k < 4; k++) {
+        lists.forEach((l) => l.tick());
         games.forEach((g) => g.tick(0));
         r.pump();
       }
     };
-    return { games, run };
+    return { games, lists, run };
   };
 
   it('teams: the card reaches only the other team, never the teammate who guesses', () => {
@@ -180,7 +212,7 @@ describe("Sag's anders over the network", () => {
   });
 
   it('free for all: nobody else gets the card while it is explained', () => {
-    const { games, run } = room(3);
+    const { games, lists, run } = room(3);
     games[0].start();
     run();
     const explainer = games.find((g) => g.selfId === games[0].state!.explainer)!;
@@ -189,6 +221,6 @@ describe("Sag's anders over the network", () => {
     expect(explainer.hand).not.toBeNull();
     for (const g of games) if (g !== explainer) expect(g.seen).toBeNull();
     // Submissions from the room are in the explainer's pool, but not the guessers' own ones first.
-    expect(explainer.roomCards().length).toBe(3);
+    expect(lists[games.indexOf(explainer)].cards().length).toBe(3);
   });
 });

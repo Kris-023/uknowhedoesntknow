@@ -3,6 +3,7 @@ import { el, releaseMouse } from '../../ui/dom';
 import { noteBoard } from '../gleich/boardImage';
 import type { GleichUiInfo } from '../gleich/ui';
 import type { GameUi, Member } from '../minigame';
+import { stepKey } from '../undo';
 import { pts } from '../whoami/ui';
 import type { ZeigGame } from './game';
 import { tally, type ZeigRecord, type ZeigState } from './logic';
@@ -31,7 +32,7 @@ export class ZeigUi implements GameUi {
   private dock = el('div', 'wi-bar zd-dock');
   private actions = el('div', 'wi-actions');
   private visible = true;
-  private closedRound = -1;
+  private closedRound = '';
   private flashed = '';
   /** Names of everyone seen in the round, for the end screen after someone left. */
   private known = new Map<string, string>();
@@ -56,7 +57,7 @@ export class ZeigUi implements GameUi {
 
   get doneOpen(): boolean {
     const s = this.game.state;
-    return !this.done.hidden || (!!s && s.phase === 'done' && this.closedRound !== s.round && this.visible);
+    return !this.done.hidden || (!!s && s.phase === 'done' && this.closedRound !== stepKey(s) && this.visible);
   }
 
   set shown(on: boolean) {
@@ -125,7 +126,7 @@ export class ZeigUi implements GameUi {
   private echo(s: ZeigState): void {
     const r = this.game.shown;
     if (!r) return;
-    const key = `${s.round}|${s.qNo}`;
+    const key = `${stepKey(s)}|${s.qNo}`;
     if (key === this.flashed) return;
     this.flashed = key;
     const mine = r.picks[this.game.selfId];
@@ -223,7 +224,7 @@ export class ZeigUi implements GameUi {
   }
 
   private renderDone(s: ZeigState): void {
-    const open = s.phase === 'done' && this.closedRound !== s.round;
+    const open = s.phase === 'done' && this.closedRound !== stepKey(s);
     if (!open) {
       this.done.hidden = true;
       return;
@@ -272,7 +273,7 @@ export class ZeigUi implements GameUi {
 
   close(): void {
     const s = this.game.state;
-    if (s) this.closedRound = s.round;
+    if (s) this.closedRound = stepKey(s);
     this.done.hidden = true;
     document.body.classList.remove('wi-dialog');
   }

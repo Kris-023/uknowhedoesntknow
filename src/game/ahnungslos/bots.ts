@@ -8,7 +8,7 @@ import { cleanClue, givesAway, type Clue } from './logic';
 /** Vague words a clueless bot says when nobody has given a clue yet. */
 const VAGUE = ['Alltag', 'Klassiker', 'Typisch', 'Manchmal', 'Praktisch', 'Bekannt', 'Groß', 'Wichtig'];
 
-/** One word of a forbidden phrase: the longest one, so "im Kühlschrank" gives "Kühlschrank". */
+/** One word of a forbidden phrase: the longest one, so "im Gartenhaus" gives "Gartenhaus". */
 const oneWord = (s: string) => cleanClue(s) ?? cleanClue([...s.split(/\s+/)].sort((a, b) => b.length - a.length)[0]);
 
 /** A bot's clue: knowing the word, an unused forbidden word of the card; clueless, someone else's clue (or a vague one). */
@@ -83,7 +83,7 @@ export class AhnungBots {
       const s = g.state;
       if (!s || s.phase === 'done' || !g.knowsRole) continue;
       const me = g.selfId;
-      const key = `${s.round}|${s.phase}|${s.turn}`;
+      const key = `${s.round}.${s.undo}|${s.phase}|${s.turn}`;
       if (key !== b.key) {
         b.key = key;
         b.wait = now + (s.phase === 'clues' ? 2000 + Math.random() * 3500 : 2500 + Math.random() * 5000);

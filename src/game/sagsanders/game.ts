@@ -1,4 +1,4 @@
-import { NET, SAGS, WORDS } from '../../config';
+import { NET, SAGS } from '../../config';
 import { parseCard } from '../../words/custom';
 import { drawCard, wordPool } from '../../words';
 import type { DeckId, WordCard } from '../../words/types';
@@ -13,18 +13,16 @@ function parseState(v: unknown): (SagsState & { sentAt: number }) | null {
   return v as SagsState & { sentAt: number };
 }
 
-/** What this client brings into the room: its own submissions under its stable player id. */
-export interface WordSource {
-  pid: string;
-  cards: readonly WordCard[];
-}
-
 /** Room settings the game reads when it draws or starts. */
 export interface SagsRoom {
   decks(): readonly DeckId[];
   turnS(): number;
   /** Teams when four play (otherwise everyone against everyone). */
   teams(): boolean;
+  /** Everyone's own word cards in the room (game/roomLists.ts), mine included. */
+  cards(): readonly WordCard[];
+  /** Profile id of a member, as far as known: their own cards are kept away from them while they guess. */
+  pidOf(id: string): string | undefined;
 }
 
 /**
@@ -43,11 +41,6 @@ export class SagsGame implements Minigame {
   hand: { no: number; card: WordCard } | null = null;
   /** The explainer's card while I watch for fouls (other team only). */
   seen: { no: number; card: WordCard } | null = null;
-  /** Submissions in the room by session id (mine included). */
-  private shared = new Map<string, WordSource>();
-  /** Members I have sent my words to, so newcomers get them once. */
-  private sentTo = new Set<string>();
-  private sentRound = -1;
   /** Cards I drew this session, so a new round doesn't start with the same words. */
   private drawn = new Set<string>();
   private goneSince = new Map<string, number>();
@@ -55,7 +48,6 @@ export class SagsGame implements Minigame {
   constructor(
     private net: GameNet,
     private room: SagsRoom,
-    private mine: () => WordSource,
   ) {
     net.onMessage((t, d, f) => this.onMessage(t, d, f));
   }
@@ -107,6 +99,16 @@ export class SagsGame implements Minigame {
 
   end(): void {
     this.toHost({ a: 'end' });
+  }
+
+  /** Host: there is a decision of this round to take back. */
+  get canUndo(): boolean {
+    return this.isHost && !!this.host?.canUndo;
+  }
+
+  /** Host: take back the last decision ("Zug zurück"); the explainer then draws a fresh card. */
+  undo(): void {
+    if (this.isHost && this.host?.undo(Date.now())) this.publish();
   }
 
   penalize(id: string, points: number): boolean {
@@ -185,7 +187,6 @@ export class SagsGame implements Minigame {
   }
 
   tick(now: number): void {
-    this.shareWords();
     if (this.host && !this.isHost) this.host = null;
     if (!this.host && this.isHost && this.state && this.state.phase !== 'done') {
       // A new host (the old one left) takes over a running round from its public state.
@@ -215,7 +216,7 @@ export class SagsGame implements Minigame {
       }
       const s = this.host.state;
       // An absent explainer: their turn ends after a moment, they leave the round after a while.
-      if (t - since > SAGS.absentPassS * 1000 && s.explainer === p && s.phase !== 'done') changed = this.host.pass() || changed;
+      if (t - since > SAGS.absentPassS * 1000 && s.explainer === p && s.phase !== 'done') changed = this.host.pass(t) || changed;
       if (t - since > SAGS.absentLeaveS * 1000) {
         this.goneSince.delete(p);
         changed = this.host.removePlayer(p) || changed;
@@ -245,45 +246,6 @@ export class SagsGame implements Minigame {
       if (!s || !card || typeof d.no !== 'number' || from !== s.explainer || !watchersOf(s, from).includes(this.selfId)) return;
       this.seen = { no: d.no, card };
       this.emit();
-    } else if (type === 'sa:words') {
-      const d = data as { pid?: unknown; cards?: unknown };
-      if (typeof d?.pid !== 'string' || d.pid.length > 40 || !Array.isArray(d.cards)) return;
-      const cards = d.cards
-        .slice(0, WORDS.maxShared)
-        .map(parseCard)
-        .filter((c): c is WordCard => !!c && c.deck === 'custom');
-      this.shared.set(from, { pid: d.pid, cards });
-    }
-  }
-
-  /** Profile id of a member, as far as their words have arrived ("Ahnungslos" keeps a clueless player's own word away from them). */
-  pidOf(id: string): string | undefined {
-    return id === this.selfId ? this.mine().pid : this.shared.get(id)?.pid;
-  }
-
-  /** Every submission in the room: from the others as they arrived, mine fresh from storage. */
-  roomCards(): WordCard[] {
-    const out: WordCard[] = [...this.mine().cards];
-    for (const [id, src] of this.shared) if (id !== this.selfId) out.push(...src.cards);
-    return out;
-  }
-
-  /**
-   * My submissions go to everyone in the room once (and again to whoever joins or each new round),
-   * so whoever explains can draw them. Nobody's UI lists them before they're played.
-   */
-  private shareWords(): void {
-    if (!this.room.decks().includes('custom')) return;
-    const round = this.state?.round ?? 0;
-    if (round !== this.sentRound) {
-      this.sentRound = round;
-      this.sentTo.clear();
-    }
-    const src = this.mine();
-    for (const m of this.net.members()) {
-      if (m.id === this.selfId || this.sentTo.has(m.id)) continue;
-      this.sentTo.add(m.id);
-      this.net.send('sa:words', { pid: src.pid, cards: src.cards.slice(0, WORDS.maxShared) }, m.id);
     }
   }
 
@@ -300,6 +262,7 @@ export class SagsGame implements Minigame {
   }
 
   private applyState(s: SagsState): void {
+    s.undo ??= 0;
     if (this.state && s.round !== this.state.round) {
       this.hand = null;
       this.seen = null;
@@ -315,9 +278,10 @@ export class SagsGame implements Minigame {
   }
 
   private draw(s: SagsState): void {
-    const pidOf = (id: string) => (id === this.selfId ? this.mine().pid : this.shared.get(id)?.pid);
-    const guessers = new Set(guessersOf(s, this.selfId).map(pidOf).filter((p): p is string => !!p));
-    const pool = wordPool(this.room.decks().length ? this.room.decks() : ['normal'], this.roomCards());
+    const guessers = new Set(guessersOf(s, this.selfId).map((id) => this.room.pidOf(id)).filter((p): p is string => !!p));
+    let pool = wordPool(this.room.decks().length ? this.room.decks() : ['normal'], this.room.cards());
+    // Only "Eigene" on and nobody brought any: the normal deck steps in rather than no card at all.
+    if (!pool.length) pool = wordPool(['normal'], []);
     // Cycle through everything before a word comes back.
     if (pool.every((c) => this.drawn.has(c.id))) this.drawn.clear();
     const card = drawCard(pool, this.drawn, guessers);

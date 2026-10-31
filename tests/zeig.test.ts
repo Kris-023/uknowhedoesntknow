@@ -1,9 +1,12 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, onTestFinished } from 'vitest';
 import { ZEIG } from '../src/config';
 import { mulberry32 } from '../src/core/rng';
 import { botPick } from '../src/game/zeig/bots';
 import { drawQuestions, parseIntent, tally, ZeigHost } from '../src/game/zeig/logic';
-import { ZEIG_NORMAL, ZEIG_NSFW } from '../src/words/zeig';
+import { FALLBACK } from '../src/words/fallback';
+import { FIXTURE, useFixture } from './fixtures/content';
+
+const ZEIG_NORMAL = FIXTURE.zeig.normal;
 
 const P = ['a', 'b', 'c', 'd'];
 const Q = ['q1', 'q2', 'q3'];
@@ -14,10 +17,10 @@ function pickAll(h: ZeigHost, picks: Record<string, string | null>, t = 0): void
 }
 
 describe('Zeig drauf: questions', () => {
-  it('has enough questions, the crude ones kept apart, none twice', () => {
-    expect(ZEIG_NORMAL.length).toBeGreaterThanOrEqual(55);
-    expect(ZEIG_NSFW.length).toBeGreaterThanOrEqual(20);
-    expect(new Set([...ZEIG_NORMAL, ...ZEIG_NSFW]).size).toBe(ZEIG_NORMAL.length + ZEIG_NSFW.length);
+  it('the public fallback has enough questions for a few rounds, none twice, no NSFW', () => {
+    expect(FALLBACK.zeig.normal.length).toBeGreaterThanOrEqual(3 * ZEIG.questions);
+    expect(FALLBACK.zeig.nsfw).toHaveLength(0);
+    expect(new Set(FALLBACK.zeig.normal).size).toBe(FALLBACK.zeig.normal.length);
   });
 
   it('draws different questions and avoids the ones already asked', () => {
@@ -270,8 +273,18 @@ describe('Zeig drauf over the network', async () => {
     expect(g.c.shown!.picks.b).toBe('c');
   });
 
+  it('locked decks: the fallback questions, also in a room with NSFW on', () => {
+    const plain = new Set(FALLBACK.zeig.normal);
+    const { room, g } = make(['normal', 'nsfw']);
+    g.a.start();
+    room.pump();
+    for (const q of g.b.state!.questions) expect(plain.has(q)).toBe(true);
+  });
+
   it('only rooms with the NSFW deck get the crude questions', () => {
-    const crude = new Set(ZEIG_NSFW);
+    const undo = useFixture();
+    onTestFinished(undo);
+    const crude = new Set(FIXTURE.zeig.nsfw);
     for (let i = 0; i < 10; i++) {
       const { room, g } = make(['normal']);
       g.a.start();
