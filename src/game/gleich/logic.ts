@@ -62,10 +62,10 @@ export function parseIntent(v: unknown): Intent | null {
 
 // ---------- words ----------
 
-/** A word as typed: control characters out, blanks collapsed, trimmed, at most maxWordLen characters. Null if nothing is left. */
-export function cleanWord(raw: unknown): string | null {
+/** A word as typed: control characters out, blanks collapsed, trimmed, at most `max` characters. Null if nothing is left. */
+export function cleanWord(raw: unknown, max: number = GLEICH.maxWordLen): string | null {
   if (typeof raw !== 'string') return null;
-  const t = [...raw.replace(/\p{Cc}/gu, ' ').replace(/\s+/g, ' ').trim()].slice(0, GLEICH.maxWordLen).join('').trim();
+  const t = [...raw.replace(/\p{Cc}/gu, ' ').replace(/\s+/g, ' ').trim()].slice(0, max).join('').trim();
   return t || null;
 }
 

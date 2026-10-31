@@ -33,6 +33,8 @@ export class CardsView {
   private cam = new THREE.Vector3();
   /** Seats whose card is on screen right now (their name tag steps aside). */
   readonly shown = new Set<number>();
+  /** Seat being picked by looking at it, -1 for none: its card gets a frame. */
+  picked = -1;
 
   constructor(
     host: HTMLElement,
@@ -93,6 +95,7 @@ export class CardsView {
       this.shown.add(seat);
       if (t.box.hidden) t.box.hidden = false;
       t.box.classList.toggle('back', card === '?');
+      t.box.classList.toggle('picked', seat === this.picked);
       const src = card === '?' ? '' : card;
       if (t.src !== src) {
         t.src = src;

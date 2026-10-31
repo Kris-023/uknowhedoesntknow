@@ -420,6 +420,62 @@ export const GLEICH = {
   boardPx: { w: 384, h: 240 },
 } as const;
 
+/** Picking someone by looking at them ("Zeig drauf", the vote in "Ahnungslos"). */
+export const GAZE = {
+  /** Largest angle between the view direction and a head that still counts as looking at them. */
+  maxAngleDeg: 18,
+  /** The current pick wins within this many extra degrees, so it doesn't flicker between two close heads. */
+  stickDeg: 3,
+  /** While the pick changes it goes to the host at most this often. */
+  sendMs: 120,
+} as const;
+
+/** "Zeig drauf": "Wer würde am ehesten …?", everyone looks at their choice at the same time. */
+export const ZEIG = {
+  /** Questions per round. */
+  questions: 8,
+  /** Seconds to look at someone; whoever you look at when it runs out is your pick. */
+  lookS: 10,
+  /** The result stays this long unless everyone pressed "Weiter" before. */
+  revealS: 8,
+  /** For everyone whose pick was (one of) the most picked. */
+  majorityPoints: 1,
+  /** A "majority" of one isn't agreement: below this many votes for the top nobody scores. */
+  minAgree: 2,
+  /** With two people everyone can only pick the other one. */
+  minPlayers: 3,
+  /** A new host gets the picks again from the clients; the countdown waits at least this long for them. */
+  takeoverS: 3,
+  /** Absent player: how long the others' round keeps their place (like WHOAMI). */
+  absentLeaveS: 30 * 60,
+} as const;
+
+/** "Ahnungslos": everyone knows the word but one; a clue word each, then find the one without a clue. */
+export const AHNUNG = {
+  /** Clue laps around the table. */
+  laps: 2,
+  /** Seconds per clue; then the turn is skipped. */
+  clueS: 30,
+  voteS: 15,
+  /** Seconds for the caught player to guess the word. */
+  guessS: 20,
+  /** Not caught (wrong person or a tie). */
+  escapePoints: 3,
+  /** Caught, but guessed the word. */
+  guessPoints: 2,
+  /** Caught and guessed wrong: for each of the others. */
+  catchPoints: 1,
+  /** Longest clue and guess in code points; a guess may be as long as a word card. */
+  maxClueLen: 24,
+  maxGuessLen: 40,
+  minPlayers: 3,
+  /** Absent player on turn: their clue is skipped after this long. */
+  absentPassS: 8,
+  absentLeaveS: 30 * 60,
+  /** A client without its word asks the host again this often. */
+  askAgainMs: 2000,
+} as const;
+
 /** Room settings dialog: the choices on offer. */
 export const ROOM = {
   voteChoices: [10, 20, 30, 45],
