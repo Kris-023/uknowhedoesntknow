@@ -3,7 +3,7 @@
 Browser-Partyspiel für 2 bis 4 Freunde: Ihr sitzt euch in einem viel zu schnellen U-Bahn-Wagen gegenüber,
 draußen rast der Tunnel vorbei, drinnen flackert das Neon, und die Mitreisenden starren aufs Handy.
 Sechs Maps: Hypertrain (der U-Bahn-Wagen), Waschsalon, Bürgeramt, Späti 3 Uhr, WG-Wohnzimmer und Diner. Die Minigames
-sind „Wer bin ich?“, „Sag's anders“ und „Gleich gedacht“.
+sind „Wer bin ich?“, „Sag's anders“, „Gleich gedacht“, „Zeig drauf“ und „Ahnungslos“.
 Nur PC, nur Browser, nur private Räume, kein Server.
 
 **Stand: M7 (alle Meilensteine aus dem Auftrag umgesetzt).** Details und offene Fragen: `teamlead/SUPERDOC.md`.
@@ -64,6 +64,31 @@ Alle schreiben ein Wort, bis alle dasselbe denken. Ohne Absprache, alle gewinnen
 - Groß-/Kleinschreibung, Artikel, Umlaute, einfache Mehrzahl und ein Tippfehler zählen automatisch als gleich. Für alles
   andere (Synonyme, andere Sprache) stimmt ihr mit <kbd>F</kbd> ab: „Zählt als gleich?“, <kbd>1</kbd> Ja, <kbd>2</kbd> Nein.
 - Höchstens 10 Versuche; je schneller, desto mehr Punkte für alle. Reden während des Schreibens ruft den Schaffner.
+
+### Zeig drauf
+
+„Wer würde am ehesten …?“ Ab drei Spielern. Alle zeigen gleichzeitig, und zwar mit dem Kopf.
+
+- Pro Runde 8 Fragen. Schau 10 Sekunden lang die Person an, die es am ehesten tun würde: ihr Name leuchtet auf,
+  oben steht „Du zeigst auf …“. Wen du anschaust, wenn die Zeit um ist, der zählt. <kbd>Enter</kbd> oder <kbd>Leertaste</kbd>
+  legt dich vorher fest; ohne Maus-Blick geht es auch per Klick auf den Namen.
+- Danach zeigt jeder Kopf, wie viele auf ihn gezeigt haben und wer. Wer mit der Mehrheit gezeigt hat (bei Gleichstand mit
+  einem der Meistgewählten), bekommt 1 Punkt; hat jeder nur eine Stimme, gibt es keinen. Weiter mit <kbd>Enter</kbd>.
+- Am Ende stehen alle Fragen mit dem jeweiligen „Gewinner“. Mit dem NSFW-Stapel kommen auch derbe Fragen dazu.
+
+### Ahnungslos
+
+Alle kennen das Wort, nur einer nicht. Ab drei Spielern.
+
+- Der Host zieht ein Wort aus den Stapeln des Raums (mit „Eigene“ auch aus euren Wörtern). Alle sehen es oben, nur einer
+  liest „Du bist ahnungslos“ und muss mitbluffen.
+- Reihum, zwei Runden lang, sagt jeder **ein** Wort dazu: tippen und <kbd>Enter</kbd> (30 Sekunden), es steht dann über dem
+  Kopf. Laut sagen darf man es auch. Das Wort selbst ist tabu.
+- Dann zeigen alle 15 Sekunden lang mit dem Kopf auf den Verdächtigen (wie bei „Zeig drauf“, <kbd>Enter</kbd> legt fest).
+- Falsche Person oder Gleichstand: der Ahnungslose kommt davon (+3). Erwischt: er darf das Wort raten (20 Sekunden);
+  richtig +2 für ihn, falsch +1 für alle anderen.
+- Fällt der Host mitten in der Runde aus, wird sie abgebrochen: nur er wusste, wer ahnungslos ist. Der Host-Rechner
+  kennt das Wort technisch immer, auch wenn der Host selbst ahnungslos ist; das Spiel zeigt es ihm nur nicht.
 
 ### Steuerung
 

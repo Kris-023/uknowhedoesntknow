@@ -21,7 +21,7 @@ import { GpuTimer, HeapWatch } from './debug/gpuTimer';
 import { MainMenu, PauseMenu, type LobbyChoice } from './ui/menu';
 import { MicHud } from './ui/micHud';
 import { NameTags } from './ui/nametags';
-import { LocalGameRoom, sessionNet, type GameNet, type Minigame } from './game/minigame';
+import { LocalGameRoom, sessionNet, type GameNet, type GameUi, type Minigame, type PlayableGame } from './game/minigame';
 import { LoudTracker, SchaffnerFigure } from './game/schaffner';
 import { WhoamiBots } from './game/whoami/bots';
 import { CardsView } from './game/whoami/cardsView';
@@ -34,6 +34,13 @@ import { SagsUi } from './game/sagsanders/ui';
 import { GleichBots } from './game/gleich/bots';
 import { GleichGame } from './game/gleich/game';
 import { GleichUi } from './game/gleich/ui';
+import { ZeigBots } from './game/zeig/bots';
+import { ZeigGame } from './game/zeig/game';
+import { ZeigUi } from './game/zeig/ui';
+import { AhnungBots } from './game/ahnungslos/bots';
+import { AhnungGame } from './game/ahnungslos/game';
+import { AhnungUi } from './game/ahnungslos/ui';
+import { Gaze, type GazeTarget } from './game/gaze';
 import { customCards, playerId } from './words/custom';
 import { initUiScale } from './ui/scale';
 import { loadProfile, onSettings, saveProfile, settings, updateSettings } from './ui/store';
@@ -125,6 +132,23 @@ async function start(): Promise<void> {
       },
     });
   }
+}
+
+/** One minigame as the coach drives it: adding a game means adding one of these in launch(). */
+interface GameEntry {
+  id: GameId;
+  game: PlayableGame;
+  ui: GameUi;
+  /** Solo test round only. */
+  bots: { tick(now: number): void } | null;
+  /** Phases that close the Esc menu when they begin (a dialog needs the screen). */
+  closeOn: readonly string[];
+  /** A client's guess whether the Schaffner's visit costs a point right now (the host decides for real). */
+  fineable(): boolean;
+  /** Board over a player's head while this game owns the screen: image, '?' (hidden) or null. */
+  board?(id: string): string | '?' | null;
+  /** The game picks people by looking at them. */
+  gaze?: GazeTarget;
 }
 
 function launch(clock: SharedClock, session: Session | null, startCam: 'wagon' | 'pov', code = '', voice: Voice | null = null, bench = false): void {
@@ -273,15 +297,14 @@ function launch(clock: SharedClock, session: Session | null, startCam: 'wagon' |
       swapMap(id);
     };
 
-  // Minigames ("Wer bin ich?", "Sag's anders", "Gleich gedacht"): over the room, or solo against bots on the other seats.
-  let bots: WhoamiBots | null = null;
-  let sagsBots: SagsBots | null = null;
-  let ggBots: GleichBots | null = null;
+  // Minigames: over the room, or solo against bots on the other seats. Each game is one entry in
+  // `games`; everything below (start, screens, scoreboard owner, boards, Schaffner, tick) loops over them.
   let gameNet: GameNet;
+  let solo: { room: LocalGameRoom; ids: string[] } | null = null;
   // Solo: your own settings for the next room stand in for the host's.
   const roomOpts = () => session?.opts ?? settings.room;
   const sagsRoom = { decks: () => roomOpts().decks, turnS: () => roomOpts().turnS, teams: () => roomOpts().sagsTeams };
-  const gleichRoom = { decks: () => roomOpts().decks };
+  const deckRoom = { decks: () => roomOpts().decks };
   if (session) gameNet = sessionNet(session);
   else {
     const members = players.people.map((p, i) => ({ id: i === players.active ? 'me' : `bot${i}`, seat: i, name: i === players.active ? profile.name : p.name }));
@@ -289,25 +312,21 @@ function launch(clock: SharedClock, session: Session | null, startCam: 'wagon' |
     members.sort((a, b) => Number(b.id === 'me') - Number(a.id === 'me'));
     const room = new LocalGameRoom(members);
     gameNet = room.net('me');
-    const ids = members.slice(1).map((m) => m.id);
-    bots = new WhoamiBots(room, ids);
-    sagsBots = new SagsBots(room, ids, sagsRoom);
-    ggBots = new GleichBots(room, ids, gleichRoom);
+    solo = { room, ids: members.slice(1).map((m) => m.id) };
   }
+  /** Bots for the solo round; none in a real room. */
+  const botsFor = <T,>(make: (room: LocalGameRoom, ids: string[]) => T): T | null => (solo ? make(solo.room, solo.ids) : null);
+  const members = () => gameNet.members();
   // Dev only: ?voteS=120 stretches votes, so slow test browsers don't run out of time.
   const devVoteS = import.meta.env.DEV ? Number(params.get('voteS')) || undefined : undefined;
   const whoami = new WhoamiGame(gameNet, devVoteS);
   whoami.roomVoteS = () => session?.opts.voteS;
   const sags = new SagsGame(gameNet, sagsRoom, () => ({ pid: playerId(), cards: customCards() }));
-  const gleich = new GleichGame(gameNet, gleichRoom);
-  // Someone reloaded and came back: they keep seat, points and their place in the round.
-  session?.listen({
-    rejoin: (oldId, newId) => {
-      whoami.rejoin(oldId, newId);
-      sags.rejoin(oldId, newId);
-      gleich.rejoin(oldId, newId);
-    },
-  });
+  const gleich = new GleichGame(gameNet, deckRoom);
+  const zeig = new ZeigGame(gameNet, deckRoom);
+  // Own words come through "Sag's anders", which shares everyone's submissions in the room anyway.
+  const ahnRoom = { decks: () => roomOpts().decks, cards: () => sags.roomCards(), pidOf: (id: string) => sags.pidOf(id) };
+  const ahnung = new AhnungGame(gameNet, ahnRoom);
   const hostName = () => gameNet.members().find((m) => m.id === gameNet.hostId())?.name || 'der Host';
   const micWarning = () => {
     if (!voice || !voice.roomVoice) return null;
@@ -315,107 +334,118 @@ function launch(clock: SharedClock, session: Session | null, startCam: 'wagon' |
     if (voice.muted) return 'Du bist stumm geschaltet: M drücken.';
     return null;
   };
-  const whoamiRunning = () => !!whoami.state && whoami.state.phase !== 'done';
-  // Only one game at a time; starting one ends the other and closes both end screens.
+  const wiUi = new WhoamiUi(document.body, whoami, members, { hostName, start: () => startGame('whoami'), micWarning });
+  const uiInfo = (id: GameId) => ({ hostName, start: () => startGame(id), flash: wiUi.flash.bind(wiUi), micWarning });
+  const ggUi = new GleichUi(document.body, gleich, members, uiInfo('gleich'));
+  const zdUi = new ZeigUi(document.body, zeig, members, uiInfo('zeig'));
+  const ahUi = new AhnungUi(document.body, ahnung, members, uiInfo('ahnungslos'));
+  const games: GameEntry[] = [
+    {
+      id: 'whoami',
+      game: whoami,
+      ui: wiUi,
+      bots: botsFor((r, ids) => new WhoamiBots(r, ids)),
+      closeOn: ['done', 'cards'],
+      fineable: () => whoami.state?.phase === 'play',
+      board: (id) => {
+        const s = whoami.state;
+        if (!s || s.phase === 'cards' || !s.players.includes(id)) return null;
+        // Your own card stays a question mark until you have solved it.
+        if (id === gameNet.selfId) return whoami.cards.get(id) ?? '?';
+        return whoami.cards.get(id) ?? null;
+      },
+    },
+    { id: 'sags', game: sags, ui: new SagsUi(document.body, sags, members, uiInfo('sags')), bots: botsFor((r, ids) => new SagsBots(r, ids, sagsRoom)), closeOn: ['done'], fineable: () => sags.running },
+    { id: 'gleich', game: gleich, ui: ggUi, bots: botsFor((r, ids) => new GleichBots(r, ids, deckRoom)), closeOn: ['done'], fineable: () => gleich.writing, board: (id) => ggUi.boardOf(id) },
+    { id: 'zeig', game: zeig, ui: zdUi, bots: botsFor((r, ids) => new ZeigBots(r, ids, deckRoom)), closeOn: ['done'], fineable: () => zeig.running, board: (id) => zdUi.boardOf(id), gaze: zeig },
+    { id: 'ahnungslos', game: ahnung, ui: ahUi, bots: botsFor((r, ids) => new AhnungBots(r, ids, ahnRoom)), closeOn: ['done'], fineable: () => ahnung.cluing, board: (id) => ahUi.boardOf(id), gaze: ahnung },
+  ];
+  const entry = (id: GameId | null) => games.find((g) => g.id === id) ?? null;
+  const runningGame = () => games.find((g) => g.game.running) ?? null;
+  // Someone reloaded and came back: they keep seat, points and their place in the round.
+  session?.listen({
+    rejoin: (oldId, newId) => {
+      for (const g of games) g.game.rejoin(oldId, newId);
+    },
+  });
+  // Only one game at a time; starting one ends the others and closes all end screens.
   const startGame = (id: GameId) => {
-    wiUi.closeDone();
-    saUi.close();
-    ggUi.close();
-    if (id !== 'whoami' && whoamiRunning()) whoami.end();
-    if (id !== 'sags' && sags.running) sags.end();
-    if (id !== 'gleich' && gleich.running) gleich.end();
-    ({ whoami, sags, gleich })[id].start();
+    for (const g of games) g.ui.close();
+    for (const g of games) if (g.id !== id && g.game.running) g.game.end();
+    entry(id)!.game.start();
     lobby.pick(id);
   };
-  const wiUi = new WhoamiUi(document.body, whoami, () => gameNet.members(), { hostName, start: () => startGame('whoami'), micWarning });
-  const saUi = new SagsUi(document.body, sags, () => gameNet.members(), {
-    hostName,
-    start: () => startGame('sags'),
-    flash: (title, big, tone, sub) => wiUi.flash(title, big, tone, sub),
-    micWarning,
-  });
-  const ggUi = new GleichUi(document.body, gleich, () => gameNet.members(), {
-    hostName,
-    start: () => startGame('gleich'),
-    flash: (title, big, tone, sub) => wiUi.flash(title, big, tone, sub),
-    micWarning,
-  });
   const lobby = new GameLobby(document.body, {
     isHost: () => gameNet.isHost(),
     hostName,
     players: () => gameNet.members().length,
-    idle: () => !whoamiRunning() && !sags.running && !gleich.running && !wiUi.doneOpen && !saUi.doneOpen && !ggUi.doneOpen,
+    idle: () => !runningGame() && !games.some((g) => g.ui.doneOpen),
     solo: !session,
     start: startGame,
   });
-  if (session) absentBar(session, [whoami, sags, gleich]);
-  // The game last started owns the scoreboard; the other one's board steps aside.
+  if (session) absentBar(session, games.map((g) => g.game));
+  // The game last started owns the scoreboard; the others' screens step aside.
   let current: GameId | null = null;
   const own = (id: GameId) => {
     if (current === id) return;
     current = id;
-    wiUi.shown = id === 'whoami';
-    saUi.shown = id === 'sags';
-    ggUi.shown = id === 'gleich';
+    for (const g of games) g.ui.shown = g.id === id;
   };
   const cards = new CardsView(document.body, players, world.camera, stage);
-  // Phase changes that need the screen: a new card to make or the end of round close the Esc menu.
-  let lastPhase = '';
-  whoami.onChange(() => {
-    const phase = whoami.state?.phase ?? '';
-    if (whoamiRunning()) own('whoami');
-    if (phase !== lastPhase && (phase === 'done' || phase === 'cards') && pause.isOpen) pause.close();
-    lastPhase = phase;
-    syncHint();
-  });
-  let lastSags = '';
-  sags.onChange(() => {
-    const phase = sags.state?.phase ?? '';
-    if (sags.running) own('sags');
-    if (phase !== lastSags && phase === 'done' && pause.isOpen) pause.close();
-    lastSags = phase;
-    syncHint();
-  });
-  let lastGleich = '';
-  gleich.onChange(() => {
-    const phase = gleich.state?.phase ?? '';
-    if (gleich.running) own('gleich');
-    if (phase !== lastGleich && phase === 'done' && pause.isOpen) pause.close();
-    lastGleich = phase;
-    syncHint();
-  });
+  // Phase changes that need the screen (a card to make, the end of a round) close the Esc menu.
+  for (const g of games) {
+    let lastPhase = '';
+    g.game.onChange(() => {
+      const phase = g.game.state?.phase ?? '';
+      if (g.game.running) own(g.id);
+      if (phase !== lastPhase && g.closeOn.includes(phase) && pause.isOpen) pause.close();
+      lastPhase = phase;
+      syncHint();
+    });
+  }
   const cardOf = (seat: number): string | '?' | null => {
-    const s = whoami.state;
     const id = gameNet.members().find((m) => m.seat === seat)?.id;
-    if (current === 'gleich') return id ? ggUi.boardOf(id) : null;
-    if (current !== 'whoami' || !s || s.phase === 'cards' || !id || !s.players.includes(id)) return null;
-    // Your own card stays a question mark until you have solved it.
-    if (id === gameNet.selfId) return whoami.cards.get(id) ?? '?';
-    return whoami.cards.get(id) ?? null;
+    return id ? (entry(current)?.board?.(id) ?? null) : null;
+  };
+  // Picking people by looking at them ("Zeig drauf", the vote in "Ahnungslos").
+  const gaze = new Gaze(() => ({ camera: world.camera, players }), document.body);
+  const seatOfId = (id: string | null) => (id ? (gameNet.members().find((m) => m.id === id)?.seat ?? -1) : -1);
+  const aimGaze = () => {
+    const target = entry(current)?.gaze ?? null;
+    const ids = target?.pickable() ?? [];
+    const pov = world.cam === 'pov';
+    let seat = -1;
+    if (ids.length) {
+      const mine = gameNet.members().filter((m) => ids.includes(m.id));
+      seat = pov ? gaze.pick(mine.map((m) => m.seat)) : -1;
+      target!.aim(mine.find((m) => m.seat === seat)?.id ?? null);
+    } else if (target?.lockedPick) seat = seatOfId(target.lockedPick);
+    gaze.aiming = pov && ids.length > 0;
+    tags.picked = seat;
+    cards.picked = seat;
   };
   pause.gameControls = () => {
     const box = el('div', 'room-box');
     box.append(el('span', 'eyebrow', 'Minigame'));
-    const running: GameId | null = whoamiRunning() ? 'whoami' : sags.running ? 'sags' : gleich.running ? 'gleich' : null;
+    const running = runningGame();
     const row = el('div', 'row');
     if (gameNet.isHost()) {
-      const enough = gameNet.members().length >= 2;
+      const n = gameNet.members().length;
       for (const g of GAMES) {
-        if (running && running !== g.id) continue;
+        if (running && running.id !== g.id) continue;
         const b = el('button', running ? 'btn big' : 'btn', running ? `${g.title}: Runde beenden` : session ? `${g.title} starten` : `${g.title}: Testrunde`);
         b.type = 'button';
-        b.disabled = !running && !enough;
+        b.disabled = !running && n < g.min;
         b.addEventListener('click', () => {
-          if (running === 'whoami') whoami.end();
-          else if (running === 'sags') sags.end();
-          else if (running === 'gleich') gleich.end();
+          if (running) running.game.end();
           else startGame(g.id);
           pause.onResume();
         });
         row.append(b);
       }
-      if (!enough) row.append(el('span', 'note', 'Mindestens zwei Spieler.'));
-    } else row.append(el('span', 'note', running ? `${GAMES.find((g) => g.id === running)!.title}: eine Runde läuft.` : 'Der Host startet die Runde.'));
+      if (!running && n < 2) row.append(el('span', 'note', 'Mindestens zwei Spieler.'));
+      else if (!running && n < 3) row.append(el('span', 'note', `${GAMES.filter((g) => g.min > n).map((g) => `„${g.title}“`).join(' und ')}: Mindestens drei Spieler.`));
+    } else row.append(el('span', 'note', running ? `${GAMES.find((g) => g.id === running.id)!.title}: eine Runde läuft.` : 'Der Host startet die Runde.'));
     box.append(row);
     return box;
   };
@@ -429,7 +459,7 @@ function launch(clock: SharedClock, session: Session | null, startCam: 'wagon' |
     schaffner.show(world.map.seats[m.seat] ? world.map.scoldSpot(m.seat) : null, clock.now());
     // Room setting: 'warn' only tells off, 'fine' also costs a point (only while a round is played).
     const fineOn = (session?.opts.schaffner ?? 'fine') === 'fine';
-    const fined = fineOn && (gameNet.isHost() ? whoami.penalize(id, SCHAFFNER.penalty) || sags.penalize(id, SCHAFFNER.penalty) || gleich.penalize(id, SCHAFFNER.penalty) : whoami.state?.phase === 'play' || sags.running || gleich.writing);
+    const fined = fineOn && (gameNet.isHost() ? games.some((g) => g.game.penalize(id, SCHAFFNER.penalty)) : games.some((g) => g.fineable()));
     ambience?.announce(`Durchsage für ${m.name || 'Fahrgast'}: Etwas leiser bitte!${fined ? ' Das kostet einen Punkt.' : ''}`, true);
     const mine = m.id === gameNet.selfId;
     wiUi.flash(
@@ -567,17 +597,12 @@ function launch(clock: SharedClock, session: Session | null, startCam: 'wagon' |
 
     measureVoices();
     world.update(t, dt, settings);
-    whoami.tick(now);
-    sags.tick(now);
-    gleich.tick(now);
-    bots?.tick(now);
-    sagsBots?.tick(now);
-    ggBots?.tick(now);
-    wiUi.tick();
-    saUi.tick();
-    ggUi.tick();
+    aimGaze();
+    for (const g of games) g.game.tick(now);
+    for (const g of games) g.bots?.tick(now);
+    for (const g of games) g.ui.tick();
     lobby.update();
-    players.showMarkers = !whoamiRunning() && !sags.running && !gleich.running;
+    players.showMarkers = !runningGame();
     cards.update(cardOf, (seat) => players.people[seat].name, world.cam === 'pov');
     // A card carries the name; the separate tag steps aside meanwhile.
     tags.update(world.cam === 'pov', (i) => Math.max(0, levels[i]), (i) => cards.shown.has(i));
@@ -677,7 +702,7 @@ function launch(clock: SharedClock, session: Session | null, startCam: 'wagon' |
 
   if (import.meta.env.DEV) {
     // Hook for Playwright checks; not shipped in the production bundle. Getters: the world changes with the map.
-    const hook = { panel, pipeline, clock, session, pause, voice, whoami, sags, gleich, callSchaffner, swapMap, tags, cards };
+    const hook = { panel, pipeline, clock, session, pause, voice, whoami, sags, gleich, zeig, ahnung, games, gaze, callSchaffner, swapMap, tags, cards };
     Object.defineProperties(hook, {
       world: { get: () => world, enumerable: true },
       ambience: { get: () => ambience, enumerable: true },

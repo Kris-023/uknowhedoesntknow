@@ -1,12 +1,26 @@
+import { AHNUNG, ZEIG } from '../config';
 import { el } from '../ui/dom';
 
-export type GameId = 'whoami' | 'sags' | 'gleich';
+export type GameId = 'whoami' | 'sags' | 'gleich' | 'zeig' | 'ahnungslos';
 
-export const GAMES: readonly { id: GameId; title: string; blurb: string }[] = [
-  { id: 'whoami', title: 'Wer bin ich?', blurb: 'Bild über dem Kopf, Ja/Nein-Fragen, geheime Abstimmung.' },
-  { id: 'sags', title: "Sag's anders", blurb: 'Wort erklären, ohne die verbotenen Wörter.' },
-  { id: 'gleich', title: 'Gleich gedacht', blurb: 'Alle schreiben ein Wort, bis alle dasselbe denken. Ohne Absprache.' },
+export interface GameInfo {
+  id: GameId;
+  title: string;
+  blurb: string;
+  /** Fewest players a round can start with. */
+  min: number;
+}
+
+export const GAMES: readonly GameInfo[] = [
+  { id: 'whoami', title: 'Wer bin ich?', blurb: 'Bild über dem Kopf, Ja/Nein-Fragen, geheime Abstimmung.', min: 2 },
+  { id: 'sags', title: "Sag's anders", blurb: 'Wort erklären, ohne die verbotenen Wörter.', min: 2 },
+  { id: 'gleich', title: 'Gleich gedacht', blurb: 'Alle schreiben ein Wort, bis alle dasselbe denken. Ohne Absprache.', min: 2 },
+  { id: 'zeig', title: 'Zeig drauf', blurb: 'Wer würde am ehesten …? Alle zeigen gleichzeitig, mit dem Blick.', min: ZEIG.minPlayers },
+  { id: 'ahnungslos', title: 'Ahnungslos', blurb: 'Alle kennen das Wort, nur einer nicht. Reihum ein Wort dazu, dann: Wer ist ahnungslos?', min: AHNUNG.minPlayers },
 ];
+
+/** "zwei", "drei" … for "Mindestens drei Spieler." */
+export const countWord = (n: number) => ['null', 'ein', 'zwei', 'drei', 'vier'][n] ?? String(n);
 
 export interface LobbyRoom {
   isHost(): boolean;
@@ -45,8 +59,12 @@ export class GameLobby {
     });
   }
 
+  private get game(): GameInfo {
+    return GAMES.find((g) => g.id === this.selected)!;
+  }
+
   private get canStart(): boolean {
-    return this.room.players() >= 2;
+    return this.room.players() >= this.game.min;
   }
 
   pick(id: GameId): void {
@@ -81,7 +99,7 @@ export class GameLobby {
       seg.append(b);
     }
     l.append(seg);
-    const game = GAMES.find((g) => g.id === this.selected)!;
+    const game = this.game;
     const row = el('div', 'wi-actions');
     if (this.canStart) {
       row.append(el('span', 'note', r.solo ? `Testrunde gegen Bots · ${game.blurb}` : `${r.players()} im Raum · ${game.blurb}`));
@@ -89,7 +107,8 @@ export class GameLobby {
       b.type = 'button';
       b.addEventListener('click', () => r.start(this.selected));
       row.append(b, el('span', 'note', 'T wechselt das Spiel'));
-    } else row.append(el('span', '', 'Warte auf Mitspieler …'), el('span', 'note', 'Link teilen: Esc → Link kopieren'));
+    } else if (r.players() >= 2) row.append(el('span', '', `${game.title}: mindestens ${countWord(game.min)} Spieler.`), el('span', 'note', 'T wechselt das Spiel · Link teilen: Esc → Link kopieren'));
+    else row.append(el('span', '', 'Warte auf Mitspieler …'), el('span', 'note', 'Link teilen: Esc → Link kopieren'));
     l.append(row);
   }
 }
