@@ -41,7 +41,8 @@ describe('wg events', () => {
     }
     expect(steadyDips).toBeGreaterThan(0);
     expect(rawDips).toBeGreaterThan(steadyDips);
-  });
+    // A 900 s sweep in 10 ms steps: slow when suites run concurrently.
+  }, 30_000);
 
   it('pauses the cat by the integrated freeze, no more', () => {
     const seed = 42;

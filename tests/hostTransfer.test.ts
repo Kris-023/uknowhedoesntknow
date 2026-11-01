@@ -37,13 +37,14 @@ function room(ids: string[]) {
   };
   /** Who thinks it is host, and whom everyone follows. */
   const left = new Set<string>();
-  const leave = (id: string) => {
+  /** `deliverPending`: what the leaver already sent still arrives first (a closing tab, not a pulled plug). */
+  const leave = (id: string, deliverPending = false) => {
     left.add(id);
-    hub.disconnect(id);
+    hub.disconnect(id, deliverPending);
     hub.flush();
   };
   const hosts = () => Object.entries(s).filter(([id, x]) => !left.has(id) && x.role === 'host').map(([id]) => id);
-  const follows = () => Object.values(s).map((x) => x.hostId);
+  const follows = () => Object.entries(s).filter(([id]) => !left.has(id)).map(([, x]) => x.hostId);
   return { hub, t, s, clocks, status, run, hosts, follows, now, leave };
 }
 
@@ -117,12 +118,13 @@ describe('Host übergeben (Session)', () => {
     expect(s.c.role).toBe('client');
   });
 
-  it('a handover message addressed to someone else is ignored', () => {
-    const { s, run, hosts } = room(['a', 'b', 'c']);
+  it('a handover naming someone else only makes a note: nobody changes host', () => {
+    const { s, run, hosts, follows } = room(['a', 'b', 'c']);
     run();
     rawSend(s.a, 'handover', 'c', 'b');
     run(300);
     expect(hosts()).toEqual(['a']);
+    expect(follows()).toEqual(['a', 'a', 'a']);
   });
 
   it('a second request while one is open is refused', () => {
@@ -216,6 +218,93 @@ describe('Host übergeben (Session)', () => {
     // a holds seat 0, the best rank: it is host again.
     expect(hosts()).toEqual(['a']);
     expect(s.b.hostId).toBe('a');
+  });
+});
+
+describe('Host übergeben: the old host leaves, or the confirmation is late', () => {
+  for (const n of [3, 4]) {
+    for (const deliverPending of [false, true]) {
+      it(`${n} players, the old host closes the tab at any moment of the handover${deliverPending ? ' (its messages still arrive)' : ' (its messages are lost)'}: one host, everyone follows it`, () => {
+        const ids = ['a', 'b', 'c', 'd'].slice(0, n);
+        for (const target of ids.slice(1)) {
+          for (let step = 0; step <= 4; step++) {
+            const { hub, s, run, hosts, follows, leave } = room(ids);
+            run();
+            expect(s.a.handOver(target)).toBe(true);
+            // The handover travels for `step` network rounds, then the old host is gone.
+            hub.flush(step);
+            leave('a', deliverPending);
+            run();
+            const label = `target ${target}, step ${step}`;
+            const host = hosts();
+            expect(host.length, `${label}: hosts ${host}`).toBe(1);
+            expect(new Set(follows()), `${label}: follows ${follows()}`).toEqual(new Set(host));
+            // Whichever won, the room works: its speed reaches everyone.
+            s[host[0]].setSpeed(321, 5);
+            run(300);
+            for (const [id, x] of Object.entries(s)) if (id !== 'a') expect(x.train.kmh, `${label} ${id}`).toBe(321);
+            for (const [id, x] of Object.entries(s)) if (id !== 'a') expect(x.roster.size, `${label} ${id}`).toBe(n - 1);
+          }
+        }
+      });
+    }
+  }
+
+  it('with the handover delivered, the old host leaving elects the target everyone was told about', () => {
+    const { hub, s, run, hosts, follows, leave } = room(['a', 'b', 'c', 'd']);
+    run();
+    s.a.handOver('d');
+    hub.flush(1);
+    leave('a', true);
+    run();
+    expect(hosts()).toEqual(['d']);
+    expect(follows()).toEqual(['d', 'd', 'd']);
+  });
+
+  it('the confirmation comes after the wait: the target still wins and takes the others along', () => {
+    // The target's welcome and roster never reach the old host in time (or at all), and only some others got them.
+    for (const lostTo of [['a'], ['a', 'b'], ['a', 'b', 'c']]) {
+      const { hub, t, s, run, hosts, follows } = room(['a', 'b', 'c']);
+      run();
+      s.a.handOver('c');
+      hub.flush(1);
+      const q = hub as unknown as { queue: { to: string; from: string }[] };
+      q.queue = q.queue.filter((p) => !(p.from === 'c' && lostTo.includes(p.to)));
+      t.ms += NET.handoverWaitMs + 100;
+      s.a.tick();
+      hub.flush();
+      run();
+      expect(hosts(), `lost to ${lostTo}`).toEqual(['c']);
+      expect(follows(), `lost to ${lostTo}`).toEqual(['c', 'c', 'c']);
+      expect(s.a.roster.size).toBe(3);
+    }
+  });
+
+  it('two hosts who each see the other\'s older, bigger roster do not both give way', () => {
+    const { hub, s, run, hosts, follows, leave } = room(['a', 'b', 'c', 'd']);
+    run();
+    // d becomes host while a is still there, and its welcome is in flight when a goes: b runs the election too.
+    s.a.handOver('d');
+    hub.flush(1);
+    // Make b ignore the hint, as if it had never arrived: it elects itself, and a real clash follows.
+    (s.b as unknown as { successor: null }).successor = null;
+    leave('a', true);
+    run();
+    expect(hosts().length).toBe(1);
+    expect(new Set(follows())).toEqual(new Set(hosts()));
+  });
+
+  it('a host handed the role back and forth settles on the last one', () => {
+    const { s, run, hosts, follows } = room(['a', 'b', 'c']);
+    run();
+    s.a.handOver('b');
+    run(300);
+    s.b.handOver('a');
+    run(300);
+    s.a.handOver('b');
+    run(300);
+    expect(hosts()).toEqual(['b']);
+    expect(follows()).toEqual(['b', 'b', 'b']);
   });
 });
 

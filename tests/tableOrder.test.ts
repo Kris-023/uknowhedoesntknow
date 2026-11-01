@@ -28,7 +28,8 @@ describe('table order', () => {
       const order = tableOrder(seats);
       expect(order.map((i) => corner(seats[i], [...seats])), id).toEqual(['TR', 'TL', 'BL', 'BR']);
     }
-  });
+    // Builds every map: slow when suites run concurrently.
+  }, 30_000);
 
   it('turns counter-clockwise seen from above on every map', () => {
     for (const id of MAP_IDS) {

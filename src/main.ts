@@ -836,9 +836,7 @@ function connect(session: Session, w: () => World, panel: DebugPanel, pause: Pau
       opts: session.opts,
     });
   pause.onRoomOpts = (o) => session.setOpts(o);
-  pause.onHandover = (id) => {
-    session.handOver(id);
-  };
+  pause.onHandover = (id) => session.handOver(id);
   const roster = (includeMe: boolean) => {
     w().players.applyRoster([...session.roster.values()], session.mySeat, includeMe);
     panel.setNetRole(session.role);

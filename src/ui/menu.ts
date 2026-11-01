@@ -352,7 +352,7 @@ export class PauseMenu extends MenuShell {
   /** Host: change the room settings for everyone. */
   onRoomOpts: ((o: RoomOpts) => void) | null = null;
   /** Host: hand the host role to this player (the button in the player list). */
-  onHandover: ((id: string) => void) | null = null;
+  onHandover: ((id: string) => boolean) | null = null;
   /** Minigame block in the game tab (start/end a round), built by the game. */
   gameControls: (() => HTMLElement | null) | null = null;
   /** Solo: switch the map right here (in a room it's part of the host's room settings). */
@@ -443,11 +443,17 @@ export class PauseMenu extends MenuShell {
       }
       clearTimeout(timer);
       timer = undefined;
+      b.classList.remove('danger');
+      if (!this.onHandover?.(id)) {
+        // Not possible right now (the player just left, or a handover is still running).
+        b.textContent = label;
+        flash(b, 'Nicht möglich');
+        return;
+      }
       b.disabled = true;
       b.textContent = 'Übergebe …';
       // Focus inside the panel blocks the refresh that shows the new roles.
       b.blur();
-      this.onHandover?.(id);
     });
     return b;
   }
