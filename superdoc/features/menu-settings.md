@@ -102,7 +102,7 @@ Everything the player touches outside the 3D scene: the main menu before a room,
 | V | halten zum Sprechen (bei Push-to-talk) |
 | G | Wer bin ich? starten (Host) |
 | F / R / P | fragen, raten, weitergeben (wenn du dran bist) |
-| 1 / 2 / 3 | Ja, Nein, Weiß nicht |
+| 1 / 2 / 3 oder A / S / D | Ja, Nein, Weiß nicht |
 | Esc | dieses Menü |
 
 This list is text only. The real handling lives with each game and with `VOICE.pttKey`/`VOICE.muteKey` in `src/config.ts` (see [voice-audio.md](voice-audio.md)), so update the list by hand when a binding changes.

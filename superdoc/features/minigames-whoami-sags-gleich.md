@@ -200,6 +200,8 @@ Start from the lobby bar: pick the game (`T`), press `G` or "Runde starten", hos
 README rules sections (Wer bin ich?: `F` ask, `R` guess, `P` pass, `1/2/3` vote; Sag's anders: `Space` begin/guessed, `P` skip,
 `B` foul or challenge; Gleich gedacht: `Enter` lock, `F` call a vote, `1/2` vote).
 
+Wer bin ich? votes also work on `A` / `S` / `D` (= `1` / `2` / `3`: yes, no, don't know; `D` only for questions), `VOTE_KEYS` in `src/game/whoami/ui.ts`. *Why:* user request, a second set under the left hand on WASD-style keyboards. They are listed only in the Esc menu's key list ("1 / 2 / 3 oder A / S / D"); the in-game hints keep showing `1/2/3` on purpose. The key handler ignores events from text inputs, text areas and selects, so typing a name or a list never votes.
+
 ## Options
 
 | Config key | Default | Meaning |

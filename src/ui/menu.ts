@@ -558,7 +558,7 @@ export class PauseMenu extends MenuShell {
       ['V', 'halten zum Sprechen (bei Push-to-talk)'],
       ['G', 'Wer bin ich? starten (Host)'],
       ['F / R / P', 'fragen, raten, weitergeben (wenn du dran bist)'],
-      ['1 / 2 / 3', 'Ja, Nein, Weiß nicht'],
+      ['1 / 2 / 3 oder A / S / D', 'Ja, Nein, Weiß nicht'],
       ['Esc', 'dieses Menü'],
     ];
     for (const [k, v] of keys) help.append(el('dt', '', k), el('dd', '', v));
