@@ -1,7 +1,6 @@
 import { getVoice, type MicState } from '../audio/voice';
-import { SHAKE } from '../config';
 import { el } from './dom';
-import { onSettings, settings, updateSettings, type Settings } from './store';
+import { GLOW_LEVELS, onSettings, settings, updateSettings, type Settings } from './store';
 
 type Section = 'voice' | 'sound' | 'gfx' | 'input';
 
@@ -14,12 +13,46 @@ const SECTIONS: readonly { id: Section; label: string }[] = [
 ];
 /** The last sub-tab you looked at, for the next time the settings open (this page load only). */
 let lastSection: Section = 'voice';
-type SliderKey = 'shakeMm' | 'mouseSens' | 'voiceVolume' | 'micGain' | 'bloomStrength' | 'renderScale' | 'vadLevel' | 'ambientVolume' | 'musicVolume' | 'announceVolume' | 'cardScale';
+
+type SliderKey = 'renderScale' | 'imageBrightness' | 'renderBrightness' | 'cardScale' | 'ambientVolume' | 'musicVolume' | 'announceVolume' | 'voiceVolume' | 'micGain' | 'vadLevel' | 'mouseSens';
+type ToggleKey = 'sharpen' | 'vignette' | 'uiBlur' | 'reduceMotion' | 'reduceFlicker' | 'fadeBlackouts' | 'quietAmbience' | 'echoCancel' | 'autoGain' | 'invertY' | 'mouseRaw';
+
+/** A hint under a control: fixed text, text that follows the settings, or ready-made markup. */
+type Hint = string | (() => string) | HTMLElement;
+interface RowOpts {
+  hint?: Hint;
+  /** Row that does not apply right now: dimmed, its controls disabled. */
+  enabled?: () => boolean;
+  /** Row that is not shown at all while this is false. */
+  visible?: () => boolean;
+  /** Which element the label points at, when it is not the content itself (a range inside `.slider`). */
+  control?: HTMLElement;
+  /** Tall content (the mic test): the label sits at the top instead of the middle. */
+  top?: boolean;
+}
 
 /** Mouth/meter level range that normal speech should reach: loud enough to open the mouth, not clipping. */
 const TARGET = { from: 0.5, to: 0.85 };
 
 const pct = (v: number) => `${Math.round(v * 100)} %`;
+
+/**
+ * Gecko-based browser (Firefox, Floorp, Zen …) on desktop Linux. Chromium and Safari put "like Gecko"
+ * in their user agent and have no `Gecko/<digits>` token; Android is left out on purpose.
+ */
+export function isGeckoLinux(ua: string): boolean {
+  return /\bGecko\/\d/.test(ua) && !/like Gecko/i.test(ua) && /Linux/.test(ua) && !/Android/i.test(ua);
+}
+
+/** The blur behind menus and HUD panels is a body class (see `.ui-blur` in style.css), kept in step with the setting. */
+function applyUiBlur(): void {
+  if (typeof document !== 'undefined') document.body?.classList.toggle('ui-blur', settings.uiBlur);
+}
+onSettings(applyUiBlur);
+if (typeof document !== 'undefined') {
+  if (document.body) applyUiBlur();
+  else addEventListener('DOMContentLoaded', applyUiBlur, { once: true });
+}
 
 /**
  * Settings, the same in the main menu, the Esc menu and (graphics + controls only) the benchmark
@@ -33,46 +66,18 @@ export class SettingsView {
 
   constructor(extra: HTMLElement | null = null, sections: Section[] = SECTIONS.map((x) => x.id)) {
     const panes = new Map<Section, HTMLElement[]>();
-    if (sections.includes('voice')) panes.set('voice', [this.voice()]);
-    if (sections.includes('sound')) {
-      const sound = el('fieldset', 'group');
-      sound.append(
-        el('legend', 'group-title', 'Ton'),
-        this.slider('Umgebung', 'ambientVolume', 0, 1.5, 0.05, pct, undefined, 'Geräusche der Map: Dröhnen, Fritteuse, Regen, Kühlschrank, Klopfen.'),
-        this.toggle('Ruhige Umgebung', 'quietAmbience', 'Dämpft das Dauerrauschen stark. Einzelne Geräusche wie Klingel oder Klopfen bleiben.'),
-        this.toggle('Musik', 'musicOn', 'Jukebox im Diner, Party nebenan in der WG.'),
-        this.slider('Lautstärke', 'musicVolume', 0, 1.5, 0.05, pct, () => settings.musicOn),
-        this.toggle('Durchsagen', 'announcements', 'Halte im Hypertrain, Aufrufe im Bürgeramt; per Sprachausgabe des Browsers. Der Schaffner spricht immer.'),
-        this.slider('Lautstärke', 'announceVolume', 0, 1.5, 0.05, pct, undefined, 'Gong und Sprache, auch für den Schaffner. Ganz links ist auch die Sprache stumm, manche Browser regeln sie sonst nicht mit.'),
-      );
-      panes.set('sound', [sound]);
-    }
+    // A short list (benchmark panel) stays one column and leaves out the key list.
+    const tabbed = sections.length >= 3;
+    if (sections.includes('voice')) panes.set('voice', this.voice());
+    if (sections.includes('sound')) panes.set('sound', this.sound());
     if (sections.includes('gfx')) {
-      const gfx = el('fieldset', 'group');
-      gfx.append(
-        el('legend', 'group-title', 'Grafik'),
-        this.slider('Auflösung', 'renderScale', 0.5, 1, 0.05, pct, undefined, 'Weniger rechnet schneller, vor allem auf 4K.'),
-        this.toggle('Leuchten', 'bloom', 'Glühen um Lampen, Neon und Leuchtschilder (Bloom).'),
-        this.slider('Stärke', 'bloomStrength', 0, 2, 0.05, pct, () => settings.bloom),
-        this.slider('Karten', 'cardScale', 0.5, 2, 0.05, pct, undefined, 'Größe der Bilder über den Köpfen bei „Wer bin ich?“.'),
-        this.seg('Licht', [['Nacht', 'nacht'], ['Hell', 'hell']] as const, 'light', 'Nacht ist die gedachte Stimmung, Hell zeigt mehr.'),
-        this.toggle('Wackeln', 'shakeOn', 'Die Kamera wackelt mit, vor allem im Hypertrain.'),
-        this.slider('Stärke', 'shakeMm', 0, SHAKE.maxMm, 1, (v) => `${v} mm`, () => settings.shakeOn),
-      );
       // The benchmark entry sits with the graphics: it's where you go to tune the fps.
-      panes.set('gfx', extra ? [gfx, extra] : [gfx]);
+      const gfx = this.gfx();
+      panes.set('gfx', extra ? [...gfx, extra] : gfx);
     }
-    if (sections.includes('input')) {
-      const input = el('fieldset', 'group');
-      input.append(el('legend', 'group-title', 'Steuerung'), this.slider('Maus', 'mouseSens', 0.2, 3, 0.1, (v) => `${v.toFixed(1)}×`));
-      // Only browsers that have the raw event get the switch.
-      if ('onpointerrawupdate' in window) input.append(this.toggle('Direkte Mauseingabe', 'mouseRaw', 'Liest die Maus ohne Umweg, reagiert direkter. Nur ausschalten, wenn die Maus damit spinnt.'));
-      input.append(this.toggle('Maus Y umkehren', 'invertY'));
-      panes.set('input', [input]);
-    }
-    // A short list (benchmark panel) stays one column; the full settings got too long for that.
-    if (panes.size < 3) for (const els of panes.values()) this.root.append(...els);
-    else this.tabbed(panes);
+    if (sections.includes('input')) panes.set('input', this.input(tabbed));
+    if (tabbed) this.tabbed(panes);
+    else for (const els of panes.values()) this.root.append(...els);
     this.off = onSettings(() => this.sync());
     this.sync();
   }
@@ -131,12 +136,58 @@ export class SettingsView {
     for (const f of this.syncs) f();
   }
 
-  private voice(): HTMLElement {
-    const box = el('fieldset', 'group');
-    box.append(el('legend', 'group-title', 'Stimme'));
-    // Order: get the mic going and the level right first; how you talk and the filters come after.
-    const later: HTMLElement[] = [];
+  // ---------- GRAFIK ----------
+  private gfx(): HTMLElement[] {
+    return [
+      group(
+        'Darstellung',
+        this.slider('Auflösung', 'renderScale', 0.5, 1, 0.05, pct, { hint: 'Weniger rechnet schneller, vor allem auf 4K.' }),
+        this.slider('Bildhelligkeit', 'imageBrightness', 0.5, 1.5, 0.05, pct, { hint: 'Macht das ganze 3D-Bild heller oder dunkler.' }),
+        this.slider('Renderhelligkeit', 'renderBrightness', 0.5, 1.5, 0.05, pct, { hint: 'Belichtung der Szene – helle Stellen leuchten stärker.' }),
+        this.slider('Kartengröße', 'cardScale', 0.5, 2, 0.05, pct, { hint: 'Größe der „Wer bin ich?“-Karten über den Köpfen.' }),
+      ),
+      group(
+        'Effekte',
+        this.seg(
+          'Leuchten',
+          [['Standard', 'standard'], ['Mittel', 'mittel'], ['Niedrig', 'niedrig'], ['Aus', 'aus']] as const,
+          'glow',
+          () => `Glühen um Lampen, Neon und Schilder: ${Math.round(GLOW_LEVELS[settings.glow] * 100)} %.`,
+        ),
+        this.toggle('Nachschärfen', 'sharpen', 'Schärft das Bild nach. Hilft vor allem, wenn die Auflösung unter 100 % steht.'),
+        this.toggle('Vignette', 'vignette', 'Dunklere Bildränder.'),
+        this.toggle('Unschärfe hinter Fenstern', 'uiBlur', 'Menüs, Karten und Anzeigen zeichnen das Bild dahinter weich.'),
+      ),
+      group(
+        'Komfort',
+        this.toggle('Weniger Bewegung', 'reduceMotion', 'Kein Wackeln im Hypertrain.'),
+        this.toggle('Weniger Flackern', 'reduceFlicker', 'Lichter flackern nicht mehr.'),
+        this.toggle('Stromausfälle überblenden', 'fadeBlackouts', 'Licht blendet bei Stromausfällen weich aus und wieder ein, statt hart aus/an.', {
+          visible: () => settings.reduceFlicker,
+        }),
+      ),
+    ];
+  }
 
+  // ---------- TON ----------
+  private sound(): HTMLElement[] {
+    const tone = el('button', 'btn ghost', 'Testton');
+    tone.type = 'button';
+    tone.addEventListener('click', () => getVoice(true)?.testTone());
+    return [
+      group(
+        'Lautstärke',
+        this.slider('Umgebung', 'ambientVolume', 0, 1.5, 0.05, pct, { hint: 'Geräusche der Map: Dröhnen, Fritteuse, Regen, Kühlschrank.' }),
+        this.slider('Musik', 'musicVolume', 0, 1.5, 0.05, pct, { hint: 'Jukebox im Diner, Party nebenan in der WG.' }),
+        this.slider('Durchsagen', 'announceVolume', 0, 1.5, 0.05, pct, { hint: 'Der Schaffner spricht immer.' }),
+        this.slider('Stimmen', 'voiceVolume', 0, 1.5, 0.05, pct, { extra: tone, hint: 'Lautstärke der anderen, mit dem Testton prüfen.' }),
+      ),
+      group('Umgebung', this.toggle('Ruhige Umgebung', 'quietAmbience', 'Dämpft das Dauerrauschen stark. Klingel und Klopfen bleiben.')),
+    ];
+  }
+
+  // ---------- STIMME ----------
+  private voice(): HTMLElement[] {
     // Starting audio needs a click, so the voice engine is created here if the menu is the first place.
     const mic = el('button', 'btn toggle');
     mic.type = 'button';
@@ -148,7 +199,6 @@ export class SettingsView {
       mic.textContent = settings.micOn ? 'An' : 'Aus';
       mic.setAttribute('aria-pressed', String(settings.micOn));
     });
-    box.append(this.field('Mikrofon', mic, 'Kopfhörer sind am besten, sonst hören die anderen sich selbst.'));
 
     const select = el('select', 'select');
     const fill = async () => {
@@ -163,27 +213,6 @@ export class SettingsView {
     void fill();
     navigator.mediaDevices?.addEventListener?.('devicechange', () => void fill());
     select.addEventListener('change', () => updateSettings({ micDevice: select.value }));
-    box.append(this.field('Gerät', select, undefined, () => settings.micOn));
-    later.push(
-      this.seg(
-        'Sprechen',
-        [['Offen', 'open'], ['Automatisch', 'auto'], ['Push-to-talk (V)', 'ptt']] as const,
-        'voiceMode',
-        'Automatisch sendet erst ab der Schwelle. M schaltet im Spiel stumm.',
-      ),
-    );
-    later.push(this.slider('Schwelle', 'vadLevel', 0.05, 0.95, 0.01, pct, () => settings.voiceMode === 'auto', 'Ab diesem Pegel wirst du gehört; im Test die weiße Linie.'));
-    const gainRow = this.slider('Mikro-Pegel', 'micGain', 0.25, 3, 0.05, pct, () => settings.micOn);
-    later.push(
-      this.seg(
-        'Rauschfilter',
-        [['KI', 'ki'], ['Browser', 'browser'], ['Aus', 'off']] as const,
-        'micFilter',
-        'KI filtert auch Tippen, Lüfter und Straßenlärm heraus, Browser nur gleichmäßiges Rauschen.',
-      ),
-    );
-    later.push(this.toggle('Echofilter', 'echoCancel', 'Rechnet heraus, was aus deinen Lautsprechern kommt. Mit Kopfhörern egal.'));
-    later.push(this.toggle('Auto-Pegel', 'autoGain', 'Gleicht den Abstand zum Mikro aus, hebt in Pausen aber Rauschen an. Bei „Automatisch“ eher aus.'));
 
     // Test meter: live level after the mic gain, the target band, and a peak marker that lingers.
     const test = el('div', 'meter-wrap');
@@ -195,8 +224,10 @@ export class SettingsView {
     const peak = el('span', 'meter-peak');
     const threshold = el('span', 'meter-threshold');
     meter.append(zone, fillBar, peak, threshold);
+    // The threshold is for the two modes that have one: mouth and automatic.
+    const hasThreshold = () => settings.voiceMode === 'auto' || settings.voiceMode === 'mouth';
     this.syncs.push(() => {
-      threshold.hidden = settings.voiceMode !== 'auto';
+      threshold.hidden = !hasThreshold();
       threshold.style.left = `${settings.vadLevel * 100}%`;
     });
     const status = el('span', 'note');
@@ -215,7 +246,7 @@ export class SettingsView {
     const STATUS: Record<MicState, string> = {
       off: 'Mikro ist aus.',
       starting: 'Warte auf Freigabe …',
-      on: 'Sprich normal: Die Spitze sollte im grünen Bereich landen. Sonst Mikro-Pegel anpassen. Bei Automatisch wird der Balken grau, solange du nicht gehört wirst.',
+      on: 'Sprich normal: Die Spitze sollte im grünen Bereich landen. Sonst Mikro-Pegel anpassen. Bei Automatisch und Nur Mundbewegung wird der Balken grau, solange du unter der Schwelle bleibst.',
       blocked: 'Nicht erlaubt. Über das Symbol links neben der Adresse erlauben, dann startet es von selbst, sonst „Mikro testen“.',
       missing: 'Kein Mikrofon gefunden.',
       error: 'Mikrofon konnte nicht gestartet werden, vielleicht nutzt es gerade ein anderes Programm.',
@@ -243,37 +274,130 @@ export class SettingsView {
       fillBar.style.setProperty('--l', l.toFixed(3));
       peak.style.left = `${(held * 100).toFixed(1)}%`;
       peak.classList.toggle('ok', held >= TARGET.from && held <= TARGET.to);
-      // In automatic mode the bar shows whether you'd be heard right now.
-      meter.classList.toggle('gated', settings.voiceMode === 'auto' && !v?.gateIsOpen);
+      // Automatic: whether you'd be heard right now. Mouth: whether the mouth would move (the engine's gate is not involved).
+      const gated = settings.voiceMode === 'auto' ? !v?.gateIsOpen : settings.voiceMode === 'mouth' && l < settings.vadLevel;
+      meter.classList.toggle('gated', gated);
     };
     this.raf = requestAnimationFrame(tick);
-    box.append(this.field('Test', test), gainRow);
 
-    const tone = el('button', 'btn ghost', 'Testton');
-    tone.type = 'button';
-    tone.addEventListener('click', () => getVoice(true)?.testTone());
-    const vol = this.slider('Stimmen', 'voiceVolume', 0, 1.5, 0.05, pct, undefined, 'Lautstärke der anderen, mit dem Testton prüfen.');
-    vol.querySelector('.slider')!.append(tone);
-    box.append(vol, ...later);
-    return box;
+    const advanced = el('fieldset', 'group');
+    const disclosure = el('button', 'disclosure', 'Erweitert');
+    disclosure.type = 'button';
+    disclosure.setAttribute('aria-expanded', 'false');
+    const body = el('div', 'group-body');
+    body.hidden = true;
+    body.id = `set-adv-${Math.random().toString(36).slice(2, 8)}`;
+    disclosure.setAttribute('aria-controls', body.id);
+    disclosure.addEventListener('click', () => {
+      const open = disclosure.getAttribute('aria-expanded') !== 'true';
+      disclosure.setAttribute('aria-expanded', String(open));
+      body.hidden = !open;
+    });
+    const legend = el('legend', 'group-title');
+    legend.append(disclosure);
+    body.append(
+      this.seg('Rauschfilter', [['KI', 'ki'], ['Browser', 'browser'], ['Aus', 'off']] as const, 'micFilter', 'KI filtert auch Tippen und Lüfter, Browser nur gleichmäßiges Rauschen.'),
+      this.toggle('Echofilter', 'echoCancel', 'Rechnet heraus, was aus deinen Lautsprechern kommt. Mit Kopfhörern egal.'),
+      this.toggle('Auto-Pegel', 'autoGain', 'Gleicht den Abstand zum Mikro aus, hebt in Pausen aber Rauschen an.'),
+    );
+    advanced.append(legend, body);
+
+    return [
+      group(
+        'Mikrofon',
+        this.field('Mikrofon', mic, { hint: 'Kopfhörer sind am besten, sonst hören die anderen sich selbst.' }),
+        this.field('Gerät', select, { enabled: () => settings.micOn }),
+        this.slider('Mikro-Pegel', 'micGain', 0.25, 3, 0.05, pct, { enabled: () => settings.micOn }),
+        this.field('Test', test, { top: true }),
+      ),
+      group(
+        'Sprechen',
+        this.seg(
+          'Modus',
+          [['Nur Mundbewegung', 'mouth'], ['Offen', 'open'], ['Automatisch', 'auto'], ['Push-to-talk (V)', 'ptt']] as const,
+          'voiceMode',
+          () =>
+            settings.voiceMode === 'mouth'
+              ? 'Deine Stimme wird nicht gesendet – nur dein Mund bewegt sich, wenn du sprichst. Praktisch, wenn ihr z. B. über Discord redet.'
+              : 'Automatisch sendet erst ab der Schwelle. M schaltet im Spiel stumm.',
+        ),
+        this.slider('Schwelle', 'vadLevel', 0.05, 0.95, 0.01, pct, {
+          hint: () => (settings.voiceMode === 'mouth' ? 'Ab diesem Pegel bewegt sich dein Mund; im Test die weiße Linie.' : 'Ab diesem Pegel wirst du gehört; im Test die weiße Linie.'),
+          visible: hasThreshold,
+        }),
+      ),
+      advanced,
+    ];
   }
 
-  private field(label: string, content: HTMLElement, hint?: string, enabled?: () => boolean): HTMLElement {
-    const row = el('div', 'field');
+  // ---------- STEUERUNG ----------
+  private input(withKeys: boolean): HTMLElement[] {
+    // Only Gecko on Linux gets the tip about slow mouse moves.
+    let gecko: HTMLElement | undefined;
+    if (typeof navigator !== 'undefined' && isGeckoLinux(navigator.userAgent)) {
+      gecko = el('span', 'field-hint');
+      gecko.append('Langsame Mausbewegungen kommen kaum an? In Gecko-Browsern (Firefox, Floorp, Zen …) unter Wayland kann es helfen, den Browser mit ', el('code', '', 'MOZ_ENABLE_WAYLAND=0'), ' zu starten.');
+    }
+    const mouse = group('Maus', this.slider('Empfindlichkeit', 'mouseSens', 0.2, 3, 0.1, (v) => `${v.toFixed(1)}×`, { hint: gecko }), this.toggle('Maus Y umkehren', 'invertY'));
+    // Only browsers that have the raw event get the switch.
+    if ('onpointerrawupdate' in window) mouse.append(this.toggle('Direkte Mauseingabe', 'mouseRaw', 'Nur Chromium. Schalte es aus, wenn sich die Maus komisch verhält.'));
+    const out = [mouse];
+    if (withKeys) {
+      const keys = el('dl', 'keys');
+      for (const [k, v] of [
+        ['Maus', 'umsehen (erst ins Bild klicken)'],
+        ['Rechte Maustaste', 'heranzoomen'],
+        ['Mittlere Maustaste', 'Maus freigeben'],
+        ['M', 'Mikro stumm an/aus'],
+        ['V', 'halten zum Sprechen (bei Push-to-talk)'],
+        ['Esc', 'Menü'],
+      ]) keys.append(el('dt', '', k), el('dd', '', v));
+      out.push(group('Tasten', keys));
+    }
+    return out;
+  }
+
+  // ---------- rows ----------
+  private field(label: string, content: HTMLElement, o: RowOpts = {}): HTMLElement {
+    const row = el('div', o.top ? 'field top' : 'field');
     const id = `set-${Math.random().toString(36).slice(2, 8)}`;
     const lab = el('label', 'field-label', label);
     lab.id = id;
-    if (content instanceof HTMLInputElement || content instanceof HTMLSelectElement) {
-      content.id = `${id}-in`;
-      lab.htmlFor = content.id;
-    } else content.setAttribute('aria-labelledby', id);
+    const ctl = o.control ?? content;
+    if (ctl instanceof HTMLInputElement || ctl instanceof HTMLSelectElement) {
+      ctl.id = `${id}-in`;
+      lab.htmlFor = ctl.id;
+    } else ctl.setAttribute('aria-labelledby', id);
     row.append(lab, content);
-    if (hint) row.append(el('span', 'field-hint', hint));
-    if (enabled) this.syncs.push(() => row.classList.toggle('off', !enabled()));
+    const hint = o.hint;
+    if (hint instanceof HTMLElement) row.append(hint);
+    else if (hint) {
+      const h = el('span', 'field-hint');
+      row.append(h);
+      this.syncs.push(() => {
+        h.textContent = typeof hint === 'function' ? hint() : hint;
+      });
+    }
+    const enabled = o.enabled;
+    if (enabled) {
+      this.syncs.push(() => {
+        const on = enabled();
+        row.classList.toggle('off', !on);
+        row.querySelectorAll<HTMLInputElement | HTMLSelectElement | HTMLButtonElement>('input,select,button').forEach((c) => {
+          c.disabled = !on;
+        });
+      });
+    }
+    const visible = o.visible;
+    if (visible) {
+      this.syncs.push(() => {
+        row.hidden = !visible();
+      });
+    }
     return row;
   }
 
-  private seg<K extends keyof Settings>(label: string, opts: readonly (readonly [string, Settings[K]])[], key: K, hint?: string): HTMLElement {
+  private seg<K extends keyof Settings>(label: string, opts: readonly (readonly [string, Settings[K]])[], key: K, hint?: Hint): HTMLElement {
     const seg = el('div', 'seg');
     seg.setAttribute('role', 'group');
     for (const [text, v] of opts) {
@@ -283,10 +407,10 @@ export class SettingsView {
       this.syncs.push(() => b.setAttribute('aria-pressed', String(settings[key] === v)));
       seg.append(b);
     }
-    return this.field(label, seg, hint);
+    return this.field(label, seg, { hint });
   }
 
-  private toggle(label: string, key: 'bloom' | 'shakeOn' | 'invertY' | 'announcements' | 'quietAmbience' | 'musicOn' | 'echoCancel' | 'autoGain' | 'mouseRaw', hint?: string): HTMLElement {
+  private toggle(label: string, key: ToggleKey, hint?: Hint, o: RowOpts = {}): HTMLElement {
     const b = el('button', 'btn toggle');
     b.type = 'button';
     b.addEventListener('click', () => updateSettings({ [key]: !settings[key] }));
@@ -294,10 +418,10 @@ export class SettingsView {
       b.textContent = settings[key] ? 'An' : 'Aus';
       b.setAttribute('aria-pressed', String(settings[key]));
     });
-    return this.field(label, b, hint);
+    return this.field(label, b, { hint, ...o });
   }
 
-  private slider(label: string, key: SliderKey, min: number, max: number, step: number, show: (v: number) => string, enabled?: () => boolean, hint?: string): HTMLElement {
+  private slider(label: string, key: SliderKey, min: number, max: number, step: number, show: (v: number) => string, o: RowOpts & { extra?: HTMLElement } = {}): HTMLElement {
     const wrap = el('div', 'slider');
     const input = el('input');
     Object.assign(input, { type: 'range', min: String(min), max: String(max), step: String(step) });
@@ -308,12 +432,13 @@ export class SettingsView {
       out.textContent = show(settings[key]);
     });
     wrap.append(input, out);
-    const row = this.field(label, wrap, hint, enabled);
-    // The label points at the range input itself.
-    const lab = row.querySelector('label')!;
-    input.id = `${lab.id}-in`;
-    lab.htmlFor = input.id;
-    wrap.removeAttribute('aria-labelledby');
-    return row;
+    if (o.extra) wrap.append(o.extra);
+    return this.field(label, wrap, { ...o, control: input });
   }
+}
+
+function group(title: string, ...rows: HTMLElement[]): HTMLElement {
+  const g = el('fieldset', 'group');
+  g.append(el('legend', 'group-title', title), ...rows);
+  return g;
 }

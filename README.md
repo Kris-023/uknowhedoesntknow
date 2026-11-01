@@ -177,6 +177,9 @@ Kopfhörer sind am besten. Chrome rechnet Spielton nicht aus dem Mikro heraus, F
 - **Andere hören Tippen, Lüfter oder Rauschen:** Einstellungen → Stimme → Rauschfilter auf **KI** (Standard). Pumpt das
   Rauschen in Sprechpausen hoch, Auto-Pegel ausschalten.
 - **Ruckelt:** Einstellungen → Grafik → Auflösung runter oder Leuchten aus; im Benchmark sieht man den Effekt sofort.
+- **Langsame Mausbewegungen kommen kaum an (Linux):** In Gecko-Browsern (Firefox, Floorp, Zen …) unter Wayland kann es helfen,
+  den Browser mit `MOZ_ENABLE_WAYLAND=0` zu starten. Sicher ist das nicht; Einstellungen → Steuerung → Empfindlichkeit zeigt
+  denselben Tipp nur in solchen Browsern.
 
 ## Entwickeln
 
