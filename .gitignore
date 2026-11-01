@@ -8,6 +8,7 @@ teamlead/
 docs/
 CLAUDE.md
 reference/
+.claude/
 
 # Klartext der eingebauten Stapel (Wörter, Fragen, Kategorien); ins Repo kommt nur src/words/vault.json (npm run seal)
 private/
