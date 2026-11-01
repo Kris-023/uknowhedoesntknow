@@ -66,11 +66,22 @@ kbd { font: inherit; border: 1px solid var(--line); padding: 1px 5px; color: var
 .treehead { font: 500 10.5px/1 var(--font-mono); letter-spacing: .1em; text-transform: uppercase; color: var(--muted); }
 .tree { margin: 0; font: 11px/1.5 var(--font-mono); background: #0e131c; border: 1px solid var(--line); padding: 10px; overflow-x: auto; white-space: pre; color: var(--fg2); }
 
-/* "Unschärfe hinter Fenstern" (settings.uiBlur, class set by ui/settingsView.ts): the panels let the 3D image through and blur it.
-   Off by default because a blur over the live canvas is re-done every frame. Nametags and cards stay out (many, always moving). */
-.ui-blur :is(.menu-frame, .panel, .bench, .hint-bar, .mic, .wi-board, .wi-maker, .wi-done, .wi-bar, .problem, .undo-ask) {
-  background: rgba(14, 19, 28, .62); -webkit-backdrop-filter: blur(12px); backdrop-filter: blur(12px); }
-.ui-blur .wi-bar { background: rgba(5, 8, 16, .5); }
+/* "Unschärfe hinter Fenstern" (settings.uiBlur, class set by ui/settingsView.ts): every window lets the 3D image through and blurs it.
+   Off by default because a blur over the live canvas is re-done every frame. A new window-like box (menu, panel, bar, dialog, toast,
+   result box) belongs in this list. Not in it on purpose: the per-player floating labels (.nametag, .card-tag), which are many and move
+   every frame, and the boxes inside a window (.sa-card, .gg-chip, .room-box, ...), which stay solid so text stays readable. */
+.ui-blur :is(
+  .menu-frame, .room-dialog,                                   /* main/Esc menu, room settings dialog */
+  .panel, .bench,                                              /* debug panel, benchmark panel */
+  .hint-bar, .mic, .absent-row, .undo-ask, .undo-host > .btn,  /* HUD: hint line, mic, absent notice, "Zug zurück" */
+  .problem,                                                    /* graphics crash / offline box */
+  .wi-board, .wi-maker, .wi-done, .wi-bar                      /* all minigames: scoreboard, card maker/sheet, end screens, top/bottom bars + lobby */
+) { background: rgba(14, 19, 28, .62); -webkit-backdrop-filter: blur(12px); backdrop-filter: blur(12px); }
+/* Result banner of every game ("Wer bin ich?" vote result, Sag's anders, Stadt Land Fluss, map change): same blur, darker like the bars. */
+.ui-blur :is(.wi-bar, .wi-banner) { background: rgba(5, 8, 16, .5); -webkit-backdrop-filter: blur(12px); backdrop-filter: blur(12px); }
+/* The Esc menu's dimmed backdrop blurs the whole screen (4px). That makes it a backdrop root, so the frame inside could not blur the
+   canvas on its own. With the setting on, the frame does the blurring and the backdrop only dims. */
+.ui-blur .menu.pause { -webkit-backdrop-filter: none; backdrop-filter: none; }
 
 @media (max-width: 700px) { .panel { top: auto; height: 55vh; width: auto; left: 12px; } }
 .seg button:disabled { opacity: 1; cursor: not-allowed; color: color-mix(in srgb, var(--muted) 40%, var(--bg)); }
