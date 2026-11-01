@@ -51,7 +51,15 @@ export function bassLevel(k: Phase | null): number {
  * Fairy lights on a loose contact: steady most of the time, a stutter now and then, rarely a few
  * seconds dark. The neighbour's knock shakes them out until someone jiggles the plug.
  */
-export function fairyContact(t: number, seed: number, k: Phase | null): number {
+export function fairyContact(t: number, seed: number, k: Phase | null, steady = false): number {
+  // Weniger Flackern: dark stays dark (one clean cut), but no stutter going out, coming back or at random.
+  if (steady) {
+    if (k && k.ph >= KNOCK.lightsOff[0] && k.ph < KNOCK.lightsOff[1]) return 0;
+    const cyc = Math.floor(t / 9);
+    const ph = t - cyc * 9;
+    if (hash01(seed, cyc, 41) > 0.94 && ph > 2.2 && ph < 4.3) return 0;
+    return 0.92;
+  }
   if (k) {
     const [off, on] = KNOCK.lightsOff;
     if (k.ph >= off && k.ph < off + 0.35) return Math.sin(k.ph * 80) > 0 ? 1 : 0.05;

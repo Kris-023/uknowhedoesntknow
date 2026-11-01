@@ -12,12 +12,79 @@ export function noise1(t: number): number {
   return Math.sin(t) + 0.5 * Math.sin(t * 2.3 + 1.3) + 0.25 * Math.sin(t * 4.9 + 2.1);
 }
 
+/** What a neon segment shows instead of its stutter when flicker is reduced. */
+export const STEADY_NEON = 0.95;
+
+/**
+ * Comfort settings that change how light is drawn, never what happens: events, `power`, sounds and
+ * game timing stay as they are, so nobody desyncs. `fade` only takes effect together with `steady`.
+ */
+export interface Comfort {
+  /** Weniger Flackern: lights stay steady instead of stuttering. */
+  steady: boolean;
+  /** Stromausfälle überblenden: blackouts fade in and out instead of cutting (needs `steady`). */
+  fade: boolean;
+}
+
+export const COMFORT_OFF: Comfort = { steady: false, fade: false };
+
+export function comfortOf(s: { reduceFlicker: boolean; fadeBlackouts: boolean }): Comfort {
+  return { steady: s.reduceFlicker, fade: s.reduceFlicker && s.fadeBlackouts };
+}
+
+/** Camera shake amplitude in metres: the fixed base (mm) scaled by the map's factor; Weniger Bewegung removes it. */
+export function shakeAmplitude(reduceMotion: boolean, baseMm: number, mapFactor: number): number {
+  return reduceMotion ? 0 : (baseMm / 1000) * mapFactor;
+}
+
+/** Seconds the debounced supply stays dark after its last dip, so the stutter on recovery reads as one cut. */
+const HOLD_S = 0.25;
+/** Time constant of the blackout fade; the supply is ~95% faded after three of these. */
+const FADE_TAU_S = 0.15;
+
+/**
+ * The supply as the lights should show it. Without `steady` it is the raw power (byte-identical to
+ * before). With it, the stutter around an outage is collapsed into one clean cut (dark from the
+ * first dip, back once the supply has been stable for HOLD_S), and with `fade` that cut is eased
+ * over about half a second. Per-frame state, visual only and local: `map.power` stays the raw value.
+ */
+export class LightPower {
+  private level = 1;
+  private cut = false;
+  private sinceDip = HOLD_S;
+  private init = false;
+
+  step(power: number, dt: number, c: Comfort): number {
+    if (!c.steady) {
+      this.level = power;
+      this.cut = power < 0.5;
+      this.sinceDip = HOLD_S;
+      this.init = true;
+      return power;
+    }
+    if (power < 0.5) {
+      this.cut = true;
+      this.sinceDip = 0;
+    } else {
+      this.sinceDip += dt;
+      if (this.cut && this.sinceDip >= HOLD_S) this.cut = false;
+    }
+    const target = this.cut ? 0 : power;
+    if (!c.fade || !this.init) this.level = target;
+    else this.level += (target - this.level) * (1 - Math.exp(-dt / FADE_TAU_S));
+    this.init = true;
+    return this.level;
+  }
+}
+
 /**
  * Neon segment brightness. Each segment has its own period (4..10 s). Most cycles start with a
  * stutter of random length and rate (hashed per cycle, so it never looks like a loop), some get
  * an extra dim blink halfway through.
  */
-export function flick(t: number, seed: number): number {
+export function flick(t: number, seed: number, steady = false): number {
+  // Weniger Flackern: the mean of the breathing term, no stutter, no dim blink.
+  if (steady) return STEADY_NEON;
   const period = 4 + ((seed * 2.7) % 6);
   const u = t + seed * 4.3;
   const cycle = Math.floor(u / period);
@@ -85,7 +152,9 @@ export function shake(t: number, amp: number, phase = 0): Shake {
 }
 
 /** Light spilling through the windows: hard strobing that scales with speed (sf = 0..1). */
-export function windowFlash(t: number, sf: number, side: 0 | 1): number {
+export function windowFlash(t: number, sf: number, side: 0 | 1, steady = false): number {
+  // Mean of the strobe (0.15 + 1.1 * mean of the positive part of the sine product).
+  if (steady) return 0.37 * (sf + 0.2);
   const s = side === 0 ? Math.sin(t * 23) * Math.sin(t * 7.7) : Math.sin(t * 19) * Math.sin(t * 6.1 + 1);
   return (0.15 + 1.1 * Math.max(0, s)) * (sf + 0.2);
 }

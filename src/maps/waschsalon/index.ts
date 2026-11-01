@@ -1,6 +1,6 @@
 import * as THREE from 'three';
 import { LIGHT_SCALE, LIGHTS, POINT_LIGHT_SCALE } from '../../config';
-import { flick, smoothstep } from '../../core/motion';
+import { flick, LightPower, smoothstep } from '../../core/motion';
 import type { MapDef, MapScene, NpcSpot, Spot } from '../types';
 import { group } from '../../scene/build';
 import { WS } from './config';
@@ -55,6 +55,7 @@ function build(scene: THREE.Scene, seed: number): MapScene {
   const eventYaw = room.event.rotation.y;
   const stareAt = room.eventPos.clone().add(new THREE.Vector3(0, 0.4, 0));
   const tubeCol = new THREE.Color();
+  const glow = new LightPower();
   let shakeK = 0;
   let labels: string[] = [];
 
@@ -76,23 +77,26 @@ function build(scene: THREE.Scene, seed: number): MapScene {
     events: () => labels,
     update(f) {
       const { t } = f;
-      const power = (map.power = laundromatPower(t, seed, f.blackouts, f.forcedBlackoutAt));
+      const raw = (map.power = laundromatPower(t, seed, f.blackouts, f.forcedBlackoutAt));
+      // `power` is what the lights show (steady / faded on request); `raw` drives labels and events.
+      const power = glow.step(raw, f.dt, f.comfort);
+      const steady = f.comfort.steady;
       const pg = presetGain();
       const ev = imbalanceAt(t, seed);
       const sh = ev ? ev.shake : 0;
       shakeK = sh;
-      labels = [...(sh > 0.05 ? ['Unwucht'] : []), ...(power < 0.98 ? ['Sicherung raus'] : [])];
+      labels = [...(sh > 0.05 ? ['Unwucht'] : []), ...(raw < 0.98 ? ['Sicherung raus'] : [])];
 
       // Tubes: five steady ones breathing a little, one humming and stuttering.
       const steadyK = (0.96 + 0.04 * Math.sin(t * 0.7)) * power;
-      const badK = flick(t, badTubeSeed(seed)) * power;
+      const badK = flick(t, badTubeSeed(seed), steady) * power;
       const hdr = LIGHTS.neonTubeHdr * L.tubeHdr;
       room.tubes.steady.color.copy(tubeCol.setHex(C.tube)).multiplyScalar((0.03 + 0.97 * steadyK) * hdr);
       room.tubes.bad.color.copy(tubeCol.setHex(C.tube)).multiplyScalar((0.03 + 0.97 * badK) * hdr);
       room.tubes.steadyHalo.opacity = 0.18 * steadyK;
       room.tubes.badHalo.opacity = 0.18 * badK;
       // The window sign runs on the same fuse; it has a lazy buzz of its own.
-      const signK = power * (Math.sin(t * 0.37) * Math.sin(t * 1.9) > 0.93 ? 0.4 : 1);
+      const signK = power * (!steady && Math.sin(t * 0.37) * Math.sin(t * 1.9) > 0.93 ? 0.4 : 1);
       room.sign.tube.color.setHex(C.sign).multiplyScalar(L.signHdr * LIGHTS.neonTubeHdr * signK);
       room.sign.halo.opacity = 0.45 * signK;
       room.coinScreen.color.setHex(C.led).multiplyScalar(L.ledHdr * power * (Math.floor(t * 1.5) % 2 ? 1 : 0.7));

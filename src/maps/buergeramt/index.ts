@@ -1,6 +1,6 @@
 import * as THREE from 'three';
 import { LIGHT_SCALE, LIGHTS, POINT_LIGHT_SCALE } from '../../config';
-import { flick } from '../../core/motion';
+import { flick, LightPower } from '../../core/motion';
 import { at, group } from '../../scene/build';
 import type { MapDef, MapScene, NpcSpot, Spot } from '../types';
 import { CAMERA, COLORS, COUNTERS, FIXTURES, HALL, LED, LIGHT, NUMBERS, ONE_OFFS, QUEUE, ROWS } from './config';
@@ -47,6 +47,7 @@ function build(scene: THREE.Scene, seed: number): MapScene {
 
   // The world names its NPC roots npc_1… in spot order; the queue shuffles them along z.
   let queue: THREE.Object3D[] | null = null;
+  const glow = new LightPower();
   let failing = false;
   let calling = false;
 
@@ -68,13 +69,16 @@ function build(scene: THREE.Scene, seed: number): MapScene {
     events: () => [...(failing ? ['Systemausfall'] : []), ...(calling ? ['Nummernaufruf'] : [])],
     update(f) {
       const { t } = f;
-      const p = (map.power = power(t, seed, f.blackouts, f.forcedBlackoutAt));
+      const raw = (map.power = power(t, seed, f.blackouts, f.forcedBlackoutAt));
+      // `p` is what the lights show (steady / faded on request); `map.power` stays the raw supply.
+      const p = glow.step(raw, f.dt, f.comfort);
+      const steady = f.comfort.steady;
       const age = failureAge(t, seed, f.blackouts, f.forcedBlackoutAt);
       failing = age > 0;
       calling = !failing && t - callIndex(t) * NUMBERS.stepS < 1;
 
       // Number display runs on its own battery: blinks 0001 while the power is out.
-      if (failing) display.draw('0001', null, p >= 0.5 || Math.sin(t * 7) > 0);
+      if (failing) display.draw('0001', null, p >= 0.5 || steady || Math.sin(t * 7) > 0);
       else {
         const c = callNumber(seed, callIndex(t));
         display.draw(c.num, c.desk, true);
@@ -85,7 +89,7 @@ function build(scene: THREE.Scene, seed: number): MapScene {
 
       const tubeK = (0.03 + 0.97 * p) * LIGHTS.neonTubeHdr * LIGHT.tubeHdr;
       hall.tubeOn.color.copy(tubeCol).multiplyScalar(tubeK);
-      const fk = flick(t, flickSeed) * p;
+      const fk = flick(t, flickSeed, steady) * p;
       hall.tubeFlicker.color.copy(tubeCol).multiplyScalar((0.03 + 0.97 * fk) * LIGHTS.neonTubeHdr * LIGHT.tubeHdr);
       hall.exit.color.setScalar(LIGHT.exitHdr * (1 + 0.5 * (1 - p)));
 

@@ -1,4 +1,5 @@
 import type * as THREE from 'three';
+import type { Comfort } from '../core/motion';
 
 // A map is the place the players sit in: its geometry, light, extras and sounds. Everything in it
 // is a pure function of the shared clock and the room seed, like the hypertrain before it, so
@@ -40,6 +41,8 @@ export interface FrameCtx {
   /** Room setting: random power failures; and a forced one (debug/host) at this clock time. */
   blackouts: boolean;
   forcedBlackoutAt: number;
+  /** Comfort settings: how light is drawn (steady / faded), never what happens. `power` stays the raw supply. */
+  comfort: Comfort;
   camera: THREE.Camera;
 }
 

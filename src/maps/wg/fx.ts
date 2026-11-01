@@ -12,7 +12,8 @@ import type { WgTextures } from './textures';
 // Everything in the room that glows or moves on its own: the light sources and their real lights.
 
 export interface Fx {
-  update(t: number, power: number, k: Phase | null): void;
+  /** `steady` (Weniger Flackern) holds the candle, fairy lights and TV still instead of flickering. */
+  update(t: number, power: number, k: Phase | null, steady?: boolean): void;
 }
 
 /** Where the fairy-light bulbs hang: three sagging spans along the wall above the sofa. */
@@ -146,28 +147,28 @@ export function buildFx(root: THREE.Object3D, scene: THREE.Scene, b: Batch, M: R
   const blobColor = new THREE.Color(0xff3a1a);
 
   return {
-    update(t, power, k) {
+    update(t, power, k, steady = false) {
       // Candle: on its own, the fuse can't touch it.
-      const fl = 0.82 + 0.1 * noise1(t * 7.3 + seed) + 0.06 * Math.sin(t * 23 + noise1(t * 3));
+      const fl = steady ? 0.82 : 0.82 + 0.1 * noise1(t * 7.3 + seed) + 0.06 * Math.sin(t * 23 + noise1(t * 3));
       candleLight.intensity = WG_LIGHT.candle * POINT_LIGHT_SCALE * fl;
       flameMat.color.setHex(0xffb050).multiplyScalar(WG_LIGHT.flameHdr * (0.8 + 0.2 * fl));
       flame.scale.set(0.009, 0.026 * (0.85 + 0.25 * fl), 0.009);
-      flame.position.x = 0.1 + 0.002 * noise1(t * 5.1);
+      flame.position.x = 0.1 + (steady ? 0 : 0.002 * noise1(t * 5.1));
       poolMat.opacity = 0.22 * fl;
 
       // Fairy lights: the loose contact, the knock, the fuse.
-      const fc = fairyContact(t, seed, k) * power;
+      const fc = fairyContact(t, seed, k, steady) * power;
       fairyMat.color.setScalar(0.06 + (WG_LIGHT.fairyHdr - 0.06) * fc);
       fairyLight.intensity = WG_LIGHT.fairy * POINT_LIGHT_SCALE * fc;
 
       // TV: test card or snow, jittering brightness; dark when the fuse is out.
       const snow = tvSnow(t, seed);
-      const fr = Math.floor(t * 24);
+      const fr = steady ? 0 : Math.floor(t * 24);
       if (snow) {
         screenMat.map = snowTex;
         snowTex.offset.set(hash01(fr, 1), hash01(fr, 2));
       } else screenMat.map = tex.testcard;
-      const jitter = snow ? 0.75 + 0.25 * hash01(fr, 3) : 0.92 + 0.08 * Math.sin(t * 60);
+      const jitter = steady ? (snow ? 0.87 : 0.96) : snow ? 0.75 + 0.25 * hash01(fr, 3) : 0.92 + 0.08 * Math.sin(t * 60);
       screenMat.color.setScalar(0.02 + (WG_LIGHT.tvHdr - 0.02) * jitter * power);
       tvLight.intensity = WG_LIGHT.tv * POINT_LIGHT_SCALE * jitter * power * (snow ? 0.8 : 1);
       tvLight.color.setHex(snow ? 0xb8c4e0 : 0x9fb6ff);

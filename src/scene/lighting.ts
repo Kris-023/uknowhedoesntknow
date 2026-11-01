@@ -13,7 +13,7 @@ interface NeonSegment {
 
 export interface Lighting {
   /** `power` is the coach supply (1 normal, 0 blackout); the tunnel light through the windows ignores it. */
-  update(t: number, speedFactor: number, power: number): void;
+  update(t: number, speedFactor: number, power: number, steady?: boolean): void;
   /** An oncoming train is sweeping past right now (for the benchmark's stutter log). */
   readonly passing: boolean;
   /** The fill light; the baked crowds copy it into their unlit material. */
@@ -105,9 +105,9 @@ export function buildLighting(scene: THREE.Scene, coach: THREE.Object3D, tex: Co
     get passing() {
       return passing;
     },
-    update(t, sf, power) {
-      winL.intensity = windowFlash(t, sf, 0) * LIGHTS.window * POINT_LIGHT_SCALE;
-      winR.intensity = windowFlash(t, sf, 1) * LIGHTS.window * POINT_LIGHT_SCALE;
+    update(t, sf, power, steady = false) {
+      winL.intensity = windowFlash(t, sf, 0, steady) * LIGHTS.window * POINT_LIGHT_SCALE;
+      winR.intensity = windowFlash(t, sf, 1, steady) * LIGHTS.window * POINT_LIGHT_SCALE;
       if (lean) {
         winL.position.z = winR.position.z = 0.5;
         winL.color.setHex(0x6f8cff);
@@ -117,7 +117,7 @@ export function buildLighting(scene: THREE.Scene, coach: THREE.Object3D, tex: Co
       passing = !!on;
       if (on) {
         // Strobing (window, gap, window …) and sweeping front to back while the train passes.
-        const strobe = Math.sin(t * 70) > -0.3 ? 1 : 0.15;
+        const strobe = steady ? 0.66 : Math.sin(t * 70) > -0.3 ? 1 : 0.15;
         passLight.position.set(on.side * 1.35, 1.45, -6 + 12 * on.phase);
         passLight.intensity = 9 * Math.sin(on.phase * Math.PI) * strobe * POINT_LIGHT_SCALE;
         if (lean) {
@@ -131,7 +131,7 @@ export function buildLighting(scene: THREE.Scene, coach: THREE.Object3D, tex: Co
       hemi.intensity = LIGHTS.hemi * LIGHT_SCALE * (0.35 + 0.65 * power) * (lean ? 1 + (hemiScale - 1) * power : 1);
       for (const w of whites) w.intensity = LIGHTS.ceilingWhite * POINT_LIGHT_SCALE * power;
       for (const seg of segments) {
-        seg.k = flick(t, seg.seed) * power;
+        seg.k = flick(t, seg.seed, steady) * power;
         seg.tube.color.copy(neonColor).multiplyScalar((0.04 + 0.96 * seg.k) * LIGHTS.neonTubeHdr);
         seg.halo.opacity = 0.55 * seg.k;
       }

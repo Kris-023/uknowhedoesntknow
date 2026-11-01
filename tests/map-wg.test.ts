@@ -23,6 +23,26 @@ describe('wg events', () => {
     expect(freezeAt(KNOCK.durationS)).toBe(0);
   });
 
+  it('keeps the fairy lights steady with Weniger Flackern: dark stays dark, no stutter', () => {
+    const seed = 42;
+    const s = nextKnock(0, seed);
+    expect(fairyContact(s + 4, seed, knock(s + 4, seed), true)).toBe(0);
+    const after = s + KNOCK.lightsOff[1] + 0.2;
+    expect(fairyContact(after, seed, knock(after, seed), true)).toBe(0.92);
+    let steadyDips = 0;
+    let rawDips = 0;
+    for (let t = 0; t < 900; t += 0.01) {
+      const k = knock(t, seed);
+      // Only fully off or the one steady level; never a stutter in between.
+      expect([0, 0.92]).toContain(fairyContact(t, seed, k, true));
+      // Count entries into a dark spell as seen by each mode.
+      if (fairyContact(t, seed, k, true) === 0 && fairyContact(t - 0.01, seed, knock(t - 0.01, seed), true) !== 0) steadyDips++;
+      if (fairyContact(t, seed, k) < 0.1 && fairyContact(t - 0.01, seed, knock(t - 0.01, seed)) >= 0.1) rawDips++;
+    }
+    expect(steadyDips).toBeGreaterThan(0);
+    expect(rawDips).toBeGreaterThan(steadyDips);
+  });
+
   it('pauses the cat by the integrated freeze, no more', () => {
     const seed = 42;
     const s = nextKnock(0, seed);

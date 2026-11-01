@@ -98,3 +98,73 @@ describe('oncoming trains and stops', async () => {
     expect(nextStopIndex(-1, 90, 5)).toBe(4);
   });
 });
+
+describe('comfort settings (visual only, never the events)', async () => {
+  const { COMFORT_OFF, comfortOf, LightPower, shakeAmplitude, STEADY_NEON, windowFlash } = await import('../src/core/motion');
+  const STEADY = { steady: true, fade: false };
+  const FADE = { steady: true, fade: true };
+
+  // One forced outage, sampled at 60 fps: the raw supply and what each mode shows the lights.
+  const run = (c: { steady: boolean; fade: boolean }) => {
+    const lp = new LightPower();
+    const rows: { t: number; raw: number; lit: number }[] = [];
+    for (let t = 90; t < 112; t += 1 / 60) {
+      const raw = coachPower(t, 4242, BLACKOUT, 100);
+      rows.push({ t, raw, lit: lp.step(raw, 1 / 60, c) });
+    }
+    return rows;
+  };
+
+  it('maps the settings to a comfort mode; fade needs reduceFlicker', () => {
+    expect(comfortOf({ reduceFlicker: false, fadeBlackouts: true })).toEqual(COMFORT_OFF);
+    expect(comfortOf({ reduceFlicker: true, fadeBlackouts: false })).toEqual(STEADY);
+    expect(comfortOf({ reduceFlicker: true, fadeBlackouts: true })).toEqual(FADE);
+  });
+
+  it('flick and the window strobe are constant when steady, unchanged otherwise', () => {
+    for (let t = 0; t < 60; t += 0.013) {
+      expect(flick(t, 1.87, true)).toBe(STEADY_NEON);
+      expect(flick(t, 1.87)).toBe(flick(t, 1.87, false));
+      expect(windowFlash(t, 0.8, 1, true)).toBe(windowFlash(0, 0.8, 0, true));
+    }
+    expect(windowFlash(3.3, 0.8, 0)).toBe(windowFlash(3.3, 0.8, 0, false));
+  });
+
+  it('shows the raw supply unchanged without reduceFlicker', () => {
+    for (const r of run(COMFORT_OFF)) expect(r.lit).toBe(r.raw);
+  });
+
+  it('steady: one clean cut instead of the stutter, raw power untouched', () => {
+    const rows = run(STEADY);
+    const edges = (k: 'raw' | 'lit') => rows.filter((r, i) => i && r[k] < 0.5 !== rows[i - 1][k] < 0.5).length;
+    expect(edges('raw')).toBeGreaterThan(6);
+    expect(edges('lit')).toBe(2);
+    // The lights are dark whenever the raw supply is, and only ever fully on or off.
+    for (const r of rows) {
+      if (r.raw < 0.5) expect(r.lit).toBe(0);
+      expect([0, 1]).toContain(r.lit);
+    }
+    // The raw supply is the very same function as before.
+    expect(rows.map((r) => r.raw)).toEqual(run(COMFORT_OFF).map((r) => r.raw));
+  });
+
+  it('fade: intermediate light values at the edges, settles to the hard values, power stays hard', () => {
+    const rows = run(FADE);
+    expect(rows.filter((r) => r.lit > 0.05 && r.lit < 0.95).length).toBeGreaterThan(20);
+    // Eased: never a big jump between frames.
+    for (let i = 1; i < rows.length; i++) expect(Math.abs(rows[i].lit - rows[i - 1].lit)).toBeLessThan(0.15);
+    expect(rows[0].lit).toBe(1);
+    expect(rows[rows.length - 1].lit).toBeGreaterThan(0.99);
+    expect(Math.min(...rows.map((r) => r.lit))).toBeLessThan(0.01);
+    // The raw supply still has its hard 0 / 1 edges.
+    expect(rows.some((r) => r.raw === 0)).toBe(true);
+    expect(rows.every((r) => r.raw === 0 || r.raw === 1 || r.raw === 0.1)).toBe(true);
+  });
+
+  it('shake amplitude is the fixed base times the map factor, and zero with reduceMotion', () => {
+    expect(shakeAmplitude(false, 5, 1)).toBeCloseTo(0.005);
+    expect(shakeAmplitude(false, 5, 0.12)).toBeCloseTo(0.0006);
+    expect(shakeAmplitude(true, 5, 1)).toBe(0);
+    expect(shake(12.3, shakeAmplitude(true, 5, 1))).toEqual({ x: 0, y: 0, roll: 0 });
+  });
+});

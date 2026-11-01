@@ -1,6 +1,6 @@
 import * as THREE from 'three';
 import { LIGHT_SCALE, LIGHTS, POINT_LIGHT_SCALE } from '../../config';
-import { coachPower, noise1, type BlackoutWindow } from '../../core/motion';
+import { coachPower, LightPower, noise1, type BlackoutWindow } from '../../core/motion';
 import { group } from '../../scene/build';
 import type { MapDef, MapScene, NpcSpot, Spot } from '../types';
 import { BOOTH, CAMERA_DINER, COLORS_DINER as C, COUNTER, DINER_LIGHT as DL, DINER_SHAKE } from './config';
@@ -57,6 +57,7 @@ function build(scene: THREE.Scene, seed: number): DinerMap {
   ];
 
   const letters: number[] = [];
+  const glow = new LightPower();
   let flaring = false;
   let flicker = false;
 
@@ -80,7 +81,10 @@ function build(scene: THREE.Scene, seed: number): DinerMap {
     },
     update(f) {
       const { t, dt } = f;
-      const power = (map.power = coachPower(t, seed, f.blackouts ? FUSE : NO_FUSE, f.forcedBlackoutAt));
+      const raw = (map.power = coachPower(t, seed, f.blackouts ? FUSE : NO_FUSE, f.forcedBlackoutAt));
+      // What the lights show: steady / faded on request. `map.power` stays the raw supply.
+      const power = glow.step(raw, f.dt, f.comfort);
+      const steady = f.comfort.steady;
       const flare = fryerFlare(t, seed, debugFlare.at);
       const fx = flare ? flareShape(flare.ph) : null;
       flaring = !!flare;
@@ -95,7 +99,7 @@ function build(scene: THREE.Scene, seed: number): DinerMap {
       street.intensity = DL.street * pt;
 
       // Kitchen: cold tubes, swamped by orange when the oil goes up (the flames ignore the fuse).
-      const fire = fx ? fx.fire * (0.75 + 0.25 * noise1(t * 23)) + fx.flash * 2.5 : 0;
+      const fire = fx ? fx.fire * (0.75 + 0.25 * (steady ? 0 : noise1(t * 23))) + fx.flash * 2.5 : 0;
       kitchen.color.copy(kitchenCool).lerp(fireCol, Math.min(1, fire * 1.5));
       kitchen.intensity = DL.kitchen * pt * power + 3.5 * pt * fire;
       kitchen.position.z = fire > 0 ? -0.6 : -0.3;
@@ -112,6 +116,8 @@ function build(scene: THREE.Scene, seed: number): DinerMap {
 
       const dying = signLetters(t, seed, parts.sign.count, letters);
       flicker = dying >= 0;
+      // The dying letter goes dark and comes back as one clean cut, without the stutter around it.
+      if (steady && dying >= 0 && letters[dying] > 0) letters[dying] = 1;
       parts.sign.draw(letters, 1);
       parts.signMat.color.setScalar(hdr * 0.85 * power);
       parts.mirrorGlow.sign.color.setScalar(0.32 * power);
@@ -123,7 +129,7 @@ function build(scene: THREE.Scene, seed: number): DinerMap {
       for (const [i, m] of parts.flame.entries()) {
         m.visible = !!fx && fx.fire > 0.01;
         if (!fx) continue;
-        const k = fx.fire * (0.8 + 0.25 * noise1(t * 19 + i * 3)) + fx.flash;
+        const k = fx.fire * (0.8 + 0.25 * (steady ? 0 : noise1(t * 19 + i * 3))) + fx.flash;
         m.scale.set((i ? 0.5 : 1) * (0.9 + 0.7 * k), (i ? 0.55 : 1) * (0.4 + 1.9 * k), (i ? 0.5 : 1) * (0.9 + 0.7 * k));
       }
       parts.flash.opacity = fx ? Math.min(1, fx.flash * 1.6 + fx.fire * 0.25) : 0;
