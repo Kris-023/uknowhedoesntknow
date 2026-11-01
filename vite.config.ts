@@ -19,7 +19,8 @@ export default defineConfig(({ mode }) => {
     // allowedHosts: Vite rejects unknown Host headers (DNS-rebinding guard); the LAN name must be listed.
     // Empty list keeps Vite's default.
     // Local tool folders under .claude/ may hold copies of the tests; only this project's own are run.
-    test: { exclude: [...configDefaults.exclude, '.claude/**'] },
+    // tools/ holds the Rust list tool (cargo test), nothing for vitest.
+    test: { exclude: [...configDefaults.exclude, '.claude/**', 'tools/**'] },
     server: { port: 5190, strictPort: false, allowedHosts },
     build: {
       target: 'es2022',

@@ -11,7 +11,8 @@
     "test": "vitest run",
     "typecheck": "tsc --noEmit",
     "seal": "node scripts/seal-content.mjs",
-    "seal:check": "node scripts/seal-content.mjs --check"
+    "seal:check": "node scripts/seal-content.mjs --check",
+    "listen": "cargo run --release --manifest-path tools/listen/Cargo.toml --"
   },
   "dependencies": {
     "@sapphi-red/web-noise-suppressor": "^0.4.1",

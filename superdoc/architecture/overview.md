@@ -73,7 +73,7 @@ flicker, blackouts, oncoming trains, NPCs, map events, ambience     same picture
 | UI | `src/ui/` (menu, settings, room dialog, editor, lists, panels), `src/style.css` | [Menu, settings and input](../features/menu-settings.md), [Styling guide](../ui/STYLING-GUIDE.md) |
 | Words, decks, lists | `src/words/` (`vault.ts`, `content.ts`, `lists.ts`, `custom.ts`), `src/game/roomKey.ts`, `src/game/roomLists.ts` | [Built-in decks](../features/content-decks.md), [Custom lists](../features/custom-lists.md) |
 | Debug | `src/debug/` (panel, "Meine Sicht", frame and mouse traces, GPU timer), `src/ui/benchPanel.ts` | [Debug tools, build and deploy](../features/debug-build.md) |
-| Scripts, build, CI | `scripts/seal-content.mjs`, `vite.config.ts`, `package.json`, `.github/workflows/pages.yml` | [Debug tools, build and deploy](../features/debug-build.md), [Built-in decks](../features/content-decks.md) |
+| Scripts, build, CI | `scripts/seal-content.mjs`, `tools/listen/` (deck editor, Rust), `vite.config.ts`, `package.json`, `.github/workflows/pages.yml` | [Debug tools, build and deploy](../features/debug-build.md), [Built-in decks](../features/content-decks.md) |
 | Tests | `tests/*.test.ts` (flat, one file per feature or game), `tests/fixtures/` | [Shared clock and determinism](../features/shared-clock-determinism.md) ("Testing"), [Minigame framework](../features/minigame-framework.md) |
 
 User-facing rules of every game are in the repo's [README](../../README.md) (German); the pages above describe the code.

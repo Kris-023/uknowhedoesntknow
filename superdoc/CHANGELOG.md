@@ -8,6 +8,7 @@ What changed, day by day, newest first (date-based, see the [version policy](cla
 - Recovery after reconnects: missing data is requested again with retries; private per-tab game state in `sessionStorage` (`src/game/tabStore.ts`); every game keeps drafts, votes and cards across a reload.
 - Table order counter-clockwise around the table in all games; the first two players face each other on every map.
 - Settings v2/v3: regrouped, graphics (glow levels, render brightness, vignette, blur behind menus), comfort (less motion, less flicker, soften blackouts), "Nur Mundbewegung"; card size setting removed.
+- Deck editor `npm run listen` (`tools/listen/`, Rust): edits the built-in decks right in the sealed vault (password file or prompt, nothing in plaintext on disk), seals compatible with the browser, and pushes only the vault with a three-way merge against what others pushed meanwhile ([Built-in decks](features/content-decks.md)).
 - Docs moved into this public `superdoc/`: project status, decisions 0001/0002 and this changelog replace the former private notes. Public repo hygiene rule added.
 
 ## 2026-10-31

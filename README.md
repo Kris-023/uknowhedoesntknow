@@ -145,9 +145,23 @@ verschlüsselt in `src/words/vault.json` (AES-256-GCM, Schlüssel per PBKDF2-SHA
   entschlüsselt selbst. Nie im öffentlichen Spielzustand, nie über Server.
 - Gesperrt läuft ein kleiner Ersatzstapel (64 Wörter, 25 Startfragen, 25 Zeig-Fragen, die klassischen Kategorien);
   **NSFW** ist dann gesperrt (Raum-Dialog und Lobby zeigen „Stapel: gesperrt“). Eigene Listen gehen immer.
-- Pflege: Der Klartext liegt nur lokal in `private/content/` (per `.gitignore` ausgeschlossen, Aufbau steht in
+- Pflege am einfachsten mit `npm run listen` (unten): bearbeitet direkt den Tresor, ganz ohne Klartext-Dateien.
+  Alternativ liegt der Klartext lokal in `private/content/` (per `.gitignore` ausgeschlossen, Aufbau steht in
   `private/content/README.md`). Nach Änderungen `npm run seal` (Passwort aus `~/.config/ukhdk/deck-pass`), prüfen mit
   `npm run seal:check`. Ein neues Passwort heißt: alle schalten einmal neu frei.
+
+#### Stapel im Terminal pflegen: `npm run listen`
+
+Ein Terminal-Programm (Rust, `tools/listen/`, läuft auch per SSH) arbeitet direkt auf dem verschlüsselten
+`src/words/vault.json`: entschlüsselt im Speicher (Passwortdatei oder verdeckte Abfrage), zeigt die neun Listen,
+prüft Einträge, importiert Exporte aus „Eigene Listen“, versiegelt und pusht nur den Tresor. Pushen andere
+gleichzeitig, führt es Eintrag für Eintrag zusammen. Klartext-Dateien braucht dafür niemand.
+
+```bash
+npm run listen                     # im Projektordner; der erste Start baut das Programm (~30 s, braucht cargo)
+```
+
+Steuerung, Ablauf beim Pushen und Hinweise: [`tools/listen/README.md`](tools/listen/README.md).
 
 ### Steuerung
 
@@ -191,6 +205,7 @@ npm test           # Unit-Tests: Uhr, Netz-Logik, Regeln, Geheimhaltung, Schaffn
 npm run build      # Bundle nach dist/
 npm run seal       # private/content/ → src/words/vault.json (Passwort aus ~/.config/ukhdk/deck-pass)
 npm run seal:check # geht der Tresor mit dem lokalen Passwort auf? (gibt nur Anzahlen aus)
+npm run listen     # Stapel im Terminal pflegen, versiegeln, pushen (Rust, braucht cargo)
 ```
 
 Passwortdatei einmal anlegen (nichts landet in der Shell-History):
