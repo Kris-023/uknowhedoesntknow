@@ -14,6 +14,11 @@ import { tally, type Picks } from '../zeig/logic';
 // code holds the secret: there is no cheap way around that without a dealer outside the room, so
 // the host's screen just never shows what its own player may not know (honest host, like the
 // other games trust the host's verdicts).
+//
+// Host loss: the host also replicates the secret to every browser as hidden data (JS state only,
+// never rendered, never in the DOM), so whoever becomes host continues the round (fromState). That
+// is a deliberate trade, a game for friends rather than a competitive one: anyone could read it in
+// the developer tools, but no player can see it in the UI.
 
 export interface Clue {
   by: string;
@@ -22,7 +27,7 @@ export interface Clue {
 }
 
 export type Outcome = 'escaped' | 'guessed' | 'caught' | 'aborted';
-/** Why a round was aborted: the host ended it, the host changed, the clueless one left, too few left. */
+/** Why a round was aborted: the host ended it, the host changed without a copy of the secret, the clueless one left, too few left. */
 export type AbortReason = 'ended' | 'host' | 'gone' | 'few';
 
 export interface AhnState {
@@ -47,7 +52,7 @@ export interface AhnState {
   clueless: string | null;
   /** The caught player's guess, at the end. */
   guess: string | null;
-  /** Public only at the end; null there too if the round was aborted by a new host. */
+  /** Public only at the end; null there too if a new host without a copy of the secret aborted the round. */
   word: string | null;
   outcome: Outcome | null;
   why: AbortReason | null;
@@ -107,7 +112,7 @@ export class AhnHost {
   state: AhnState;
   /** Who is in the room right now; null = everyone (tests). Absent players never block anything. */
   present: ReadonlySet<string> | null = null;
-  /** Null after a host change: the new host never learned it. */
+  /** Null after a host change if the new host had no copy of it (see fromState). */
   secret: Secret | null;
   private aims = new Map<string, string | null>();
   /**
@@ -172,16 +177,18 @@ export class AhnHost {
   }
 
   /**
-   * A new host after the old one left. Only the old host knew who is clueless (and, if the new
-   * host is the clueless one, the word), so a running round ends without points. Simpler and
-   * harder to cheat than asking everyone to tell the new host their role.
+   * A new host after the old one left. With the round's secret (every browser holds a hidden copy,
+   * see AhnungGame.backup) the round simply goes on: same word, same clueless player, no points
+   * lost. Without it (this browser never got a copy, or it is stale) a running round ends without
+   * points, as nobody could tell who is clueless.
    */
-  static fromState(state: AhnState): AhnHost {
+  static fromState(state: AhnState, secret: Secret | null = null): AhnHost {
     const h = new AhnHost(state.players, { word: '', taboo: [] }, '', 0, state.scores, state.round);
     h.state = structuredClone(state);
     h.state.undo ??= 0;
-    h.secret = null;
-    if (h.state.phase !== 'done') h.finish('aborted', 'host');
+    const ok = !!secret && !!secret.word && h.state.players.includes(secret.clueless);
+    h.secret = ok ? { word: secret.word, taboo: [...secret.taboo], clueless: secret.clueless } : null;
+    if (h.state.phase !== 'done' && !h.secret) h.finish('aborted', 'host');
     return h;
   }
 

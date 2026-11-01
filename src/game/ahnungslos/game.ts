@@ -5,7 +5,7 @@ import type { DeckId, WordCard } from '../../words/types';
 import { PickState, type GazeTarget } from '../gaze';
 import type { GameNet, Minigame } from '../minigame';
 import { byTableOrder } from '../tableOrder';
-import { AhnHost, cleanClue, cleanGuess, givesAway, parseIntent, type AhnState, type Clue, type Intent } from './logic';
+import { AhnHost, cleanClue, cleanGuess, givesAway, parseIntent, type AhnState, type Clue, type Intent, type Secret } from './logic';
 
 const isStrings = (v: unknown, max = 8, len = 64): v is string[] => Array.isArray(v) && v.length <= max && v.every((x) => typeof x === 'string' && x.length <= len);
 const isRecord = (v: unknown): v is Record<string, unknown> => typeof v === 'object' && v !== null && !Array.isArray(v);
@@ -48,6 +48,18 @@ interface Told {
   taboo: string[];
 }
 
+/** The hidden copy of a round's secret every browser holds so a new host can go on (never rendered). */
+interface Backup extends Secret {
+  round: number;
+}
+
+/** Shape check of the host's secret copy; null if it isn't one. */
+function parseBackup(v: unknown): Backup | null {
+  if (!isRecord(v) || !Number.isInteger(v.round) || typeof v.clueless !== 'string' || v.clueless.length > 64) return null;
+  if (typeof v.word !== 'string' || !v.word.trim() || v.word.length > WORDS.maxChars || !isStrings(v.taboo, WORDS.maxTaboo, WORDS.maxChars)) return null;
+  return { round: v.round as number, word: v.word, taboo: v.taboo, clueless: v.clueless };
+}
+
 /** Why a clue was refused before it was sent. */
 export type ClueProblem = 'empty' | 'words' | 'word' | 'turn';
 
@@ -64,6 +76,11 @@ export class AhnungGame implements Minigame, GazeTarget {
   private listeners = new Set<() => void>();
   private lastPublish = 0;
   private told: Told | null = null;
+  /**
+   * Hidden copy of the host's secret, for a host change. Only JS state: nothing in the UI reads it
+   * (not even for the clueless player, who must not see the word), see AhnHost.fromState.
+   */
+  private backup: Backup | null = null;
   private askedAt = -Infinity;
   /** Cards drawn in this session, so a new round brings a new word. */
   private drawn = new Set<string>();
@@ -313,11 +330,15 @@ export class AhnungGame implements Minigame, GazeTarget {
   tick(now: number): void {
     // Gave way to another host (network split): their state counts from now on.
     if (this.host && !this.isHost) this.host = null;
-    // The old host left: only it knew who is clueless, so a running round ends here (AhnHost.fromState).
+    // The old host left: the round goes on from the hidden copy of its secret (AhnHost.fromState);
+    // without a fresh copy of this round it ends here.
     if (!this.host && this.isHost && this.state) {
-      this.host = AhnHost.fromState(this.state);
+      const b = this.backup?.round === this.state.round ? this.backup : null;
+      this.host = AhnHost.fromState(this.state, b);
       this.scores = { ...this.state.scores };
       this.publish(now);
+      // The host's own part, if it only knew it from the copy.
+      if (this.host.secret && !this.knowsRole) this.tell(this.selfId);
     }
     const s = this.state;
     // Lost my part (reload, or the message went missing): ask the host again now and then.
@@ -374,6 +395,10 @@ export class AhnungGame implements Minigame, GazeTarget {
       const taboo = isStrings(data.taboo, WORDS.maxTaboo, WORDS.maxChars) ? data.taboo : [];
       this.told = { round: data.round as number, word, taboo };
       this.emit();
+    } else if (type === 'ah:backup') {
+      if (from !== this.net.hostId()) return;
+      const b = parseBackup(data);
+      if (b) this.backup = b;
     } else if (type === 'ah:need') {
       if (this.host && this.host.state.phase !== 'done' && data === this.host.state.round) this.tell(from);
     } else if (type === 'ah:drop') {
@@ -395,12 +420,16 @@ export class AhnungGame implements Minigame, GazeTarget {
     this.lastPublish = now;
     const s = { ...structuredClone(this.host.state), sentAt: Date.now() };
     this.net.send('ah:state', s);
+    // Everyone gets a hidden copy of the secret with every state (so rejoiners and late arrivals too).
+    const sec = this.host.secret;
+    if (sec && s.phase !== 'done') this.net.send('ah:backup', { round: s.round, word: sec.word, taboo: sec.taboo, clueless: sec.clueless });
     this.applyState(s);
   }
 
   private applyState(s: AhnState): void {
     s.undo ??= 0;
     this.state = s;
+    if (s.phase === 'done') this.backup = null;
     if (s.phase === 'vote') {
       // With the undo count: a vote taken back starts with no pick.
       this.pick.reset(`${s.round}|vote|${s.undo}`);

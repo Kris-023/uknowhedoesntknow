@@ -308,7 +308,7 @@ export class AhnungUi implements GameUi {
     if (s.outcome === 'escaped') return `${s.accused ? `Die meisten haben ${this.name(s.accused)} verdächtigt.` : 'Keine eindeutige Mehrheit.'} +${pts(AHNUNG.escapePoints)} für ${this.name(s.clueless)}.`;
     if (s.outcome === 'guessed') return `Geraten: „${s.guess}“. +${pts(AHNUNG.guessPoints)} für ${this.name(s.clueless)}.`;
     if (s.outcome === 'caught') return `${s.guess ? `Geraten: „${s.guess}“.` : 'Nichts geraten.'} +${pts(AHNUNG.catchPoints)} für alle anderen.`;
-    if (s.why === 'host') return 'Der Host ist weg, und nur er wusste, wer ahnungslos ist. Keine Punkte.';
+    if (s.why === 'host') return 'Der Host ist weg, und der neue kannte die Runde nicht. Keine Punkte.';
     if (s.why === 'gone') return 'Wer ahnungslos war, hat den Raum verlassen. Keine Punkte.';
     if (s.why === 'few') return 'Zu wenige Spieler. Keine Punkte.';
     return 'Der Host hat die Runde beendet. Keine Punkte.';
