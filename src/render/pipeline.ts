@@ -23,16 +23,13 @@ class ScaledBloomPass extends UnrealBloomPass {
 }
 
 /**
- * Final pass in display space (after OutputPass): 3x3 sharpen (centre minus the four neighbours)
- * and an edge-darkening vignette. Each part is switched by a uniform; with both off the pass is
- * disabled outright, so it costs nothing.
+ * Final pass in display space (after OutputPass): an edge-darkening vignette. Off by default; with
+ * the uniform at 0 the pass is disabled outright, so it costs nothing.
  */
 const FinishShader = {
   name: 'FinishShader',
   uniforms: {
     tDiffuse: { value: null as THREE.Texture | null },
-    texel: { value: new THREE.Vector2(1, 1) },
-    sharpen: { value: 0 },
     vignette: { value: 0 },
   },
   vertexShader: /* glsl */ `
@@ -43,39 +40,26 @@ const FinishShader = {
     }`,
   fragmentShader: /* glsl */ `
     uniform sampler2D tDiffuse;
-    uniform vec2 texel;
-    uniform float sharpen;
     uniform float vignette;
     varying vec2 vUv;
     void main() {
       vec4 c = texture2D(tDiffuse, vUv);
-      vec3 rgb = c.rgb;
-      if (sharpen > 0.0) {
-        vec3 n = texture2D(tDiffuse, vUv + vec2(texel.x, 0.0)).rgb
-               + texture2D(tDiffuse, vUv - vec2(texel.x, 0.0)).rgb
-               + texture2D(tDiffuse, vUv + vec2(0.0, texel.y)).rgb
-               + texture2D(tDiffuse, vUv - vec2(0.0, texel.y)).rgb;
-        rgb = clamp(rgb + sharpen * (4.0 * rgb - n), 0.0, 1.0);
-      }
-      if (vignette > 0.0) {
-        vec2 d = (vUv - 0.5) * 1.35;
-        rgb *= 1.0 - vignette * smoothstep(0.25, 1.0, dot(d, d));
-      }
-      gl_FragColor = vec4(rgb, c.a);
+      vec2 d = (vUv - 0.5) * 1.35;
+      gl_FragColor = vec4(c.rgb * (1.0 - vignette * smoothstep(0.08, 0.9, dot(d, d))), c.a);
     }`,
 };
 
-/** Strength of the sharpen kernel and of the vignette when switched on. */
-const FINISH = { sharpen: 0.5, vignette: 0.55 } as const;
+/**
+ * Vignette strength when switched on. Why: the first version (0.55, falloff from 0.25) darkened the
+ * middle of the screen edges by only ~10 % and was barely visible; starting the falloff earlier and
+ * going to 0.85 gives ~35 % at the edge middles and ~85 % in the corners.
+ */
+const FINISH = { vignette: 0.85 } as const;
 
 class FinishPass extends ShaderPass {
   constructor() {
     super(FinishShader);
     this.enabled = false;
-  }
-
-  override setSize(width: number, height: number): void {
-    (this.uniforms.texel.value as THREE.Vector2).set(1 / Math.max(1, width), 1 / Math.max(1, height));
   }
 }
 
@@ -83,7 +67,7 @@ class FinishPass extends ShaderPass {
  * Renderer plus optional bloom. The scene always renders into an HDR target with MSAA; bloom
  * (if on) adds glow above the threshold, and OutputPass applies tone mapping + sRGB at the end.
  * Bloom off only skips the bloom pass, so both paths are antialiased and tone-mapped the same way.
- * After OutputPass an optional finish pass sharpens and vignettes (both off by default).
+ * After OutputPass an optional finish pass adds a vignette (off by default).
  * (The canvas used to carry the MSAA, but with post-processing only fullscreen quads reach it:
  * the scene was not antialiased at all with bloom, and bloom off fell back to the costly MSAA canvas.)
  */
@@ -98,8 +82,6 @@ export class Pipeline {
   bloomStrength = 1;
   /** Multiplier on the tone-mapping exposure (player setting "Renderhelligkeit"). */
   renderBrightness = 1;
-  /** "Nachschärfen". */
-  sharpen = false;
   /** "Vignette". */
   vignette = false;
   private renderScale = 1;
@@ -129,11 +111,6 @@ export class Pipeline {
     this.composer.addPass(new OutputPass());
     this.finish = new FinishPass();
     this.composer.addPass(this.finish);
-  }
-
-  /** "Bildhelligkeit": linear CSS brightness on the canvas, i.e. on the whole image incl. what the browser upscales. */
-  setImageBrightness(k: number): void {
-    this.renderer.domElement.style.filter = k === 1 ? '' : `brightness(${k})`;
   }
 
   /** Another world (map change): same renderer, canvas and passes, new scene and camera. */
@@ -174,8 +151,7 @@ export class Pipeline {
     this.bloom.enabled = this.bloomOn;
     this.bloom.threshold = LIGHTS.bloomThreshold;
     this.bloom.strength = BLOOM.strength * this.bloomStrength;
-    this.finish.enabled = this.sharpen || this.vignette;
-    this.finish.uniforms.sharpen.value = this.sharpen ? FINISH.sharpen : 0;
+    this.finish.enabled = this.vignette;
     this.finish.uniforms.vignette.value = this.vignette ? FINISH.vignette : 0;
     this.composer.render();
   }

@@ -14,8 +14,8 @@ const SECTIONS: readonly { id: Section; label: string }[] = [
 /** The last sub-tab you looked at, for the next time the settings open (this page load only). */
 let lastSection: Section = 'voice';
 
-type SliderKey = 'renderScale' | 'imageBrightness' | 'renderBrightness' | 'cardScale' | 'ambientVolume' | 'musicVolume' | 'announceVolume' | 'voiceVolume' | 'micGain' | 'vadLevel' | 'mouseSens';
-type ToggleKey = 'sharpen' | 'vignette' | 'uiBlur' | 'reduceMotion' | 'reduceFlicker' | 'fadeBlackouts' | 'quietAmbience' | 'echoCancel' | 'autoGain' | 'invertY' | 'mouseRaw';
+type SliderKey = 'renderScale' | 'renderBrightness' | 'cardScale' | 'ambientVolume' | 'musicVolume' | 'announceVolume' | 'voiceVolume' | 'micGain' | 'vadLevel' | 'mouseSens';
+type ToggleKey = 'vignette' | 'uiBlur' | 'reduceMotion' | 'reduceFlicker' | 'fadeBlackouts' | 'quietAmbience' | 'echoCancel' | 'autoGain' | 'invertY' | 'mouseRaw';
 
 /** A hint under a control: fixed text, text that follows the settings, or ready-made markup. */
 type Hint = string | (() => string) | HTMLElement;
@@ -142,8 +142,7 @@ export class SettingsView {
       group(
         'Darstellung',
         this.slider('Auflösung', 'renderScale', 0.5, 1, 0.05, pct, { hint: 'Weniger rechnet schneller, vor allem auf 4K.' }),
-        this.slider('Bildhelligkeit', 'imageBrightness', 0.5, 1.5, 0.05, pct, { hint: 'Macht das ganze 3D-Bild heller oder dunkler.' }),
-        this.slider('Renderhelligkeit', 'renderBrightness', 0.5, 1.5, 0.05, pct, { hint: 'Belichtung der Szene – helle Stellen leuchten stärker.' }),
+        this.slider('Renderhelligkeit', 'renderBrightness', 0.5, 2, 0.05, pct, { hint: 'Macht die Szene heller oder dunkler.' }),
         this.slider('Kartengröße', 'cardScale', 0.5, 2, 0.05, pct, { hint: 'Größe der „Wer bin ich?“-Karten über den Köpfen.' }),
       ),
       group(
@@ -154,7 +153,6 @@ export class SettingsView {
           'glow',
           () => `Glühen um Lampen, Neon und Schilder: ${Math.round(GLOW_LEVELS[settings.glow] * 100)} %.`,
         ),
-        this.toggle('Nachschärfen', 'sharpen', 'Schärft das Bild nach. Hilft vor allem, wenn die Auflösung unter 100 % steht.'),
         this.toggle('Vignette', 'vignette', 'Dunklere Bildränder.'),
         this.toggle('Unschärfe hinter Fenstern', 'uiBlur', 'Menüs, Karten und Anzeigen zeichnen das Bild dahinter weich.'),
       ),

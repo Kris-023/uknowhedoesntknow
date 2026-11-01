@@ -8,9 +8,8 @@ describe('settings defaults', () => {
     const s = parseSettings({});
     expect(s.voiceMode).toBe('mouth');
     expect(s.glow).toBe('standard');
-    expect(s.imageBrightness).toBe(1);
     expect(s.renderBrightness).toBe(1);
-    expect([s.reduceFlicker, s.fadeBlackouts, s.sharpen, s.vignette, s.uiBlur]).toEqual([false, false, false, false, false]);
+    expect([s.reduceFlicker, s.fadeBlackouts, s.vignette, s.uiBlur]).toEqual([false, false, false, false]);
     expect(persistedSettings(s).version).toBe(SETTINGS_VERSION);
   });
 
@@ -23,7 +22,7 @@ describe('settings defaults', () => {
 
   it('has no legacy fields, neither live nor stored', () => {
     const s = parseSettings({});
-    for (const k of ['light', 'bloom', 'bloomStrength', 'shakeOn', 'shakeMm', 'musicOn', 'announcements']) {
+    for (const k of ['light', 'bloom', 'bloomStrength', 'shakeOn', 'shakeMm', 'musicOn', 'announcements', 'sharpen', 'imageBrightness']) {
       expect(s).not.toHaveProperty(k);
       expect(persistedSettings(s)).not.toHaveProperty(k);
     }
@@ -51,7 +50,7 @@ describe('upgrade 0 -> 1', () => {
   it('drops light, shakeOn, shakeMm and the converted toggles', () => {
     const up = upgradeSettings({ light: 'tag', shakeOn: false, shakeMm: 12, musicOn: false, announcements: false, bloom: true, bloomStrength: 1 });
     for (const k of ['light', 'shakeOn', 'shakeMm', 'musicOn', 'announcements', 'bloom', 'bloomStrength']) expect(up).not.toHaveProperty(k);
-    expect(up.version).toBe(1);
+    expect(up.version).toBe(SETTINGS_VERSION);
   });
 
   it('keeps everything else and lands on the current version', () => {
@@ -61,11 +60,40 @@ describe('upgrade 0 -> 1', () => {
     expect(s.voiceMode).toBe('ptt');
     expect(s.micDevice).toBe('abc');
     expect(upgradeSettings({ mouseSens: 1.7 }).version).toBe(SETTINGS_VERSION);
-    expect(persistedSettings(s).version).toBe(1);
+    expect(persistedSettings(s).version).toBe(SETTINGS_VERSION);
   });
 
   it('a saved voice mode "open" stays open', () => {
     expect(load({ voiceMode: 'open' }).voiceMode).toBe('open');
+  });
+});
+
+describe('upgrade 1 -> 2', () => {
+  it('drops sharpen and imageBrightness, keeps renderBrightness', () => {
+    const up = upgradeSettings({ version: 1, sharpen: true, imageBrightness: 1.3, renderBrightness: 1.2, vignette: true });
+    expect(up).not.toHaveProperty('sharpen');
+    expect(up).not.toHaveProperty('imageBrightness');
+    expect(up.version).toBe(2);
+    const s = parseSettings(up);
+    expect(s.renderBrightness).toBe(1.2);
+    expect(s.vignette).toBe(true);
+  });
+
+  it('an unversioned save runs 0 -> 1 -> 2 in order', () => {
+    const up = upgradeSettings({ musicOn: false, bloom: false, sharpen: true, imageBrightness: 0.8, renderBrightness: 1.4 });
+    for (const k of ['musicOn', 'bloom', 'sharpen', 'imageBrightness']) expect(up).not.toHaveProperty(k);
+    expect(up.version).toBe(2);
+    const s = parseSettings(up);
+    expect(s.musicVolume).toBe(0);
+    expect(s.glow).toBe('aus');
+    expect(s.renderBrightness).toBe(1.4);
+  });
+
+  it('renderBrightness accepts up to 2 and falls back above', () => {
+    expect(load({ renderBrightness: 1.8 }).renderBrightness).toBe(1.8);
+    expect(load({ renderBrightness: 2 }).renderBrightness).toBe(2);
+    expect(load({ renderBrightness: 2.5 }).renderBrightness).toBe(1);
+    expect(load({ renderBrightness: 0.4 }).renderBrightness).toBe(1);
   });
 });
 
@@ -94,9 +122,9 @@ describe('safety net', () => {
 
   it('broken values fall back to the defaults', () => {
     const d = parseSettings({});
-    const s = load({ mouseSens: 'x', imageBrightness: 9, glow: 'laut', voiceMode: 'shout', reduceFlicker: 'yes', room: 5 });
+    const s = load({ mouseSens: 'x', renderBrightness: 9, glow: 'laut', voiceMode: 'shout', reduceFlicker: 'yes', room: 5 });
     expect(s.mouseSens).toBe(d.mouseSens);
-    expect(s.imageBrightness).toBe(1);
+    expect(s.renderBrightness).toBe(1);
     expect(s.glow).toBe('standard');
     expect(s.voiceMode).toBe('mouth');
     expect(s.reduceFlicker).toBe(false);

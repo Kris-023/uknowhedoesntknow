@@ -215,9 +215,7 @@ function launch(clock: SharedClock, session: Session | null, startCam: 'wagon' |
     pipeline.bloomOn = settings.glow !== 'aus' && !panel.state.sight;
     pipeline.bloomStrength = GLOW_LEVELS[settings.glow];
     pipeline.renderBrightness = settings.renderBrightness;
-    pipeline.sharpen = settings.sharpen;
     pipeline.vignette = settings.vignette;
-    pipeline.setImageBrightness(settings.imageBrightness);
     pipeline.setRenderScale(settings.renderScale);
   };
   applyRender();

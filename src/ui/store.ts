@@ -44,9 +44,7 @@ export type GlowLevel = keyof typeof GLOW_LEVELS;
 export interface Settings {
   /** "Leuchten": strength of the glow (bloom) around bright lights. */
   glow: GlowLevel;
-  /** "Bildhelligkeit": brightness of the finished picture (CSS filter on the canvas). Multiplier, 0.5..1.5. */
-  imageBrightness: number;
-  /** "Renderhelligkeit": exposure of the renderer, i.e. how bright the lit scene is. Multiplier, 0.5..1.5. */
+  /** "Renderhelligkeit": exposure of the renderer, i.e. how bright the lit scene is. Multiplier, 0.5..2. */
   renderBrightness: number;
   /** "Weniger Bewegung": removes the Hypertrain's shaking. Default follows prefers-reduced-motion. */
   reduceMotion: boolean;
@@ -54,8 +52,6 @@ export interface Settings {
   reduceFlicker: boolean;
   /** "Stromausfälle überblenden": blackouts fade instead of cutting (shown only with reduceFlicker, stored independently). */
   fadeBlackouts: boolean;
-  /** "Nachschärfen": sharpening pass. */
-  sharpen: boolean;
   /** "Vignette": darkened picture corners. */
   vignette: boolean;
   /** "Unschärfe hinter Fenstern": blur behind the UI panels. */
@@ -105,12 +101,10 @@ function defaults(): Settings {
   const reduce = typeof matchMedia === 'function' && matchMedia('(prefers-reduced-motion: reduce)').matches;
   return {
     glow: 'standard',
-    imageBrightness: 1,
     renderBrightness: 1,
     reduceMotion: reduce,
     reduceFlicker: false,
     fadeBlackouts: false,
-    sharpen: false,
     vignette: false,
     uiBlur: false,
     renderScale: 1,
@@ -140,7 +134,7 @@ function defaults(): Settings {
 // append ONE step to UPGRADES (UPGRADES[n] turns an n save into an n+1 save), add a test in tests/settings.test.ts.
 // On load an old save runs every step in order, then is saved again at the current version.
 // The per-field checks in `parseSettings` stay as the safety net for broken values.
-export const SETTINGS_VERSION = 1;
+export const SETTINGS_VERSION = 2;
 
 const UPGRADES: Array<(o: Stored) => Stored> = [
   // 0 -> 1 (phase B): toggles become sliders/levels; shake and light preset are fixed (dropped).
@@ -156,6 +150,11 @@ const UPGRADES: Array<(o: Stored) => Stored> = [
       }
       rest.glow = best;
     }
+    return rest;
+  },
+  // 1 -> 2: "Nachschärfen" and "Bildhelligkeit" were removed. (Renderhelligkeit widened to 0.5..2; old values still fit.)
+  (o) => {
+    const { sharpen, imageBrightness, ...rest } = o;
     return rest;
   },
 ];
@@ -178,12 +177,10 @@ export function parseSettings(o: Stored): Settings {
   const bool = (x: unknown, fb: boolean) => (typeof x === 'boolean' ? x : fb);
   return {
     glow: typeof o.glow === 'string' && Object.hasOwn(GLOW_LEVELS, o.glow) ? (o.glow as GlowLevel) : d.glow,
-    imageBrightness: num(o.imageBrightness, 0.5, 1.5, d.imageBrightness),
-    renderBrightness: num(o.renderBrightness, 0.5, 1.5, d.renderBrightness),
+    renderBrightness: num(o.renderBrightness, 0.5, 2, d.renderBrightness),
     reduceMotion: bool(o.reduceMotion, d.reduceMotion),
     reduceFlicker: bool(o.reduceFlicker, d.reduceFlicker),
     fadeBlackouts: bool(o.fadeBlackouts, d.fadeBlackouts),
-    sharpen: bool(o.sharpen, d.sharpen),
     vignette: bool(o.vignette, d.vignette),
     uiBlur: bool(o.uiBlur, d.uiBlur),
     renderScale: num(o.renderScale, 0.5, 1, d.renderScale),
