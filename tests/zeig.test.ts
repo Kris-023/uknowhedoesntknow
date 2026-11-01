@@ -1,4 +1,4 @@
-import { describe, expect, it, onTestFinished } from 'vitest';
+import { describe, expect, it, onTestFinished, vi } from 'vitest';
 import { ZEIG } from '../src/config';
 import { mulberry32 } from '../src/core/rng';
 import { botPick } from '../src/game/zeig/bots';
@@ -359,6 +359,41 @@ describe('Zeig drauf over the network', async () => {
     g.c.lock('b2');
     room.pump();
     expect(g.b2.shown!.picks).toEqual({ a: 'c', b2: 'c', c: 'b2' });
+  });
+
+  it('a reload mid-question: the player sees their locked pick again', () => {
+    const store = new Map<string, string>();
+    vi.stubGlobal('sessionStorage', {
+      getItem: (k: string) => store.get(k) ?? null,
+      setItem: (k: string, v: string) => void store.set(k, v),
+      removeItem: (k: string) => void store.delete(k),
+      key: (i: number) => [...store.keys()][i] ?? null,
+      get length() {
+        return store.size;
+      },
+    });
+    onTestFinished(() => void vi.unstubAllGlobals());
+    const room = new LocalGameRoom([
+      { id: 'a', seat: 2, name: 'A' },
+      { id: 'b', seat: 0, name: 'B' },
+      { id: 'c', seat: 1, name: 'C' },
+      { id: 'b2', seat: -1, name: 'B' },
+    ]);
+    const late = room.roster.pop()!;
+    const opts = { decks: () => ['normal' as const] };
+    const g = Object.fromEntries(['a', 'b', 'c'].map((id) => [id, new ZeigGame(room.net(id), opts)]));
+    g.a.start();
+    room.pump();
+    g.b.lock('c');
+    room.pump();
+    // b reloads in the same tab: new client, new id, the same tab storage.
+    room.roster.splice(1, 1, { ...late, seat: 0 });
+    g.a.rejoin('b', 'b2');
+    const b2 = new ZeigGame(room.net('b2'), opts);
+    room.pump();
+    expect(b2.iLocked).toBe(true);
+    expect(b2.myPick).toBe('c');
+    expect(b2.lockedPick).toBe('c');
   });
 
   it('a new host takes over mid-question and gets the picks again', () => {

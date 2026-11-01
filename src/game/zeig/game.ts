@@ -6,6 +6,7 @@ import type { DeckId } from '../../words/types';
 import { PickState, type GazeTarget } from '../gaze';
 import type { GameNet, Minigame } from '../minigame';
 import { byTableOrder } from '../tableOrder';
+import { tabStore } from '../tabStore';
 import { drawQuestions, parseIntent, ZeigHost, type Intent, type Picks, type ZeigRecord, type ZeigState } from './logic';
 
 const isStrings = (v: unknown, max = 8): v is string[] => Array.isArray(v) && v.length <= max && v.every((x) => typeof x === 'string' && x.length <= 200);
@@ -60,6 +61,8 @@ export class ZeigGame implements Minigame, GazeTarget {
   private goneSince = new Map<string, number>();
   private dropAsked = new Map<string, number>();
   private pick = new PickState();
+  /** My locked pick of the running question, kept in this tab so a reload shows it again. */
+  private saved = tabStore('zeig');
 
   constructor(
     private net: GameNet,
@@ -134,6 +137,7 @@ export class ZeigGame implements Minigame, GazeTarget {
     if (!this.picking || (id !== null && (id === this.selfId || !this.state!.players.includes(id)))) return;
     this.pick.id = id;
     this.pick.locked = true;
+    this.saved.set('pick', { k: this.pickKey(this.state!), id });
     this.flush();
     this.emit();
   }
@@ -317,15 +321,24 @@ export class ZeigGame implements Minigame, GazeTarget {
     this.applyState(s);
   }
 
+  private pickKey(s: ZeigState): string {
+    return `${s.round}|${s.qNo}|${s.undo ?? 0}`;
+  }
+
   private applyState(s: ZeigState): void {
     s.undo ??= 0;
     this.state = s;
     if (s.phase === 'look') {
       // With the undo count: a question looked at again after an undo starts with no pick.
-      this.pick.reset(`${s.round}|${s.qNo}|${s.undo}`);
+      this.pick.reset(this.pickKey(s));
       // After a reload the host still has my lock; the pick behind it is no longer mine to show.
-      if (s.locked.includes(this.selfId) && !this.pick.locked) this.pick.locked = true;
-    }
+      if (s.locked.includes(this.selfId) && !this.pick.locked) {
+        this.pick.locked = true;
+        // The tab remembers it, unless that player has reloaded since (their id changed).
+        const mine = this.saved.get<{ k: string; id: string | null }>('pick', (v): v is { k: string; id: string | null } => isRecord(v) && typeof v.k === 'string' && (v.id === null || typeof v.id === 'string'));
+        if (mine?.k === this.pickKey(s) && mine.id !== this.selfId && (mine.id === null || s.players.includes(mine.id))) this.pick.id = mine.id;
+      }
+    } else if (s.phase === 'done') this.saved.clear();
     this.emit();
   }
 }
