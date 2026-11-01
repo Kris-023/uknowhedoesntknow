@@ -219,6 +219,8 @@ export const NET = {
   dropWaitMs: 30_000,
   /** Joiner repeats its hello until a host answers (host may still be connecting). */
   helloRetryMs: 2000,
+  /** The host who hands the role over stays host this long if the new host never confirms (it left, or never heard). */
+  handoverWaitMs: 5000,
   /** Quick pings right after joining for a good clock offset, then occasional ones. */
   pingFastMs: 250,
   pingFastCount: 8,

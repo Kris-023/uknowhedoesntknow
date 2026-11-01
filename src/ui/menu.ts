@@ -351,6 +351,8 @@ export class PauseMenu extends MenuShell {
   volume: VolumeControl | null = null;
   /** Host: change the room settings for everyone. */
   onRoomOpts: ((o: RoomOpts) => void) | null = null;
+  /** Host: hand the host role to this player (the button in the player list). */
+  onHandover: ((id: string) => void) | null = null;
   /** Minigame block in the game tab (start/end a round), built by the game. */
   gameControls: (() => HTMLElement | null) | null = null;
   /** Solo: switch the map right here (in a room it's part of the host's room settings). */
@@ -417,6 +419,39 @@ export class PauseMenu extends MenuShell {
     return box;
   }
 
+  /**
+   * "Host übergeben" next to another player, host only. The click is easy to hit by accident, so the
+   * first one only asks "Wirklich?" for a few seconds; the second hands the role over.
+   */
+  private handoverButton(id: string, name: string, alone: boolean): HTMLElement {
+    const label = 'Host übergeben';
+    const b = el('button', 'btn small ghost', label);
+    b.type = 'button';
+    b.setAttribute('aria-label', `Host an ${name || 'Mitspieler'} übergeben`);
+    if (alone) b.style.marginLeft = 'auto';
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    b.addEventListener('click', () => {
+      if (timer === undefined) {
+        b.textContent = 'Wirklich?';
+        b.classList.add('danger');
+        timer = setTimeout(() => {
+          timer = undefined;
+          b.textContent = label;
+          b.classList.remove('danger');
+        }, 4000);
+        return;
+      }
+      clearTimeout(timer);
+      timer = undefined;
+      b.disabled = true;
+      b.textContent = 'Übergebe …';
+      // Focus inside the panel blocks the refresh that shows the new roles.
+      b.blur();
+      this.onHandover?.(id);
+    });
+    return b;
+  }
+
   /** Everyone in a room sees where it plays; only the host changes it (room settings). */
   private mapLine(): HTMLElement {
     const m = mapDef(this.mapId);
@@ -481,6 +516,7 @@ export class PauseMenu extends MenuShell {
         if (p.me) li.append(el('span', 'tag', 'Du'));
         if (p.host) li.append(el('span', 'tag', 'Host'));
         if (!p.me && this.volume) li.append(this.volSlider(p.id, p.name));
+        if (!p.me && r.role === 'host' && this.onHandover) li.append(this.handoverButton(p.id, p.name, !this.volume));
         list.append(li);
       }
       const meta = [`${r.players.length}/${NET.maxPlayers} im Raum`, r.role === 'host' ? 'du bist Host' : 'du bist Gast'];

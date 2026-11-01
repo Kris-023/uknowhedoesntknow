@@ -161,6 +161,17 @@ Two shared tools make a reload or a host change survivable. Nothing asks or stor
   unless a game replicated it on purpose: undo history always, and in-flight votes unless the game keeps copies of the
   ballots (Gleich gedacht does; Wer bin ich? clears a running vote, see the game pages). Conversely a game that sees `!isHost` while
   holding a host object drops it (network split: the other host's state wins).
+- **Host transfer (demotion on purpose).** The host can hand the role to a living player
+  ([Networking](networking.md), "Host transfer"). For the games it is a host takeover in which the old host stays
+  in the room: the target builds its host object from the last public state in its next `tick()`, and the old host
+  drops its own in the same `tick()` (`if (this.host && !this.isHost) this.host = null`, present in all six games).
+  Nothing else is needed per game: `publish()` and the intents go through `net.isHost()` / `net.hostId()`, which
+  follow the session at once, and every game accepts its state only from `net.hostId()`. Same losses as any
+  takeover (undo history; Wer bin ich? cancels a running vote), but the old host is still there as a player, so its
+  own private data (cards, ballots, secrets) stays with it. A message the old host receives in the few
+  milliseconds before its next `tick()` may still reach its stale host object, but anything it publishes then
+  is ignored by the others, who already take state only from the new host, and the new host's first publish
+  settles everyone. Test: `tests/hostTransfer.test.ts`.
 - **Absent players never block.** `absent()` lists round players who are not in `net.members()`. "Everyone answered"
   checks are filtered by who is present (whoami `closeIfAllIn`, gleich `present`). Turn games pass an absent player's
   turn after `absentPassS` (8 s; whoami, sags). After `absentLeaveS` (30 min, the same as `NET.rejoinMs`) the host

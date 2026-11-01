@@ -34,7 +34,7 @@ export interface SessionEvents {
   opts(o: RoomOpts): void;
   /** Host only: a player who had left came back under a new id (reload, reconnect). */
   rejoin(oldId: string, newId: string): void;
-  /** Host role changed (migration, or a second host after a network split gave way) or the room was full. */
+  /** Host role changed (migration, a handover, or a second host after a network split gave way) or the room was full. */
   status(s: 'host' | 'client' | 'full'): void;
 }
 
@@ -61,6 +61,8 @@ export class Session {
   blackoutAt: number | null = null;
   opts: RoomOpts = parseOpts(undefined);
   private lastHello = -Infinity;
+  /** Host who asked someone to take over and still waits for their welcome; stays host until it comes. */
+  private handing: { to: string; until: number } | null = null;
   private nextPing = 0;
   private pingsSent = 0;
   private ev: Partial<SessionEvents> = {};
@@ -90,6 +92,7 @@ export class Session {
     net.on('welcome', (d, from) => this.onWelcome(d, from));
     net.on('roster', (d, from) => this.onRoster(d, from));
     net.on('state', (d, from) => this.onState(d, from));
+    net.on('handover', (d, from) => this.onHandover(d, from));
     net.on('pose', (d, from) => {
       const p = parsePose(d);
       if (p) this.poses.set(from, p);
@@ -196,7 +199,14 @@ export class Session {
   /** Per frame: hello retries until welcomed (or back in the roster), clock pings to the host. */
   tick(): void {
     const now = this.now();
-    if (this.role === 'host') return;
+    if (this.role === 'host') {
+      // Nobody confirmed the handover in time (the target left or never heard): carry on as host.
+      if (this.handing && now > this.handing.until) {
+        this.handing = null;
+        this.broadcastRoster();
+      }
+      return;
+    }
     // Not (or no longer) in the host's roster: a connection drop the host noticed, or we gave way to
     // another host. Same hello as at the start; the host recognises the token.
     if (!this.welcomed || (this.hostId && !this.roster.has(this.net.selfId))) {
@@ -257,6 +267,24 @@ export class Session {
     this.net.leave();
   }
 
+  /**
+   * Host only: give the host role to another connected player. The target is asked directly and
+   * becomes host on its own; we stay host until its welcome arrives (see `onWelcome`), so there is
+   * never a moment without a host and, if the target vanishes, nothing is lost. Returns false if the
+   * request does not apply (not host, a handover already running, unknown or unreachable target).
+   */
+  handOver(id: string): boolean {
+    if (this.role !== 'host' || this.handing || id === this.net.selfId || !this.roster.has(id) || !this.peers.has(id)) return false;
+    this.handing = { to: id, until: this.now() + NET.handoverWaitMs };
+    this.net.send('handover', id, id);
+    return true;
+  }
+
+  /** A handover is on its way (the pause menu shows it as in progress). */
+  get handingOver(): boolean {
+    return this.handing !== null;
+  }
+
   /** Host: reopen an empty room yourself (everyone else is gone, e.g. after a reload). */
   takeOver(): void {
     if (this.role === 'host') return;
@@ -310,6 +338,7 @@ export class Session {
     this.peers.delete(id);
     this.poses.delete(id);
     const wasHost = id === this.hostId;
+    if (this.handing?.to === id) this.handing = null;
     const left = this.roster.get(id);
     if (left) this.remember(left);
     if (!this.roster.delete(id)) return;
@@ -334,8 +363,9 @@ export class Session {
     }
   }
 
-  private becomeHost(): void {
+  private becomeHost(handover = false): void {
     this.role = 'host';
+    this.handing = null;
     this.hostId = this.net.selfId;
     if (!this.roster.has(this.net.selfId)) this.roster.set(this.net.selfId, { id: this.net.selfId, seat: 0, state: this.myState, keys: this.myKeys() });
     for (const [id, e] of this.roster) {
@@ -346,6 +376,9 @@ export class Session {
     const first = !this.welcomed;
     this.welcomed = true;
     this.ev.status?.('host');
+    // After a handover everyone still counts the old host as host and only takes the roster from it:
+    // the welcome comes first (peers accept it from anyone and switch), then roster and train follow.
+    if (handover) this.net.send('welcome', this.welcomeMsg());
     this.broadcastRoster();
     this.net.send('train', this.train);
     if (first) this.ev.welcome?.(this.welcomeMsg());
@@ -353,7 +386,8 @@ export class Session {
   }
 
   private onHello(d: unknown, from: string): void {
-    if (this.role !== 'host') return;
+    // While handing over, the joiner's next hello (they repeat it) goes to the new host.
+    if (this.role !== 'host' || this.handing) return;
     const o = (typeof d === 'object' && d !== null ? d : {}) as { s?: unknown; k?: unknown; p?: unknown };
     const state = parseState(o.s);
     if (!state) return;
@@ -398,10 +432,18 @@ export class Session {
   }
 
   private onWelcome(d: unknown, from: string): void {
-    if (this.role === 'host') return;
+    // A host only listens to the one it asked to take over.
+    if (this.role === 'host' && this.handing?.to !== from) return;
     const w = parseWelcome(d);
     if (!w || !w.roster.some((e) => e.id === this.net.selfId)) return;
+    if (this.role === 'host') this.stepDown(from);
     const first = !this.welcomed;
+    // Another host than the one we followed (a handover): measure the clock against the new one.
+    if (this.welcomed && this.hostId !== from) {
+      this.clock.resetSamples();
+      this.pingsSent = 0;
+      this.nextPing = 0;
+    }
     this.hostId = from;
     this.welcomed = true;
     this.applyRoster(w.roster);
@@ -414,6 +456,25 @@ export class Session {
       this.clock.roughSync(w.hostMs, this.now());
       this.ev.welcome?.(w);
     }
+  }
+
+  /** The host asks us to take over. Only the current host may, and only if it is asking us. */
+  private onHandover(d: unknown, from: string): void {
+    if (this.role !== 'client' || !this.welcomed || from !== this.hostId || d !== this.net.selfId) return;
+    if (!this.roster.has(from) || !this.roster.has(this.net.selfId)) return;
+    this.becomeHost(true);
+  }
+
+  /** Give up the host role to `to` (it won a clash, or took over at our request). */
+  private stepDown(to: string): void {
+    this.role = 'client';
+    this.hostId = to;
+    this.handing = null;
+    this.clock.resetSamples();
+    this.pingsSent = 0;
+    this.nextPing = 0;
+    this.lastHello = -Infinity;
+    this.ev.status?.('client');
   }
 
   private onRoster(d: unknown, from: string): void {
@@ -440,14 +501,8 @@ export class Session {
       this.net.send('roster', [...this.roster.values()], from);
       return;
     }
-    this.role = 'client';
-    this.hostId = from;
-    this.clock.resetSamples();
-    this.pingsSent = 0;
-    this.nextPing = 0;
-    this.lastHello = -Infinity;
+    this.stepDown(from);
     this.applyRoster(r);
-    this.ev.status?.('client');
   }
 
   private onState(d: unknown, from: string): void {
@@ -469,7 +524,8 @@ export class Session {
   }
 
   private broadcastRoster(): void {
-    this.net.send('roster', [...this.roster.values()]);
+    // Not while handing over: the new host would take it for a second host's roster. It sends the roster itself.
+    if (!this.handing) this.net.send('roster', [...this.roster.values()]);
     this.ev.roster?.();
   }
 }

@@ -62,6 +62,17 @@ People reload, lose WiFi or switch browsers, and a round must survive that.
 - `src/net/session.ts:hostClash`: if the old host was only cut off and comes back, two hosts exist. They exchange rosters on join; the bigger room wins, a tie goes to the smaller id. Both sides decide identically, and the loser becomes a client and joins the winner like a returning player, so it keeps its seat.
 - `NET.orphanMs` (20 s): a joiner without any host sees "Noch niemand im Raum …" with a button "Raum selbst eröffnen" (`src/net/session.ts:takeOver`). The join is not cancelled, a host may still show up. *Why:* Nostr signaling alone can take about 10 s, and taking over too early would split the room in two.
 
+### Host transfer ("Host übergeben")
+
+The host can give the role to any other connected player on purpose (button in the Esc menu's player list, see [Menu, settings and input](menu-settings.md)). Same end state as a migration, but nobody has to leave.
+
+- **Sequence.** `src/net/session.ts:handOver(id)` (host only) sends `handover` with the target id *to the target only* and stays host, remembering `handing = { to, until }`. The target's `onHandover` accepts it only if it is a welcomed client, the sender is its `hostId`, the payload is its own id, and both are in its roster; it then runs `becomeHost(true)`: drop unconnected roster entries, `status('host')`, broadcast a `welcome` to everyone, then the usual roster and train broadcast. Everyone, the old host included, takes the `welcome` (clients accept it from any peer, which is also how a clash loser joins the winner) and switches `hostId`, resetting clock samples and the ping schedule, so all peers ping the new host. The old host's `onWelcome` accepts it only from the player it handed over to; `stepDown` then makes it a client (`status('client')`).
+- **The welcome goes first.** Peers only take `roster`/`train`/`opts`/`blackout` from their current `hostId`. After the welcome (same channel, so in order) the roster and train that follow are already accepted. *Why not a broadcast `handover` that everybody applies:* the new host's roster could reach a peer before the old host's message did and be dropped; and if the target left right then, the peers that had applied the message and those that had not would elect different hosts, leaving nobody host. With the welcome as the one announcement, a peer follows whoever really became host.
+- **Never two hosts, never none.** The old host stays host until the new host's welcome arrives, so the room always has a host. While `handing` is set it does not answer `hello` (the joiner repeats it every 2 s and then reaches the new host) and does not broadcast its roster (the new host would take it for a second host's roster and run `hostClash`). If nothing arrives within `NET.handoverWaitMs` (5 s) `tick` clears `handing` and the old host simply carries on. If the target leaves meanwhile, `onLeave` clears it too. A second `handOver` while one is open returns `false`.
+- **The host-takeover rank is unchanged.** When the new host later leaves, the best `NET.seatOrder` rank among the rest takes over, which may be the old host again. *Why:* keeping one rule for who follows a lost host is simpler than a second "preferred successor" that every peer would have to agree on.
+- **What the old host loses:** in the short window before the welcome arrives, a client's `state` update (look or items) that reaches it is applied to its own roster but never forwarded, so it can be missing from the new host's roster until that client changes something again. Undo history stays behind as in any takeover. Games follow the takeover pattern ([Minigame framework](minigame-framework.md), "Absent players and rejoin/host takeover").
+- Tests: `tests/hostTransfer.test.ts` (Session level, plus a "Wer bin ich?" round that continues under the new host).
+
 ### Failure handling in the UI
 
 - `src/main.ts:showProblem` / `src/main.ts:hideProblem`: one calm notice in the middle for problems, with a hint what to do. The `offline` event shows "Keine Internetverbindung. Sobald sie zurück ist, verbindet sich der Raum von selbst neu."; `online` hides it.
@@ -75,7 +86,7 @@ People reload, lose WiFi or switch browsers, and a round must survive that.
 
 ## Using it
 
-Menu: "create" makes a code and opens the room; "join" takes a pasted code or link (`src/ui/menu.ts`). While connecting, the menu shows "Verbinde mit Raum …". The pause menu lists players, role and round-trip time (`pause.setRoom` in `connect`). A full room shows "Der Raum ist voll (4 von 4).".
+Menu: "create" makes a code and opens the room; "join" takes a pasted code or link (`src/ui/menu.ts`). While connecting, the menu shows "Verbinde mit Raum …". The pause menu lists players, role and round-trip time (`pause.setRoom` in `connect`); the host also gets a "Host übergeben" button on every other player's row. A full room shows "Der Raum ist voll (4 von 4).".
 
 For multi-device development with `npm run dev:lan`, HTTPS with a throwaway certificate is required (Trystero needs WebCrypto, a secure context), and the host names the dev server accepts come from the environment variable `UKHDK_ALLOWED_HOSTS` (comma-separated, read through Vite's `loadEnv`, so a shell variable or a git-ignored `.env.local` works; unset means Vite's default host check), for example `UKHDK_ALLOWED_HOSTS=<your-host-name> npm run dev:lan`. Details in [debug-build.md](debug-build.md).
 
@@ -94,6 +105,7 @@ For multi-device development with `npm run dev:lan`, HTTPS with a throwaway cert
 | `helloRetryMs` | 2 s | Joiner repeats hello |
 | `pingFastMs` / `pingFastCount` / `pingSlowMs` | 250 / 8 / 1000 | Clock ping cadence |
 | `orphanMs` | 20 s | Without a host: offer to reopen the room |
+| `handoverWaitMs` | 5 s | The host who handed over waits this long for the new host's welcome, then stays host |
 
 ## Related links
 
