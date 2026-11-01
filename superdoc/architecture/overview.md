@@ -67,7 +67,7 @@ flicker, blackouts, oncoming trains, NPCs, map events, ambience     same picture
 | Games: Zeig drauf, Ahnungslos, Stadt, Land, Fluss | `src/game/zeig/`, `src/game/ahnungslos/`, `src/game/slf/` | [Zeig drauf / Ahnungslos / Stadt, Land, Fluss](../features/minigames-zeig-ahnungslos-slf.md) |
 | Maps | `src/maps/types.ts`, `src/maps/index.ts`, one folder per map | [Maps](../features/maps.md) |
 | Scene (hypertrain parts, world) | `src/scene/world.ts`, `src/scene/coach.ts`, `src/scene/lighting.ts`, `src/scene/tunnel.ts`, `src/scene/neighbours.ts` | [Rendering and scene](../features/rendering-scene.md) |
-| Render pipeline (bloom, tone mapping, sharpen/vignette) | `src/render/pipeline.ts` | [Rendering and scene](../features/rendering-scene.md) |
+| Render pipeline (bloom, tone mapping, vignette) | `src/render/pipeline.ts` | [Rendering and scene](../features/rendering-scene.md) |
 | Characters | `src/characters/`, `src/ui/editor.ts`, `src/ui/preview.ts` | [Characters](../features/characters.md) |
 | Audio | `src/audio/voice.ts`, `src/audio/ambience.ts`, `src/audio/denoise.ts` | [Voice and audio](../features/voice-audio.md) |
 | UI | `src/ui/` (menu, settings, room dialog, editor, lists, panels), `src/style.css` | [Menu, settings and input](../features/menu-settings.md), [Styling guide](../ui/STYLING-GUIDE.md) |

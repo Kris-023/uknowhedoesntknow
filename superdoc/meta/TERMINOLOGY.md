@@ -30,11 +30,11 @@ Project-specific vocabulary. When the user uses a term defined here, use the sam
 ### Graphics and comfort
 
 - **Leuchten** — setting `glow`, the strength of the bloom around bright lights: Standard (100 %), Mittel (50 %), Niedrig (15 %), Aus (0 %); `src/ui/store.ts:GLOW_LEVELS`. See [rendering-scene](../features/rendering-scene.md).
-- **Bildhelligkeit / Renderhelligkeit** — two separate brightness sliders. *Bildhelligkeit* (`imageBrightness`) is a CSS brightness filter on the finished canvas picture; *Renderhelligkeit* (`renderBrightness`) is the renderer's exposure multiplier, so lit parts and glow change with it. Both 50 to 150 %. They replaced the old `Licht` (Nacht/Hell) choice, which no longer exists.
-- **Weniger Bewegung** — setting `reduceMotion`: no camera shake (shake itself is a fixed 5 mm times the map factor; the old `Wackeln` strength is gone).
+- **Renderhelligkeit** — setting `renderBrightness`: the renderer's exposure multiplier, so lit parts and glow change with it; 50 to 200 %. It is the only brightness control: the former `Bildhelligkeit` (CSS filter on the canvas) was removed, as was the old `Licht` (Nacht/Hell) choice.
+- **Weniger Bewegung** — setting `reduceMotion`: no camera shake and slower tunnel lines on the hypertrain (shake itself is a fixed 5 mm times the map factor; the old `Wackeln` strength is gone).
 - **Weniger Flackern** — setting `reduceFlicker`: lights stay steady instead of flickering, and a blackout becomes one clean cut. Visual only; events, sounds and timing stay as they are.
 - **Stromausfälle überblenden** — setting `fadeBlackouts`: with Weniger Flackern, blackouts fade out and in softly instead of cutting. Has no effect (and is hidden) without Weniger Flackern. Not the same as the room option **Stromausfälle** (whether random blackouts happen at all).
-- **Nachschärfen / Vignette / Unschärfe hinter Fenstern** — optional picture effects: sharpen pass, darker corners, blur behind menus and HUD panels.
+- **Vignette / Unschärfe hinter Fenstern** — optional picture effects: darker corners, and blur behind every window-like box (menus, HUD panels, game bars and banners). `Nachschärfen` (sharpen) was removed.
 
 ### Games and content
 

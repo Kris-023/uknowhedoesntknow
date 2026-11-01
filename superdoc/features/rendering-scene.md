@@ -1,6 +1,6 @@
 # Rendering and scene: the post-processed night-train look
 
-How a frame gets drawn: one HDR render target with MSAA, optional bloom, tone mapping, then an optional sharpen/vignette pass. It also covers the hypertrain coach scene that feeds it (lighting, tunnel, neighbour coaches, junk), the camera, and the quirks that are easy to break. Other maps build their own scenes but share the pipeline, the `LIGHTS` values and the camera in `world.ts`; see [maps.md](maps.md).
+How a frame gets drawn: one HDR render target with MSAA, optional bloom, tone mapping, then an optional vignette pass. It also covers the hypertrain coach scene that feeds it (lighting, tunnel, neighbour coaches, junk), the camera, and the quirks that are easy to break. Other maps build their own scenes but share the pipeline, the `LIGHTS` values and the camera in `world.ts`; see [maps.md](maps.md).
 
 ## How it works
 
@@ -10,12 +10,12 @@ How a frame gets drawn: one HDR render target with MSAA, optional bloom, tone ma
 - The composer's target is a `HalfFloatType` render target with `RENDER.msaaSamples` (4, clamped to `capabilities.maxSamples`). *Why:* with post-processing only fullscreen quads reach the canvas, so canvas MSAA does nothing. Earlier versions had no antialiasing at all with bloom on, and bloom off fell back to the costly MSAA canvas. Now both paths are antialiased and tone-mapped identically; bloom off only skips one pass (`bloom.enabled`).
 - `src/render/pipeline.ts:ScaledBloomPass` is `UnrealBloomPass` working at `BLOOM.resolutionScale` (0.5) of the render size by overriding `setSize`. *Why:* glow is soft anyway and full-size bloom cost about 10 % GPU; `BLOOM.strength` (0.72) and `radius` (0.25) were retuned lower for the half-size mips, which spread more haze.
 - `OutputPass` applies ACES filmic tone mapping and sRGB conversion. Because of that, materials write linear HDR values and colours above 1 are meaningful (see the neon tubes below).
-- `src/render/pipeline.ts:FinishPass` is a small custom `ShaderPass` that runs after `OutputPass`, in display space: a 3x3 sharpen (centre minus the four neighbours, strength `FINISH.sharpen` 0.5) and an edge-darkening vignette (`FINISH.vignette` 0.55). Each part is a uniform; with both off the pass is disabled outright (`finish.enabled = sharpen || vignette`), so it costs nothing. *Why:* it must come after tone mapping so the kernel works on what the player sees, not on HDR values.
+- `src/render/pipeline.ts:FinishPass` is a small custom `ShaderPass` that runs after `OutputPass`, in display space: an edge-darkening vignette only (`FINISH.vignette` 0.85, `c.rgb * (1 - vignette * smoothstep(0.08, 0.9, dot(d, d)))` with `d = (vUv - 0.5) * 1.35`). The pass is disabled outright while `Vignette` is off (`finish.enabled = vignette`), so it costs nothing. *Why:* it comes after tone mapping so it darkens what the player sees; strength and curve were raised after a user test found the first vignette too subtle. A sharpen kernel lived here once and was removed ("looks really bad"), together with its texel uniform and the `setSize` override.
 - `Pipeline.render` re-reads `LIGHTS.exposure` and `LIGHTS.bloomThreshold` every frame and sets `bloom.strength = BLOOM.strength * bloomStrength` and `renderer.toneMappingExposure = LIGHTS.exposure * renderBrightness`. Bloom is off at `glow: 'aus'` and in the "Meine Sicht" debug view.
-- Brightness has two separate sliders on purpose. `Renderhelligkeit` (`settings.renderBrightness`) is the exposure multiplier, so bright parts also glow more. `Bildhelligkeit` (`settings.imageBrightness`) is a CSS `filter: brightness()` on the canvas (`Pipeline.setImageBrightness`; no filter at exactly 1), i.e. it scales the whole finished picture, including what the browser upscales at a lower `Auflösung`. Both run 0.5 to 1.5.
+- One brightness control: `Renderhelligkeit` (`settings.renderBrightness`, 0.5 to 2) is the exposure multiplier, so bright parts also glow more. *Why:* there used to be a second slider, `Bildhelligkeit`, a CSS `filter: brightness()` on the canvas (`Pipeline.setImageBrightness`); it was removed along with the filter so that one control with a higher ceiling remains.
 - `r.info.autoReset = false` plus a manual `info.reset()` per `render()`. *Why:* the composer runs several passes, and the stats readout should count the whole frame.
 - `Pipeline.setView(scene, camera)` swaps what the `RenderPass` draws on a map change, so renderer, canvas and passes survive.
-- `src/main.ts:applyRender` pushes `settings.glow !== 'aus' && !panel.state.sight`, `GLOW_LEVELS[settings.glow]` (1 / 0.5 / 0.15 / 0 for `Leuchten` Standard / Mittel / Niedrig / Aus), `renderBrightness`, `imageBrightness`, `sharpen`, `vignette` and `renderScale` into the pipeline, on start and on every settings change. The "Meine Sicht" debug view forces bloom off.
+- `src/main.ts:applyRender` pushes `settings.glow !== 'aus' && !panel.state.sight`, `GLOW_LEVELS[settings.glow]` (1 / 0.5 / 0.15 / 0 for `Leuchten` Standard / Mittel / Niedrig / Aus), `renderBrightness`, `vignette` and `renderScale` into the pipeline, on start and on every settings change. The "Meine Sicht" debug view forces bloom off.
 
 ### Render scale
 
@@ -50,7 +50,7 @@ How a frame gets drawn: one HDR render target with MSAA, optional bloom, tone ma
 - `src/scene/tunnel.ts:buildTunnel`: 380 light streaks (`TUNNEL.count`) as two `InstancedMesh` (core and a wide faint glow), one draw call each. The first 96 (`TUNNEL.regular`) are evenly spaced rails along the window line, the rest random debris.
 - Position is a pure function of `(seed, index, distance)`; after each wrap a streak re-rolls its x/y from `hash01(seed, i, lap, ...)`. *Why:* peers that agree on the shared distance see the same picture without any network traffic. The same rule holds for blackouts, the oncoming train and the neon flicker.
 - `crossedPlanes` (two crossed planes) means a flat streak never vanishes edge-on. `streakMat` is additive with `forceSinglePass: true`. *Why:* additive blending ignores order, and without the flag three.js draws transparent double-sided meshes twice and flags a program check twice per frame.
-- Streak length stretches with speed (`SPEED.stretchPerUnit`); `SPEED.visualScale` (0.12) compresses real km/h into motion that is readable at 60 fps instead of a blur. `World.update` computes `distance = trainDistance(train, t) * SPEED.visualScale`.
+- Streak length stretches with speed (`SPEED.stretchPerUnit`); `SPEED.visualScale` (0.12) compresses real km/h into motion that is readable at 60 fps instead of a blur. `World.update` computes `distance = trainDistance(train, t) * SPEED.visualScale`. With `Weniger Bewegung` the map gets `distance * streakSpeed(reduceMotion)` (`src/scene/streakSpeed.ts`, `REDUCED_STREAK_SPEED` 0.3, else 1); the tunnel streaks read only that value, and streak length is unchanged. *Why:* user test: "make sure that the lines aren't as fast in the background". `world.distance` itself, `kmh`, power, sounds and halts stay real; toggling the setting causes one visual phase jump of the streaks.
 
 ### Neighbours (endless train)
 
@@ -78,7 +78,7 @@ All of it lives in `src/scene/world.ts:World`, mostly `updateCamera`.
 - Modes (`CamMode`): `'wagon'` is the overview camera from `MapScene.overview` (position, look-at, fov); `'pov'` is first person from the local player's head.
 - POV position follows the head's `rig.eye`, but the direction is computed from `players.look` (yaw and pitch from the mouse) plus the seat rotation, not from the head bone. *Why:* taking it from the head made the view trail behind the mouse; head smoothing, the lagging torso turn and its lean kept it drifting after the mouse stopped.
 - Shake: `amp = shakeAmplitude(reduceMotion, SHAKE.defaultMm, map.shake)` (`core/motion.ts`): the fixed base `SHAKE.defaultMm` (5 mm) times the map factor, 0 on every map with `Weniger Bewegung`; `core/motion.ts:shake` gives x/y/roll noise seeded from the clock seed. POV applies 0.6 of it to position and look target plus a small roll. The same `amp` drives NPC sway (`Npcs.update`). `MapScene.shake` is the per-map factor: hypertrain 1, the other rooms small values (0.08 to 0.12, the laundromat varies with its imbalance), `placeholder` 0. *Why* no strength slider any more: one fixed strength is enough, the real need is a switch for people who get motion sick; players whose OS asks for reduced motion start with `reduceMotion` on.
-- FOV: POV base is `CAMERA.seatFov` (74); the overview uses the map's `overview.fov` plus a slow breathing term `1.5 * sin(0.4 t)`. Both add `speedFactor * MapScene.speedFov` (`sf = kmh / SPEED.maxKmh`); only the hypertrain sets `speedFov` (6 degrees at full speed), so only moving maps widen.
+- FOV: POV base is `CAMERA.seatFov` (74); the overview uses the map's `overview.fov` plus a slow breathing term `1.5 * sin(0.4 t)`. Both add `speedFactor * MapScene.speedFov` (`sf = kmh / SPEED.maxKmh`); only the hypertrain sets `speedFov` (6 degrees at full speed), so only moving maps widen. With `Weniger Bewegung` the widening is scaled by the same `streakSpeed` factor, so slower streaks do not come with a full-speed zoom.
 - Zoom: right mouse in POV sets `world.zoom = 1`, release sets 0 (`src/main.ts`, `mousedown`/`mouseup`; `contextmenu` is suppressed on the stage). `World.update` smooths it into `zoomK` with rate `CAMERA.zoomRate` (10); `World.fovFactor` is `1 - (1 - CAMERA.zoomFovFactor) * zoomK` with `zoomFovFactor` 0.38. *Why:* to read the cards on other players' heads. `fovFactor` multiplies the POV FOV and also the mouse sensitivity (`src/main.ts:mouseK`), so turning speed on screen stays constant when zoomed. Outside POV the zoom target is forced to 0.
 - Projection: `PerspectiveCamera(CAMERA.wagonFov, 16/9, 0.05, 120)`, aspect updated on resize in `main.ts`; `updateProjectionMatrix` runs once per frame after the FOV changes.
 
@@ -87,11 +87,10 @@ All of it lives in `src/scene/world.ts:World`, mostly `updateCamera`.
 | Key | Default | Meaning |
 | --- | --- | --- |
 | `settings.glow` | `standard` | "Leuchten": bloom strength level, `standard` / `mittel` / `niedrig` / `aus` = 1 / 0.5 / 0.15 / 0 times `BLOOM.strength` (`src/ui/store.ts:GLOW_LEVELS`) |
-| `settings.renderBrightness` | 1 | Exposure multiplier, 0.5..1.5 |
-| `settings.imageBrightness` | 1 | CSS brightness on the canvas, 0.5..1.5 |
-| `settings.sharpen` / `vignette` | off | Switch the `FinishPass` parts |
+| `settings.renderBrightness` | 1 | Exposure multiplier, 0.5..2 |
+| `settings.vignette` | off | Switches the `FinishPass` vignette |
 | `settings.renderScale` | 1 | Render resolution factor, 0.5..1 |
-| `settings.reduceMotion` | follows `prefers-reduced-motion` | "Weniger Bewegung": no camera shake |
+| `settings.reduceMotion` | follows `prefers-reduced-motion` | "Weniger Bewegung": no camera shake, tunnel streaks at `REDUCED_STREAK_SPEED` |
 | `SHAKE.defaultMm` | 5 | Fixed shake base, times `MapScene.shake` |
 | `RENDER.maxPixelRatio` | 2 | Cap on device pixel ratio |
 | `RENDER.msaaSamples` | 4 | MSAA on the HDR target |
