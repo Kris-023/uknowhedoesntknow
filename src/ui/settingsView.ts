@@ -158,7 +158,7 @@ export class SettingsView {
       ),
       group(
         'Komfort',
-        this.toggle('Weniger Bewegung', 'reduceMotion', 'Kein Wackeln im Hypertrain.'),
+        this.toggle('Weniger Bewegung', 'reduceMotion', 'Weniger Kamerawackeln und ruhigere Bewegung im Hintergrund.'),
         this.toggle('Weniger Flackern', 'reduceFlicker', 'Lichter flackern nicht mehr.'),
         this.toggle('Stromausfälle überblenden', 'fadeBlackouts', 'Licht blendet bei Stromausfällen weich aus und wieder ein, statt hart aus/an.', {
           visible: () => settings.reduceFlicker,
