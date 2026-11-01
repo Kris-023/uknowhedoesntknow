@@ -276,7 +276,7 @@ function launch(clock: SharedClock, session: Session | null, startCam: 'wagon' |
     for (let i = 0; i < levels.length; i++) {
       const id = seatIds[i];
       if (i === players.active) levels[i] = voice?.micState === 'on' ? voice.micLevel() : -1;
-      else levels[i] = voice && id && voice.hasPeer(id) ? voice.peerLevel(id) : -1;
+      else levels[i] = voice && id && voice.hasVoice(id) ? voice.peerLevel(id) : -1;
     }
   };
   // -1 = no real voice on that seat: solo fake peers keep their scripted mouths.
@@ -688,7 +688,7 @@ function launch(clock: SharedClock, session: Session | null, startCam: 'wagon' |
     if (gameNet.isHost() && voice && session?.opts.schaffner !== 'off') {
       loudLevels.clear();
       for (const m of gameNet.members()) {
-        const lv = m.id === gameNet.selfId ? voice.micLevel() : voice.hasPeer(m.id) ? voice.peerLevel(m.id) : 0;
+        const lv = m.id === gameNet.selfId ? voice.micLevel() : voice.hasVoice(m.id) ? voice.peerLevel(m.id) : 0;
         loudLevels.set(m.id, lv);
       }
       const caught = loud.feed(loudLevels, dt, t);

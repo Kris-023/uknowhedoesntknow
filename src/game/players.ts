@@ -61,6 +61,11 @@ export class Players {
   remotePose: RemotePose = () => null;
   /** Real voice level per seat (mic or received audio); null = no voice there, use the script. */
   voiceLevel: (seat: number) => number | null = () => null;
+  /**
+   * Solo only: a level for every bot seat instead of the scripted talking (the benchmark's "own mic
+   * drives all bot mouths"). Real voices (`voiceLevel`) win; null = scripted.
+   */
+  botLevel: (() => number) | null = null;
   /** Seats with a player in them; all four in fake mode. */
   readonly occupied = [true, true, true, true];
   /** Last applied roster state per seat, to skip rebuilding bodies when nothing changed. */
@@ -142,6 +147,7 @@ export class Players {
     this.showMarkers = prev.showMarkers;
     this.remotePose = prev.remotePose;
     this.voiceLevel = prev.voiceLevel;
+    this.botLevel = prev.botLevel;
     Object.assign(this.look, prev.look);
     prev.occupied.forEach((o, i) => (this.occupied[i] = o));
     prev.people.forEach((p, i) => {
@@ -198,6 +204,7 @@ export class Players {
       // Mouths follow real voices; in a room a silent seat stays silent, solo the script talks.
       const voice = this.voiceLevel(i);
       if (voice !== null) fake.level = voice;
+      else if (this.botLevel && this.mode !== 'net' && i !== this.active) fake.level = this.botLevel();
       else if (this.mode === 'net') fake.level = 0;
       if (this.talkTest) fake.level = (0.5 + 0.5 * Math.sin(t * 14 + i)) * (0.6 + 0.4 * Math.sin(t * 4.3 + i));
       if (i === this.active) {

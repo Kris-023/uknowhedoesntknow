@@ -1,7 +1,15 @@
 import type { MapDef, MapSound, SoundKit } from '../maps/types';
-import { AMBIENCE } from '../config';
+import { AMBIENCE, SCHAFFNER } from '../config';
 import { onSettings, settings } from '../ui/store';
 import { impulse, type Voice } from './voice';
+
+/**
+ * Announcement volume actually used: the slider, except the Schaffner (`important`), who never
+ * goes below `SCHAFFNER.minVolume`. Ambient announcements follow the slider all the way to 0 (= off).
+ */
+export function announceGain(volume: number, important: boolean): number {
+  return important ? Math.max(volume, SCHAFFNER.minVolume) : volume;
+}
 
 /**
  * Map ambience from Web Audio and the shared clock, no audio files. This class owns the shared
@@ -14,8 +22,9 @@ export class Ambience implements SoundKit {
   readonly bed: GainNode;
   readonly music: GainNode;
   readonly noise: AudioBuffer;
-  /** Gong chain: band-limited like a cheap ceiling speaker, plus a bit of room echo. */
+  /** Gong chains: band-limited like a cheap ceiling speaker, plus a bit of room echo. One for stops and calls, one for the Schaffner. */
   private speaker: GainNode;
+  private callSpeaker: GainNode;
   private map: MapSound;
   private lastPower = 1;
   /** Relay: one quiet clunk per outage, not one per flicker of the stuttering start. */
@@ -39,7 +48,7 @@ export class Ambience implements SoundKit {
     this.level.connect(voice.bus);
     // Three channels, so each has its own volume; the bed sits under the ambience.
     const bedLevel = () => (settings.quietAmbience ? AMBIENCE.quietBed : 1);
-    const musicLevel = () => (settings.musicOn ? settings.musicVolume : 0);
+    const musicLevel = () => settings.musicVolume;
     this.out = new GainNode(ctx, { gain: settings.ambientVolume });
     this.out.connect(this.level);
     this.bed = new GainNode(ctx, { gain: bedLevel() });
@@ -48,26 +57,35 @@ export class Ambience implements SoundKit {
     this.music.connect(this.level);
     const announceOut = new GainNode(ctx, { gain: settings.announceVolume });
     announceOut.connect(this.level);
+    // The Schaffner's own path: his gong and speech keep a minimum loudness at Durchsagen 0 %.
+    const callOut = new GainNode(ctx, { gain: announceGain(settings.announceVolume, true) });
+    callOut.connect(this.level);
     this.unsubscribe = onSettings(() => {
       const now = ctx.currentTime;
       this.out.gain.setTargetAtTime(settings.ambientVolume, now, 0.05);
       this.bed.gain.setTargetAtTime(bedLevel(), now, 0.15);
       this.music.gain.setTargetAtTime(musicLevel(), now, 0.15);
       announceOut.gain.setTargetAtTime(settings.announceVolume, now, 0.05);
+      callOut.gain.setTargetAtTime(announceGain(settings.announceVolume, true), now, 0.05);
     });
 
     this.noise = ctx.createBuffer(1, ctx.sampleRate * 2, ctx.sampleRate);
     const d = this.noise.getChannelData(0);
     for (let i = 0; i < d.length; i++) d[i] = Math.random() * 2 - 1;
 
-    this.speaker = new GainNode(ctx, { gain: AMBIENCE.gong });
-    const hp = new BiquadFilterNode(ctx, { type: 'highpass', frequency: 380 });
-    const lp = new BiquadFilterNode(ctx, { type: 'lowpass', frequency: 3200 });
-    const room = new ConvolverNode(ctx, { buffer: impulse(ctx, 0.9) });
-    const wet = new GainNode(ctx, { gain: 0.35 });
-    this.speaker.connect(hp).connect(lp);
-    lp.connect(announceOut);
-    lp.connect(room).connect(wet).connect(announceOut);
+    const chain = (out: GainNode): GainNode => {
+      const input = new GainNode(ctx, { gain: AMBIENCE.gong });
+      const hp = new BiquadFilterNode(ctx, { type: 'highpass', frequency: 380 });
+      const lp = new BiquadFilterNode(ctx, { type: 'lowpass', frequency: 3200 });
+      const room = new ConvolverNode(ctx, { buffer: impulse(ctx, 0.9) });
+      const wet = new GainNode(ctx, { gain: 0.35 });
+      input.connect(hp).connect(lp);
+      lp.connect(out);
+      lp.connect(room).connect(wet).connect(out);
+      return input;
+    };
+    this.speaker = chain(announceOut);
+    this.callSpeaker = chain(callOut);
     const built = startedDuring(() => map.sound(this, seed));
     this.map = built.value;
     this.loops = built.sources;
@@ -125,7 +143,7 @@ export class Ambience implements SoundKit {
 
   /** Gong, then a spoken announcement (the Schaffner uses this too). */
   announce(text: string, important = false): void {
-    this.gong();
+    this.gong(important ? this.callSpeaker : this.speaker);
     setTimeout(() => this.speak(text, important), 1700);
   }
 
@@ -153,7 +171,7 @@ export class Ambience implements SoundKit {
   }
 
   /** Three-tone chime before an announcement, through the speaker filter. */
-  private gong(): void {
+  private gong(speaker: GainNode): void {
     const ctx = this.ctx;
     [784, 659, 523].forEach((f, i) => {
       const t0 = ctx.currentTime + 0.05 + i * 0.42;
@@ -163,7 +181,7 @@ export class Ambience implements SoundKit {
         g.gain.setValueAtTime(0, t0);
         g.gain.linearRampToValueAtTime(amp, t0 + 0.01);
         g.gain.exponentialRampToValueAtTime(0.001, t0 + 1.4);
-        o.connect(g).connect(this.speaker);
+        o.connect(g).connect(speaker);
         o.start(t0);
         o.stop(t0 + 1.5);
       }
@@ -175,10 +193,12 @@ export class Ambience implements SoundKit {
    * plays without the speaker filter; recorded or generated lines can replace it later (see F5).
    */
   private speak(text: string, important = false): void {
-    // Stop announcements can be switched off; a Schaffner call is part of the game and always speaks.
-    // A map change between gong and speech: the old map's line no longer fits.
+    // Ambient announcements are off at volume 0; a Schaffner call is part of the game and always
+    // speaks, at least at `SCHAFFNER.minVolume`. A map change between gong and speech: the old map's
+    // line no longer fits.
     if (this.disposed) return;
-    if ((!settings.announcements && !important) || settings.announceVolume <= 0 || typeof speechSynthesis === 'undefined') return;
+    const volume = announceGain(settings.announceVolume, important);
+    if (volume <= 0 || typeof speechSynthesis === 'undefined') return;
     const u = new SpeechSynthesisUtterance(text);
     u.lang = 'de-DE';
     const de = speechSynthesis.getVoices().find((v) => v.lang.startsWith('de'));
@@ -186,8 +206,8 @@ export class Ambience implements SoundKit {
     u.rate = 0.95;
     u.pitch = 0.85;
     // Browser speech starts at full loudness and sits on top of everything; squared, so the slider
-    // the default lands well below half. Some engines ignore it; at 0 there is no speech at all.
-    u.volume = Math.min(1, (settings.announceVolume / 1.5) ** 2 * 1.5);
+    // the default lands well below half. Some engines ignore it; at 0 there is no ambient speech.
+    u.volume = Math.min(1, (volume / 1.5) ** 2 * 1.5);
     speechSynthesis.speak(u);
   }
 }

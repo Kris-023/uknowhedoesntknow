@@ -61,9 +61,6 @@ export interface LightPreset {
   bloomThreshold: number;
 }
 
-/** Only the night look remains (the "Licht" switch is gone); kept as a type for the legacy settings shim in `ui/store.ts`. */
-export type LightPresetName = 'nacht';
-
 /**
  * Lighting values every lighting consumer reads per frame. Night train: the neon strips carry
  * the room, everything else is a faint fill. All maps are tuned for exactly these values; the
@@ -110,7 +107,6 @@ export const SPEED = {
 } as const;
 
 export const SHAKE = {
-  maxMm: 30,
   defaultMm: 5,
 } as const;
 
@@ -265,6 +261,13 @@ export const VOICE = {
   vadLookaheadS: 0.05,
   vadPollMs: 15,
   /**
+   * "Nur Mundbewegung": no audio goes out, only the mouth level (one byte, `lvl` message) at most
+   * `mouthHz` times a second while it is above the threshold, plus a final 0. A level older than
+   * `mouthStaleMs` counts as silence (lost packet, peer gone or switched mode).
+   */
+  mouthHz: 12,
+  mouthStaleMs: 500,
+  /**
    * Outgoing voice: a highpass takes out desk thumps and rumble, a limiter only catches shouts before
    * they clip (it starts above the Schaffner's level, so it doesn't hide shouting from him).
    * Opus starts around 32 kbit/s in browsers; 64 is clearly fuller and still nothing for a 4-way mesh.
@@ -357,6 +360,11 @@ export const SCHAFFNER = {
   penalty: 1,
   /** How long he stands next to you. */
   showS: 7,
+  /**
+   * His spoken call (and gong) never plays quieter than this announcement volume, even with
+   * Durchsagen at 0 %: he is part of the game (the Punktabzug), so he is not switchable.
+   */
+  minVolume: 0.4,
 } as const;
 
 /** "Zug zurück": the host takes back a wrong collective decision (see src/game/undo.ts). */

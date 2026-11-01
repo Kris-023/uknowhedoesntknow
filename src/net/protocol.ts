@@ -197,3 +197,12 @@ export function parsePose(v: unknown): { yaw: number; pitch: number } | null {
   const pitch = num(v[1], HEAD.minPitch, HEAD.maxPitch);
   return yaw === null || pitch === null ? null : { yaw, pitch };
 }
+
+/** Mouth level on the wire ("Nur Mundbewegung"): one byte, 0 = shut, 255 = wide open. */
+export const encodeLevel = (level: number): number => Math.max(0, Math.min(255, Math.round(level * 255)));
+
+/** Back to 0..1; anything that is not an integer byte is dropped. */
+export function parseLevel(v: unknown): number | null {
+  const b = num(v, 0, 255);
+  return b !== null && Number.isInteger(b) ? b / 255 : null;
+}

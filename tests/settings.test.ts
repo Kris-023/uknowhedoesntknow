@@ -21,9 +21,12 @@ describe('settings defaults', () => {
     expect(parseSettings({}).reduceMotion).toBe(false);
   });
 
-  it('does not store the legacy shim fields', () => {
-    const o = persistedSettings(parseSettings({}));
-    for (const k of ['light', 'bloom', 'bloomStrength', 'shakeOn', 'shakeMm', 'musicOn', 'announcements']) expect(o).not.toHaveProperty(k);
+  it('has no legacy fields, neither live nor stored', () => {
+    const s = parseSettings({});
+    for (const k of ['light', 'bloom', 'bloomStrength', 'shakeOn', 'shakeMm', 'musicOn', 'announcements']) {
+      expect(s).not.toHaveProperty(k);
+      expect(persistedSettings(s)).not.toHaveProperty(k);
+    }
   });
 });
 

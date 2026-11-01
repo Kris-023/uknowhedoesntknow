@@ -1,6 +1,6 @@
 import { parseOpts, type RoomOpts } from '../net/protocol';
 import type { PersonState } from '../characters/person';
-import { SHAKE, VOICE, type LightPresetName } from '../config';
+import { VOICE } from '../config';
 import { parseName, parseState } from '../net/protocol';
 
 // Per-browser memory: the player's own profile and settings. Storage can be missing or throw
@@ -95,46 +95,15 @@ export interface Settings {
   quietAmbience: boolean;
   /** "Musik" in the map (diner jukebox, the party next door), separate from the ambience. 0 = off. */
   musicVolume: number;
-  /** "Durchsagen": gong and spoken lines (stops, number calls, the Schaffner). 0 = off. */
+  /** "Durchsagen": gong and spoken lines (stops, number calls). 0 = off, except the Schaffner, who keeps `SCHAFFNER.minVolume`. */
   announceVolume: number;
-
-  // ponytail: legacy shim for consumers not yet migrated; removed once settingsView/render/audio drop them.
-  // Not stored and not editable: always re-derived (see `withLegacy`).
-  /** Fixed 'nacht': the light preset picker is gone. */
-  light: LightPresetName;
-  /** Derived: glow !== 'aus'. */
-  bloom: boolean;
-  /** Derived: GLOW_LEVELS[glow]. */
-  bloomStrength: number;
-  /** Derived: !reduceMotion. */
-  shakeOn: boolean;
-  /** Fixed: SHAKE.defaultMm. */
-  shakeMm: number;
-  /** Fixed true: music is only the slider now. */
-  musicOn: boolean;
-  /** Fixed true: announcements are only the slider now. */
-  announcements: boolean;
 }
 
 type Stored = Record<string, unknown>;
-const LEGACY_KEYS = ['light', 'bloom', 'bloomStrength', 'shakeOn', 'shakeMm', 'musicOn', 'announcements'] as const;
-
-function withLegacy(s: Omit<Settings, (typeof LEGACY_KEYS)[number]>): Settings {
-  return {
-    ...s,
-    light: 'nacht',
-    bloom: s.glow !== 'aus',
-    bloomStrength: GLOW_LEVELS[s.glow],
-    shakeOn: !s.reduceMotion,
-    shakeMm: SHAKE.defaultMm,
-    musicOn: true,
-    announcements: true,
-  };
-}
 
 function defaults(): Settings {
   const reduce = typeof matchMedia === 'function' && matchMedia('(prefers-reduced-motion: reduce)').matches;
-  return withLegacy({
+  return {
     glow: 'standard',
     imageBrightness: 1,
     renderBrightness: 1,
@@ -163,7 +132,7 @@ function defaults(): Settings {
     quietAmbience: false,
     musicVolume: 0.7,
     announceVolume: 0.8,
-  });
+  };
 }
 
 // Settings versions. Saved settings carry `version`; a save without one is version 0.
@@ -207,7 +176,7 @@ export function parseSettings(o: Stored): Settings {
   const d = defaults();
   const num = (x: unknown, min: number, max: number, fb: number) => (typeof x === 'number' && x >= min && x <= max ? x : fb);
   const bool = (x: unknown, fb: boolean) => (typeof x === 'boolean' ? x : fb);
-  return withLegacy({
+  return {
     glow: typeof o.glow === 'string' && Object.hasOwn(GLOW_LEVELS, o.glow) ? (o.glow as GlowLevel) : d.glow,
     imageBrightness: num(o.imageBrightness, 0.5, 1.5, d.imageBrightness),
     renderBrightness: num(o.renderBrightness, 0.5, 1.5, d.renderBrightness),
@@ -236,14 +205,12 @@ export function parseSettings(o: Stored): Settings {
     quietAmbience: bool(o.quietAmbience, d.quietAmbience),
     musicVolume: num(o.musicVolume, 0, 1.5, d.musicVolume),
     announceVolume: num(o.announceVolume, 0, 1.5, d.announceVolume),
-  });
+  };
 }
 
-/** What goes into storage: the version plus every setting except the derived legacy shim. */
+/** What goes into storage: the version plus every setting. */
 export function persistedSettings(s: Settings): Stored {
-  const o: Stored = { ...s };
-  for (const k of LEGACY_KEYS) delete o[k];
-  return { ...o, version: SETTINGS_VERSION };
+  return { ...s, version: SETTINGS_VERSION };
 }
 
 function loadSettings(): Settings {
@@ -262,7 +229,6 @@ const listeners = new Set<() => void>();
 
 export function updateSettings(patch: Partial<Settings>): void {
   Object.assign(settings, patch);
-  Object.assign(settings, withLegacy(settings)); // keeps the legacy shim in step with glow / reduceMotion
   write(SETTINGS_KEY, persistedSettings(settings));
   for (const f of listeners) f();
 }
