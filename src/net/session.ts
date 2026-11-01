@@ -2,6 +2,7 @@ import type { PersonState } from '../characters/person';
 import { NET } from '../config';
 import { localMs, type SharedClock } from '../core/clock';
 import {
+  clampEpoch,
   encodePose,
   idHash,
   parsePose,
@@ -32,6 +33,13 @@ const PENDING_GAME_MAX = 100;
 const SUCCESSOR_MS = 15_000;
 /** A host that has answered a clash as the winner does not answer the same host again within this time. */
 const CLASH_ANSWER_MS = 3_000;
+
+/**
+ * How far above the epoch we know a claim from anyone but our own host may be. Honest claims rise by
+ * 2 per host change, so this covers dozens of changes while a peer was cut off; a forged claim near the
+ * cap (which no later host could outbid, see `parseEpoch`) is far beyond it.
+ */
+const EPOCH_JUMP_MAX = 64;
 
 /** A host claim (epoch `e`, peer `id`) against another: the higher epoch wins, on a tie the smaller id. */
 function beats(e: number, id: string, otherE: number, otherId: string | null): boolean {
@@ -98,6 +106,8 @@ export class Session {
   private lastTickAt = -Infinity;
   /** When we last answered a clash against this host as the winner (loop breaker). */
   private clashAnswered = new Map<string, number>();
+  /** Until when a welcome from a connected peer outside our roster counts: the answer to the watchdog's hello. */
+  private probeUntil = -Infinity;
   private nextPing = 0;
   private pingsSent = 0;
   private ev: Partial<SessionEvents> = {};
@@ -432,7 +442,7 @@ export class Session {
     this.setHost(next.id);
     // The pick claims one less until we confirm it (`becomeHost`): count with that, so a peer that
     // elected itself at the same time can still win a tie by id and take us along by welcome.
-    this.epoch = this.known - 1;
+    this.epoch = clampEpoch(this.known - 1);
     this.clock.resetSamples();
     this.pingsSent = 0;
     this.nextPing = 0;
@@ -452,8 +462,12 @@ export class Session {
   /**
    * The watchdog fired: we have heard nothing from the host for `NET.hostSilentMs`. Run the same
    * election as for a host that left, without the silent one, among the peers we really see. A
-   * duplicate host that comes out of it is settled by `hostClash`. The new pick gets a hello right
-   * away, so it knows us even if it never had us in its roster.
+   * duplicate host that comes out of it is settled by `hostClash`. The hello goes to everyone we see,
+   * not just the pick: a client we may pick never answers, and the real host (whoever it is, even a
+   * peer the election ranks last) must get the chance to welcome us; it also learns of us if it never
+   * had us in its roster. Its welcome is taken like any other (`onWelcome`, also from a connected peer our
+   * stale roster does not list, for `NET.hostSilentMs` after the hello): only a better claim than our
+   * pick's moves us, so a stale ex-host answering cannot pull us back.
    */
   private hostSilent(now: number): void {
     const lost = this.hostId;
@@ -463,7 +477,8 @@ export class Session {
     this.followElected(next, true);
     if (this.role === 'client') {
       this.lastHello = now;
-      this.net.send('hello', this.helloMsg(), this.hostId ?? undefined);
+      this.probeUntil = now + NET.hostSilentMs;
+      this.net.send('hello', this.helloMsg());
     }
   }
 
@@ -486,9 +501,9 @@ export class Session {
     // A confirmed claim beats every host of an earlier epoch (a cut-off ex-host coming back). Until a
     // player of the room confirms us, the claim is weaker than the room's: a peer that was only cut off
     // and made itself host loses against the room it left, whatever the ids.
-    this.unconfirmed = handedOver ? null : this.known + 2;
-    if (handedOver) this.setEpoch(this.known + 2);
-    else this.epoch = this.known - 1;
+    this.unconfirmed = handedOver ? null : clampEpoch(this.known + 2);
+    if (handedOver) this.setEpoch(clampEpoch(this.known + 2));
+    else this.epoch = clampEpoch(this.known - 1);
     const first = !this.welcomed;
     this.welcomed = true;
     this.ev.status?.('host');
@@ -578,7 +593,12 @@ export class Session {
       // Once in a room, a welcome counts only from someone our roster knows (not from a stranger), and
       // makes us switch only to a better claim than our host's: a cut-off ex-host with an older epoch
       // cannot pull anyone back to its stale state.
-      if (this.welcomed && (!this.roster.has(from) || (from !== this.hostId && !beats(w.epoch, from, this.epoch, this.hostId)))) return;
+      // Exception: right after the watchdog fired, the real host may be a peer our stale roster does not
+      // list (`probeUntil`); it answers our hello with a welcome, and the same epoch test applies.
+      if (this.welcomed) {
+        const known = this.roster.has(from) || (this.now() <= this.probeUntil && this.peers.has(from));
+        if (!known || (from !== this.hostId && !(this.plausible(w.epoch) && beats(w.epoch, from, this.epoch, this.hostId)))) return;
+      }
     }
     const first = !this.welcomed;
     // Another host than the one we followed (a handover): measure the clock against the new one.
@@ -664,7 +684,7 @@ export class Session {
    * per other host.
    */
   private hostClash(m: RosterMsg, from: string): void {
-    if (!m.roster.some((e) => e.id === from)) return;
+    if (!m.roster.some((e) => e.id === from) || !this.plausible(m.epoch)) return;
     if (!beats(m.epoch, from, this.epoch, this.net.selfId)) {
       const now = this.now();
       const last = this.clashAnswered.get(from);
@@ -703,6 +723,11 @@ export class Session {
     // Not while handing over: the new host would take it for a second host's roster. It sends the roster itself.
     if (!this.handing) this.net.send('roster', this.rosterMsg());
     this.ev.roster?.();
+  }
+
+  /** A claim by someone other than our host is believed only if it is no far-fetched jump above what we know. */
+  private plausible(e: number): boolean {
+    return e <= this.known + EPOCH_JUMP_MAX;
   }
 
   private setEpoch(e: number): void {

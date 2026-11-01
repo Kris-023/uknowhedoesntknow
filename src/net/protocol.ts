@@ -169,9 +169,17 @@ export function parseRoster(v: unknown): RosterEntry[] | null {
   return out;
 }
 
-/** Host-Epoche on the wire: a whole number; anything else makes the message invalid. */
+/** Largest |Host-Epoche| `parseEpoch` accepts; a host never computes an epoch beyond it (`clampEpoch`). */
+export const EPOCH_LIMIT = 1e9;
+
+/** Keep an epoch we compute inside what every peer's `parseEpoch` takes, so our own messages are never dropped. */
+export function clampEpoch(e: number): number {
+  return Math.max(-EPOCH_LIMIT, Math.min(EPOCH_LIMIT, e));
+}
+
+/** Host-Epoche on the wire: a whole number within `EPOCH_LIMIT`; anything else makes the message invalid. */
 export function parseEpoch(v: unknown): number | null {
-  return typeof v === 'number' && Number.isSafeInteger(v) && Math.abs(v) <= 1e9 ? v : null;
+  return typeof v === 'number' && Number.isSafeInteger(v) && Math.abs(v) <= EPOCH_LIMIT ? v : null;
 }
 
 /** The host's `roster` message: its Host-Epoche and the roster. */

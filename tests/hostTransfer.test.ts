@@ -5,6 +5,7 @@ import { NET } from '../src/config';
 import { SharedClock } from '../src/core/clock';
 import { mulberry32 } from '../src/core/rng';
 import { sessionNet } from '../src/game/minigame';
+import { parseWelcome } from '../src/net/protocol';
 import { Session } from '../src/net/session';
 import { MemoryHub } from '../src/net/transport';
 
@@ -760,6 +761,245 @@ describe('Host-Wächter and other findings of the third review', () => {
         r.run(20_000);
         expect(settled(r), `${forger} ${kind}: hosts ${r.hosts()} follows ${r.follows()}`).toBe(true);
       }
+  });
+});
+
+/** Real partitions between any groups: `split(A, B)` cuts every link across, `heal()` joins everything again. */
+function splitter(r: Room) {
+  const hub = r.hub as unknown as HubPriv;
+  const post = hub.post.bind(hub);
+  let group: Record<string, number> = {};
+  hub.post = (p, to) => {
+    for (const id of to ? [to] : [...hub.nodes.keys()]) if (id !== p.from && (group[id] ?? 0) === (group[p.from] ?? 0)) post(p, id);
+  };
+  const ids = Object.keys(r.s);
+  const apply = (g: Record<string, number>) => {
+    const old = group;
+    group = g;
+    for (const a of ids)
+      for (const b of ids) {
+        if (!(a < b) || r.left.has(a) || r.left.has(b)) continue;
+        const was = (old[a] ?? 0) === (old[b] ?? 0);
+        const now = (g[a] ?? 0) === (g[b] ?? 0);
+        const [x, y] = [r.s[a] as unknown as Links, r.s[b] as unknown as Links];
+        if (was && !now) (x.onLeave(b), y.onLeave(a));
+        if (!was && now) (x.onJoin(b), y.onJoin(a));
+      }
+    r.hub.flush();
+  };
+  return {
+    split(...sides: string[][]) {
+      const g: Record<string, number> = {};
+      sides.forEach((side, i) => side.forEach((id) => (g[id] = i)));
+      apply(g);
+    },
+    heal: () => apply({}),
+  };
+}
+
+describe('Host-Wächter fragt alle, Epoche mit Sprung-Grenze (fourth review)', () => {
+  type Priv = { hostId: string | null; hostSeenAt: number; known: number; epoch: number };
+
+  it('L2: a stale client that follows a non-host finds the real host through the watchdog hello, not b, a, b, ...', () => {
+    const r = room(['a', 'b', 'c', 'd']);
+    r.run();
+    r.s.a.handOver('d');
+    r.run(600);
+    expect(r.hosts()).toEqual(['d']);
+    // c's stale view: it follows client b and its roster does not list d. The real host d ranks last by seat.
+    const c = r.s.c as unknown as Priv;
+    r.s.c.roster.delete('d');
+    c.hostId = 'b';
+    c.hostSeenAt = r.t.ms;
+    r.run(2 * NET.hostSilentMs + 1500);
+    expect(r.s.c.hostId).toBe('d');
+    expect(r.hosts()).toEqual(['d']);
+    expect(settled(r)).toBe(true);
+    expect(r.s.c.roster.has('d')).toBe(true);
+    // And it stays so: no further flips, c is a normal client of d.
+    r.run(3 * NET.hostSilentMs);
+    expect(r.hosts()).toEqual(['d']);
+    expect(settled(r)).toBe(true);
+    r.s.d.setSpeed(321, 5);
+    r.run(600);
+    expect(r.s.c.train.kmh).toBe(321);
+  });
+
+  it('L2: the watchdog hello does not let a stale ex-host pull the client back (its epoch is older)', () => {
+    const r = room(['a', 'b', 'c']);
+    r.run();
+    const heal = partition(r, ['a']);
+    r.run(8000);
+    const nh = r.hosts().filter((id) => id !== 'a');
+    expect(nh).toHaveLength(1);
+    r.s[nh[0]].setSpeed(321, 5);
+    r.run(300);
+    heal();
+    r.hub.flush();
+    r.run(3000);
+    // The other client of the new host stops hearing it for a while (its messages are lost) and fires the
+    // watchdog while the stale ex-host a is connected and answers every hello with its older welcome.
+    const q = r.hub as unknown as { queue: { from: string }[] };
+    for (let i = 0; i < 30; i++) {
+      r.t.ms += 300;
+      for (const x of Object.values(r.s)) x.tick();
+      q.queue = q.queue.filter((p) => p.from !== nh[0]);
+      r.hub.flush();
+    }
+    r.run(8000);
+    for (const id of ['a', 'b', 'c']) expect(r.s[id].train.kmh, id).toBe(321);
+    expect(r.hosts()).toEqual(nh);
+    expect(settled(r)).toBe(true);
+  });
+
+  it('L2: seeded mini-fuzz of splits, heals, leaves, handovers and progress ends in one host, a complete roster, one epoch', () => {
+    const bad: string[] = [];
+    for (let seed = 1; seed <= 300; seed++) {
+      const rnd = mulberry32(seed);
+      const n = 3 + Math.floor(rnd() * 2);
+      const ids = ['a', 'b', 'c', 'd'].slice(0, n);
+      if (rnd() < 0.5) ids.reverse();
+      const r = room(ids);
+      r.run(3000);
+      const p = splitter(r);
+      const alive = () => ids.filter((id) => !r.left.has(id));
+      const log: string[] = [];
+      let prog = 0;
+      for (let step = 0; step < 8; step++) {
+        const act = rnd();
+        if (act < 0.35) {
+          const k = 1 + Math.floor(rnd() * (n - 1));
+          const sh = [...ids].sort(() => rnd() - 0.5);
+          p.split(sh.slice(0, k), sh.slice(k));
+          log.push(`split ${sh.slice(0, k)}|${sh.slice(k)}`);
+        } else if (act < 0.55) {
+          p.heal();
+          log.push('heal');
+        } else if (act < 0.7) {
+          const al = alive();
+          if (al.length > 2) {
+            const v = al[Math.floor(rnd() * al.length)];
+            r.leave(v, rnd() < 0.5);
+            log.push(`leave ${v}`);
+          }
+        } else if (act < 0.85) {
+          for (const x of r.hosts()) {
+            const peers = (r.s[x] as unknown as { peers: Set<string> }).peers;
+            const to = alive().filter((i) => i !== x && peers.has(i));
+            if (to.length) r.s[x].handOver(to[Math.floor(rnd() * to.length)]);
+          }
+          log.push('handover');
+        } else {
+          for (const x of r.hosts()) r.s[x].setSpeed(100 + ++prog, 9);
+          log.push('progress');
+        }
+        r.run([300, 900, 3000, 8000][Math.floor(rnd() * 4)]);
+      }
+      p.heal();
+      r.run(60_000);
+      const h = r.hosts();
+      const ok = settled(r) && alive().every((id) => r.s[h[0]].roster.has(id)) && new Set(alive().map((id) => r.s[id].epoch)).size === 1;
+      if (!ok) bad.push(`seed ${seed}: hosts ${h} follows ${r.follows()} | ${log.join('; ')}`);
+    }
+    expect(bad.slice(0, 3)).toEqual([]);
+  });
+
+  /** A newcomer is welcomed and a roster change reaches everyone: the host's messages are valid for all. */
+  const roomStillWorks = (r: Room) => {
+    const h = r.hosts()[0];
+    const d = new Session(r.hub.connect('n'), new SharedClock(1, r.now('n')()), false, state(9), r.now('n'), 'tok-n');
+    r.s.n = d;
+    r.hub.flush();
+    r.run(1500);
+    expect(d.welcomed, 'newcomer welcomed').toBe(true);
+    expect(d.hostId).toBe(h);
+    for (const [id, x] of Object.entries(r.s)) if (!r.left.has(id)) expect(x.roster.has('n'), `${id} sees the newcomer`).toBe(true);
+    const some = Object.keys(r.s).find((id) => id !== h && id !== 'n' && !r.left.has(id)) as string;
+    r.s[some].setState({ ...state(2), name: 'Umbenannt' });
+    r.run(600);
+    for (const [id, x] of Object.entries(r.s)) if (!r.left.has(id)) expect(x.roster.get(some)?.state.name, `${id} sees the rename`).toBe('Umbenannt');
+  };
+
+  for (const kind of ['welcome', 'roster'] as const)
+    for (const jump of [1e9, 1e9 - 1, 1e9 - 2, 1000, 65]) {
+      it(`L1: a forged ${kind} with epoch ${jump} from a room member changes nothing, and the room keeps working`, () => {
+        const r = room(['m', 'b', 'c']);
+        r.run();
+        const w = r.s.m.welcomeMsg();
+        const epoch = jump > 1e6 ? jump : w.epoch + jump;
+        rawSend(r.s.c, kind, kind === 'welcome' ? { ...w, epoch } : { e: epoch, r: w.roster });
+        r.hub.flush();
+        r.run(20_000);
+        expect(r.hosts()).toEqual(['m']);
+        expect(settled(r)).toBe(true);
+        for (const x of Object.values(r.s)) expect(x.epoch).toBeLessThan(100);
+        roomStillWorks(r);
+        // A later host change from the room itself (a split) stays within what everyone parses.
+        const heal = partition(r, ['m']);
+        r.run(8000);
+        heal();
+        r.hub.flush();
+        r.run(8000);
+        expect(settled(r)).toBe(true);
+        for (const [id, x] of Object.entries(r.s)) if (!r.left.has(id)) expect(x.epoch, id).toBeLessThan(100);
+      });
+    }
+
+  it('L1: a host that meets a forged huge claim does not give way', () => {
+    const r = room(['a', 'b', 'c']);
+    r.run();
+    const w = r.s.a.welcomeMsg();
+    rawSend(r.s.b, 'welcome', { ...w, epoch: 1e9 }, 'a');
+    rawSend(r.s.b, 'roster', { e: 1e9, r: w.roster }, 'a');
+    r.hub.flush();
+    r.run(3000);
+    expect(r.hosts()).toEqual(['a']);
+    expect(r.s.a.epoch).toBe(0);
+  });
+
+  it('L1: honest jumps are still believed: ten handovers in a row, and a cut-off peer back after them', () => {
+    const r = room(['a', 'b', 'c']);
+    r.run();
+    const heal = partition(r, ['c']);
+    r.run(8000);
+    for (let i = 0; i < 10; i++) {
+      const from = r.hosts().find((id) => id !== 'c') as string;
+      expect(r.s[from].handOver(from === 'a' ? 'b' : 'a')).toBe(true);
+      r.run(900);
+    }
+    const nh = r.hosts().filter((id) => id !== 'c');
+    expect(nh).toHaveLength(1);
+    expect(r.s[nh[0]].epoch).toBeGreaterThanOrEqual(20);
+    r.s[nh[0]].setSpeed(321, 5);
+    r.run(300);
+    heal();
+    r.hub.flush();
+    r.run(8000);
+    expect(r.hosts()).toEqual(nh);
+    expect(settled(r)).toBe(true);
+    expect(r.s.c.train.kmh).toBe(321);
+  });
+
+  it('L1: no host ever computes an epoch that parseEpoch rejects, even starting at the cap', () => {
+    const r = room(['a', 'b', 'c']);
+    r.run();
+    for (const x of Object.values(r.s)) {
+      const p = x as unknown as Priv;
+      p.known = p.epoch = 1e9 - 1;
+    }
+    r.s.a.handOver('b');
+    r.run(900);
+    expect(r.hosts()).toEqual(['b']);
+    expect(r.s.b.epoch).toBeLessThanOrEqual(1e9);
+    expect(parseWelcome(r.s.b.welcomeMsg())).not.toBeNull();
+    // b leaves: a takes over, claims within range, and is confirmed within range.
+    r.leave('b');
+    r.run(3000);
+    expect(r.hosts()).toEqual(['a']);
+    expect(Math.abs(r.s.a.epoch)).toBeLessThanOrEqual(1e9);
+    expect(parseWelcome(r.s.a.welcomeMsg())).not.toBeNull();
+    expect(settled(r)).toBe(true);
+    roomStillWorks(r);
   });
 });
 
