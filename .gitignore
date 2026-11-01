@@ -1,5 +1,7 @@
 node_modules/
 dist/
+# Build output of the list tool (tools/listen, Rust)
+tools/listen/target/
 *.log
 .DS_Store
 
@@ -8,6 +10,7 @@ teamlead/
 docs/
 reference/
 .claude/
+CLAUDE.local.md
 
 # Klartext der eingebauten Stapel (Wörter, Fragen, Kategorien); ins Repo kommt nur src/words/vault.json (npm run seal)
 private/

@@ -2,6 +2,12 @@
 
 A browser party game for up to four players in a 3D night-train coach (and five other places), German UI, peer-to-peer rooms. Start with [architecture/overview.md](architecture/overview.md).
 
+## project/ and decisions/ — where it stands and why
+
+- [Status](project/status.md) — goal, milestones, backlog, open questions, content rules.
+- [Decisions](decisions/README.md) — numbered decisions with context and consequences.
+- [Changelog](CHANGELOG.md) — what changed, newest day first.
+
 ## architecture/ — how the code fits together
 
 - [Overview](architecture/overview.md) — module map, data flow, "where to look for X". **Start here.**

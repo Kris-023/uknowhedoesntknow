@@ -15,6 +15,8 @@ Reference docs — plain links, read the one relevant to your task on demand:
   "where to look for X"). **Start here to navigate the code.**
 - Per-feature behaviour — `superdoc/features/`
 - Styling rules — `superdoc/ui/STYLING-GUIDE.md`
+- Status, backlog, open questions — `superdoc/project/status.md`; decisions — `superdoc/decisions/`;
+  changelog — `superdoc/CHANGELOG.md` (add a few dated lines after each work session)
 - `superdoc/README.md` — the docs table of contents
 
 ## Always in context (force-loaded, mandatory)
