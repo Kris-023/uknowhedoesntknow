@@ -511,6 +511,7 @@ export class PauseMenu extends MenuShell {
     const keys = [
       ['Maus', 'umsehen (erst ins Bild klicken)'],
       ['Rechte Maustaste', 'heranzoomen'],
+      ['Mittlere Maustaste', 'Maus freigeben'],
       ['M', 'Mikro stumm an/aus'],
       ['V', 'halten zum Sprechen (bei Push-to-talk)'],
       ['G', 'Wer bin ich? starten (Host)'],

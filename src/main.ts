@@ -14,7 +14,7 @@ import { trysteroTransport } from './net/trystero';
 import { Pipeline } from './render/pipeline';
 import { World } from './scene/world';
 import { MAP_IDS, type MapId } from './maps/types';
-import { el } from './ui/dom';
+import { el, releaseMouse } from './ui/dom';
 import { BenchPanel } from './ui/benchPanel';
 import { MouseTrace } from './debug/mouseTrace';
 import { GpuTimer, HeapWatch } from './debug/gpuTimer';
@@ -603,6 +603,15 @@ function launch(clock: SharedClock, session: Session | null, startCam: 'wagon' |
   stage.addEventListener('contextmenu', (e) => e.preventDefault());
   stage.addEventListener('mousedown', (e) => {
     if (e.button === 2 && world.cam === 'pov') world.zoom = 1;
+    // Middle button frees the mouse quietly (no pause menu) so HUD buttons can be clicked.
+    // preventDefault stops the browser's autoscroll circle and middle-click paste.
+    if (e.button === 1) {
+      e.preventDefault();
+      releaseMouse();
+    }
+  });
+  stage.addEventListener('auxclick', (e) => {
+    if (e.button === 1) e.preventDefault();
   });
   addEventListener('mouseup', (e) => {
     if (e.button === 2) world.zoom = 0;
