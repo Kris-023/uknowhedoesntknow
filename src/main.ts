@@ -1,6 +1,6 @@
 import * as THREE from 'three';
 import { Ambience } from './audio/ambience';
-import { echoNeedsHeadphones, getVoice, type Voice } from './audio/voice';
+import { echoNeedsHeadphones, gateStep, getVoice, type Voice } from './audio/voice';
 import type { PersonState } from './characters/person';
 import { AMBIENCE, CAMERA, HEAD, NET, SCHAFFNER, VOICE } from './config';
 import { SharedClock } from './core/clock';
@@ -242,7 +242,43 @@ function launch(clock: SharedClock, session: Session | null, startCam: 'wagon' |
   };
   const mouseK = () => CAMERA.mouseSensitivity * settings.mouseSens * world.fovFactor;
   const trace = bench ? new MouseTrace() : null;
-  const benchPanel = bench ? new BenchPanel(document.body, toMenu, trace, mouseK) : null;
+  // Benchmark "Mundbewegung testen": the own mic level (above the Schwelle, with its hang) moves every bot mouth.
+  let micByToggle = false;
+  let botGate = { open: false, lastLoud: 0 };
+  const setMicBots = async (on: boolean): Promise<boolean> => {
+    if (!voice) return false;
+    if (!on) {
+      players.botLevel = null;
+      if (micByToggle) voice.stopMic();
+      micByToggle = false;
+      return false;
+    }
+    if (voice.micState === 'starting') {
+      await new Promise<void>((r) => {
+        const off = voice.onChange(() => {
+          if (voice.micState !== 'starting') {
+            off();
+            r();
+          }
+        });
+      });
+    } else if (voice.micState !== 'on') {
+      micByToggle = true;
+      await voice.startMic();
+    }
+    if (voice.micState !== 'on') {
+      micByToggle = false;
+      return false;
+    }
+    botGate = { open: false, lastLoud: 0 };
+    players.botLevel = () => {
+      const level = voice.micLevel(true);
+      botGate = gateStep(botGate.open, level, settings.vadLevel, performance.now(), botGate.lastLoud, VOICE.vadHangMs);
+      return botGate.open ? level : 0;
+    };
+    return true;
+  };
+  const benchPanel = bench ? new BenchPanel(document.body, toMenu, trace, mouseK, voice ? (on) => setMicBots(on) : null) : null;
   // Benchmark diagnostics: GPU time per frame (where the browser has timer queries) and GC as heap drops.
   const gpuTimer = benchPanel && pipeline ? GpuTimer.create(pipeline.renderer.getContext()) : null;
   const heap = benchPanel ? new HeapWatch() : null;
