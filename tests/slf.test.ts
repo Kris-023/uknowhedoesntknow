@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it } from 'vitest';
 import { SLF } from '../src/config';
 import { mulberry32 } from '../src/core/rng';
 import { botAnswer, botWords } from '../src/game/slf/botWords';
@@ -681,6 +681,194 @@ describe('Stadt, Land, Fluss over the network', async () => {
     room.pump();
     expect(JSON.stringify(g.c.state)).toBe(before);
   });
+  describe('reload (F5): the tab store and the others give it back', () => {
+    const fakeStorage = (blocked: (key: string) => boolean = () => false): Storage => {
+      const m = new Map<string, string>();
+      return {
+        get length() {
+          return m.size;
+        },
+        key: (i) => [...m.keys()][i] ?? null,
+        getItem: (k) => m.get(k) ?? null,
+        setItem: (k, v) => {
+          if (blocked(k)) throw new Error('QuotaExceededError');
+          m.set(k, String(v));
+        },
+        removeItem: (k) => void m.delete(k),
+        clear: () => m.clear(),
+      };
+    };
+    const install = (s: Storage) => Object.defineProperty(globalThis, 'sessionStorage', { configurable: true, value: s });
+    afterEach(() => {
+      delete (globalThis as { sessionStorage?: unknown }).sessionStorage;
+    });
+    /** Three players; `b` reloads as `b2` (same seat, a new id). */
+    const withReload = (mode: 'text' | 'bild') => {
+      const room = new LocalGameRoom([
+        { id: 'a', seat: 2, name: 'A' },
+        { id: 'b', seat: 0, name: 'B' },
+        { id: 'c', seat: 1, name: 'C' },
+        { id: 'b2', seat: 0, name: 'B' },
+      ]);
+      const late = room.roster.pop()!;
+      // One storage stands for one tab: only b's tab keeps drafts, the others (same fake storage) don't.
+      const make = (id: string) => new SlfGame(room.net(id), { decks: () => ['normal'], mode: () => mode }, id.startsWith('b'));
+      const gg: Record<string, InstanceType<typeof SlfGame>> = Object.fromEntries(['a', 'b', 'c'].map((id) => [id, make(id)]));
+      /** The old tab dies: it hears nothing any more. */
+      const kill = () => {
+        (gg.b as unknown as { applyState: () => void }).applyState = () => {};
+      };
+      const reload = () => {
+        // The new tab starts fresh (new instance, same sessionStorage) and hears the room from now on.
+        gg.b2 = make('b2');
+        room.roster.splice(1, 1, { ...late, seat: 0 });
+        gg.a.rejoin('b', 'b2');
+        room.pump();
+      };
+      return { room, gg, kill, reload };
+    };
+    const keys = (s: Storage) => Array.from({ length: s.length }, (_, i) => s.key(i)!);
+
+    it('typed answers survive a reload', () => {
+      install(fakeStorage());
+      const { room, gg, kill, reload } = withReload('text');
+      gg.a.start();
+      room.pump();
+      gg.b.setText(0, 'Berlin');
+      gg.b.setText(2, 'Elbe');
+      kill();
+      reload();
+      expect(gg.b2.state!.round).toBe(gg.b.state!.round);
+      expect(gg.b2.draft.texts.slice(0, 3)).toEqual(['Berlin', '', 'Elbe']);
+      expect(gg.b2.canEdit).toBe(true);
+    });
+
+    it('a reload in the lock phase commits the restored draft, not an empty one', async () => {
+      install(fakeStorage());
+      const { room, gg, kill, reload } = withReload('text');
+      gg.a.start();
+      room.pump();
+      const L = gg.a.state!.letter;
+      const n = gg.a.state!.categories.length;
+      for (const id of ['a', 'c']) for (let c = 0; c < n; c++) gg[id].setText(c, `${L}${id}${c}`);
+      for (let c = 0; c < n; c++) gg.b.setText(c, `${L}bb${c}`);
+      await gg.a.stop();
+      await gg.c.stop();
+      room.pump();
+      kill();
+      expire(gg.a);
+      gg.a.tick(performance.now());
+      room.pump();
+      expect(gg.a.state!.phase).toBe('lock');
+      reload();
+      await until(room, () => gg.a.state?.phase === 'rate');
+      for (const id of ['a', 'c', 'b2']) await until(room, () => !!gg[id].state?.answers);
+      expect(gg.a.state!.answers!.b2).toEqual(Array.from({ length: n }, (_, c) => `${L}bb${c}`));
+    });
+
+    it('a reload during the reveal brings back my commitment and pictures (tab store)', async () => {
+      install(fakeStorage());
+      const { room, gg, kill, reload } = withReload('bild');
+      gg.a.start();
+      room.pump();
+      const L = gg.a.state!.letter;
+      for (const id of ['a', 'b', 'c'])
+        for (let c = 0; c < 3; c++) {
+          gg[id].setPic(c, pic(`${id}${c}`));
+          gg[id].setCaption(c, `${L}${id}`);
+        }
+      // b never gets to reveal: it is gone as soon as the writing is over.
+      (gg.b as unknown as { sendReveals: () => void }).sendReveals = () => {};
+      for (const id of ['a', 'b', 'c']) await gg[id].stop();
+      await until(room, () => gg.a.state?.phase === 'reveal');
+      kill();
+      reload();
+      await until(room, () => gg.a.state?.phase === 'rate' && !!gg.b2.picOf('b2', 2) && !!gg.b2.picOf('a', 1) && !!gg.a.picOf('b2', 0));
+      expect(gg.b2.picOf('b2', 1)).toEqual({ img: pic('b1'), cap: `${L}b` });
+      expect(gg.a.picOf('b2', 0)).toEqual({ img: pic('b0'), cap: `${L}b` });
+      expect(gg.b2.locked).toBe(true);
+    });
+
+    it('text: the commitment is back after a reload during the reveal', async () => {
+      install(fakeStorage());
+      const { room, gg, kill, reload } = withReload('text');
+      gg.a.start();
+      room.pump();
+      const L = gg.a.state!.letter;
+      const n = gg.a.state!.categories.length;
+      for (const id of ['a', 'b', 'c']) for (let c = 0; c < n; c++) gg[id].setText(c, `${L}${id}${c}`);
+      (gg.b as unknown as { sendReveals: () => void }).sendReveals = () => {};
+      for (const id of ['a', 'b', 'c']) await gg[id].stop();
+      await until(room, () => gg.a.state?.phase === 'reveal');
+      kill();
+      reload();
+      await until(room, () => gg.a.state?.phase === 'rate');
+      expect(gg.a.state!.answers!.b2).toEqual(Array.from({ length: n }, (_, c) => `${L}b${c}`));
+      expect(gg.b2.locked).toBe(true);
+    });
+
+    it('if the tab store is full, the others give the pictures back', async () => {
+      const store = fakeStorage((k) => k.includes('.p.'));
+      install(store);
+      const { room, gg, kill, reload } = withReload('bild');
+      gg.a.start();
+      room.pump();
+      const L = gg.a.state!.letter;
+      for (const id of ['a', 'b', 'c'])
+        for (let c = 0; c < 3; c++) {
+          gg[id].setPic(c, pic(`${id}${c}`));
+          gg[id].setCaption(c, `${L}${id}`);
+        }
+      expect(keys(store).some((k) => k.includes('.p.'))).toBe(false);
+      for (const id of ['a', 'b', 'c']) await gg[id].stop();
+      await until(room, () => ['a', 'b', 'c'].every((id) => gg[id].state?.phase === 'rate') && !!gg.a.picOf('b', 2) && !!gg.c.picOf('b', 2));
+      kill();
+      reload();
+      // The reloaded tab has no draft; its own pictures come from the others' proofs.
+      expect(gg.b2.draft.pics.every((p) => !p.img)).toBe(true);
+      const tick = () => gg.b2.tick(performance.now());
+      await until(room, () => gg.b2.locked && !!gg.b2.picOf('b2', 2), tick);
+      expect(gg.b2.picOf('b2', 0)).toEqual({ img: pic('b0'), cap: `${L}b` });
+      expect(gg.b2.picOf('a', 1)).toEqual({ img: pic('a1'), cap: `${L}a` });
+    });
+
+    it('a liar cannot hand me wrong answers: they must match my commitment', async () => {
+      install(fakeStorage((k) => k.includes('salt.')));
+      const { room, gg, kill, reload } = withReload('text');
+      gg.a.start();
+      room.pump();
+      const L = gg.a.state!.letter;
+      const n = gg.a.state!.categories.length;
+      for (const id of ['a', 'b', 'c']) for (let c = 0; c < n; c++) gg[id].setText(c, `${L}${id}${c}`);
+      for (const id of ['a', 'b', 'c']) await gg[id].stop();
+      await until(room, () => ['a', 'b', 'c'].every((id) => gg[id].state?.phase === 'rate') && !!gg.a.state?.answers);
+      kill();
+      // Peers invent other answers for b2.
+      const lie = () => ({ round: gg.a.state!.round, salt: 'x'.repeat(32), texts: Array.from({ length: n }, () => `${L}fake`) });
+      for (const id of ['a', 'c']) (gg[id] as unknown as { proofFor: () => unknown }).proofFor = lie;
+      reload();
+      for (let i = 0; i < 15; i++) {
+        room.pump();
+        gg.b2.tick(performance.now());
+        await new Promise((r) => setTimeout(r, 2));
+      }
+      expect(gg.b2.locked).toBe(false);
+    });
+
+    it('the stored draft goes with the round: the end clears it', async () => {
+      const store = fakeStorage();
+      install(store);
+      const { room, gg } = withReload('text');
+      gg.a.start();
+      room.pump();
+      gg.b.setText(0, 'Berlin');
+      expect(keys(store).length).toBeGreaterThan(0);
+      gg.a.end();
+      await until(room, () => gg.b.state?.phase === 'done');
+      expect(keys(store)).toEqual([]);
+    });
+  });
+
 });
 
 describe('Stadt, Land, Fluss: Zug zurück (host)', () => {

@@ -2,9 +2,11 @@ import { NET, SLF } from '../../config';
 import { mulberry32 } from '../../core/rng';
 import type { DeckId } from '../../words/types';
 import { newSalt } from '../gleich/logic';
-import type { GameNet, Minigame } from '../minigame';
+import { Recovery, type GameNet, type Minigame } from '../minigame';
 import { byTableOrder } from '../tableOrder';
+import { tabStore, type TabStore } from '../tabStore';
 import { stepKey } from '../undo';
+import { parseCardData } from '../whoami/cardImage';
 import {
   categoryPool,
   cleanAnswer,
@@ -69,6 +71,17 @@ interface Secret {
   pics: Pic[];
 }
 
+/** What a peer proves about a player's locked answers (the salt makes them checkable): given back to a reloaded player. */
+interface Proof {
+  salt: string;
+  texts?: string[];
+  pic?: Pic;
+}
+
+const isSalt = (v: unknown): v is string => typeof v === 'string' && v.length > 0 && v.length <= 128;
+const isTexts = (v: unknown): v is string[] => isStrings(v, 8, SLF.maxAnswerLen * 4);
+const isPic = (v: unknown): v is Pic => isRecord(v) && typeof v.img === 'string' && typeof v.cap === 'string' && v.cap.length <= SLF.maxCaptionLen * 4 && (v.img === '' || parseCardData(v.img) === v.img);
+
 type RawReveal = { round: number; cat: number; answers?: unknown; img?: unknown; cap?: unknown; salt: unknown };
 
 const same = (a: readonly string[] | undefined, b: readonly string[]) => !!a && a.length === b.length && a.every((x, i) => x === b[i]);
@@ -106,12 +119,58 @@ export class SlfGame implements Minigame {
   private letters = new Set<string>();
   private goneSince = new Map<string, number>();
   private dropAsked = new Map<string, number>();
+  /** Proofs of the others' locked answers by commitment, to give back to someone who lost their own secret. */
+  private proofs = new Map<string, Proof>();
+  /** Round I'm getting my own secret back for (from the tab store or the others), once per round. */
+  private recovering = -1;
+  private clearedRound = -1;
+  private recovery: Recovery;
 
+  /**
+   * `persist` keeps my drafts in this tab (survives F5); bots share the tab with the human and don't.
+   * The store is looked up at each use, since the room code (its scope) isn't known at construction.
+   */
   constructor(
     private net: GameNet,
     private room: SlfRoom,
+    private persist = true,
   ) {
     net.onMessage((t, d, f) => this.onMessage(t, d, f));
+    this.recovery = new Recovery(net);
+    this.recovery.answer('slf:mine', (q, from) => this.proofFor(q, from));
+  }
+
+  private ts(): TabStore | null {
+    return this.persist ? tabStore('slf') : null;
+  }
+
+  /** The tab store keeps the round in each key and only the running round: older rounds are dropped. */
+  private dropRound(round: number): void {
+    const st = this.ts();
+    if (!st) return;
+    st.remove(`t.${round}`);
+    st.remove(`salt.${round}`);
+    for (let c = 0; c < 9; c++) st.remove(`p.${round}.${c}`);
+  }
+
+  private saveTexts(): void {
+    this.ts()?.set(`t.${this.draft.round}`, this.draft.texts);
+  }
+
+  /** A picture draft is big: if the store is full it stays in memory, and the commitment can still be recovered from the others. */
+  private savePic(cat: number): void {
+    this.ts()?.set(`p.${this.draft.round}.${cat}`, this.draft.pics[cat]);
+  }
+
+  private restoreDraft(s: SlfState): void {
+    const st = this.ts();
+    if (!st) return;
+    const t = st.get(`t.${s.round}`, isTexts);
+    if (t && t.length === s.categories.length) this.draft.texts = t.map((x) => x.slice(0, SLF.maxAnswerLen * 4));
+    s.categories.forEach((_, c) => {
+      const p = st.get(`p.${s.round}.${c}`, isPic);
+      if (p) this.draft.pics[c] = p;
+    });
   }
 
   get selfId(): string {
@@ -204,21 +263,26 @@ export class SlfGame implements Minigame {
   private syncDraft(): void {
     const s = this.state;
     if (!s || this.draft.round === s.round) return;
+    this.dropRound(this.draft.round >= 0 ? this.draft.round : s.round - 1);
     this.draft.round = s.round;
     this.draft.texts = s.categories.map(() => '');
     this.draft.pics = s.categories.map(() => ({ img: '', cap: '' }));
+    // After a reload what I had typed comes back.
+    this.restoreDraft(s);
   }
 
   setText(cat: number, text: string): void {
     if (!this.canEdit) return;
     this.syncDraft();
     this.draft.texts[cat] = text;
+    this.saveTexts();
   }
 
   setPic(cat: number, img: string): void {
     if (!this.canEdit) return;
     this.syncDraft();
     this.draft.pics[cat] = { ...(this.draft.pics[cat] ?? { cap: '' }), img };
+    this.savePic(cat);
     this.emit();
   }
 
@@ -226,6 +290,7 @@ export class SlfGame implements Minigame {
     if (!this.canEdit) return;
     this.syncDraft();
     this.draft.pics[cat] = { ...(this.draft.pics[cat] ?? { img: '' }), cap };
+    this.savePic(cat);
   }
 
   /** Text answers as I see them: the host's, except one I checked myself and found different shows as nothing. */
@@ -312,6 +377,8 @@ export class SlfGame implements Minigame {
       // Before the intent: as host my own intent can already end the writing, and the reveal needs the secret.
       this.secret = { round: s.round, salt, commits, texts, pics };
       this.lockedRound = s.round;
+      // Only the salt: the answers are in the draft, so a reload can rebuild (and check) the secret from both.
+      this.ts()?.set(`salt.${s.round}`, salt);
       return commits;
     } finally {
       this.locking = false;
@@ -398,6 +465,7 @@ export class SlfGame implements Minigame {
   }
 
   tick(now: number): void {
+    this.recovery.tick(now);
     // Pictures go to newcomers too (someone who reloaded lost them).
     this.sendReveals();
     if (this.host && !this.isHost) this.host = null;
@@ -499,9 +567,16 @@ export class SlfGame implements Minigame {
       this.checking.clear();
       this.raw.clear();
       this.sentTo.clear();
+      this.proofs.clear();
+      this.recovering = -1;
     }
     this.state = s;
     this.syncDraft();
+    this.recoverSecret();
+    if (s.phase === 'done' && this.clearedRound !== s.round) {
+      this.clearedRound = s.round;
+      this.ts()?.clear();
+    }
     // The writing is over and I haven't locked yet: commit what I have (empty fields count as nothing).
     if (s.phase === 'lock' && this.playing && this.lockedRound !== s.round && !this.locking) {
       void this.commit().then((c) => {
@@ -512,6 +587,72 @@ export class SlfGame implements Minigame {
     this.sendReveals();
     this.checkReveals();
     this.emit();
+  }
+
+  /**
+   * I'm in the commitments but have no secret (reloaded): rebuild it from the stored salt and my
+   * restored draft, checked against my commitment. If that isn't there (storage blocked or full) or
+   * doesn't check out, the others give it back: they hold my revealed answers with their salt.
+   */
+  private recoverSecret(): void {
+    const s = this.state;
+    if (!s || this.recovering === s.round || this.locked) return;
+    const mine = s.commits[this.selfId];
+    const revealed = s.phase === 'reveal' || (s.mode === 'bild' && (s.phase === 'rate' || s.phase === 'done'));
+    if (!mine?.length || !revealed) return;
+    this.recovering = s.round;
+    const fromPeers = () => {
+      if (this.locked) return;
+      this.recovery.ask('slf:mine', { round: s.round }, {
+        onReply: (d) => {
+          if (!isRecord(d) || d.round !== s.round || !isSalt(d.salt) || this.locked) return;
+          const texts = isTexts(d.texts) ? d.texts : undefined;
+          const pics = Array.isArray(d.pics) && d.pics.every(isPic) ? (d.pics as Pic[]) : undefined;
+          void this.adopt(s.round, d.salt, texts, pics);
+        },
+        done: () => this.locked,
+      });
+    };
+    const salt = this.ts()?.get(`salt.${s.round}`, isSalt);
+    if (!salt) return fromPeers();
+    this.syncDraft();
+    void this.adopt(s.round, salt, this.draft.texts.map(cleanAnswer), this.draft.pics.map((p) => ({ img: p.img, cap: cleanCaption(p.cap) }))).then((ok) => {
+      if (!ok) fromPeers();
+    });
+  }
+
+  /** Take answers and salt as my secret if they match what I committed to. */
+  private async adopt(round: number, salt: string, texts: string[] | undefined, pics: Pic[] | undefined): Promise<boolean> {
+    const s = this.state;
+    const commits = s?.commits[this.selfId];
+    if (!s || s.round !== round || !commits?.length) return false;
+    const n = s.categories.length;
+    let ok = false;
+    if (s.mode === 'text') ok = !!texts && !!(await verifyText(commits[0], texts, salt, n));
+    else ok = !!pics && pics.length === n && (await Promise.all(pics.map((p, c) => verifyImage(commits[c], c, p.img, p.cap, salt)))).every(Boolean);
+    const now = this.state;
+    if (!ok || !now || now.round !== round || !same(now.commits[this.selfId], commits)) return false;
+    if (!this.locked) {
+      this.secret = { round, salt, commits: [...commits], texts: texts ?? [], pics: pics ?? [] };
+      this.lockedRound = round;
+      if (s.phase !== 'done') this.ts()?.set(`salt.${round}`, salt);
+    }
+    this.sendReveals();
+    this.checkReveals();
+    this.emit();
+    return true;
+  }
+
+  /** A reloaded player asks for their own answers: what I verified of theirs, with the salt (they check it themselves). */
+  private proofFor(q: unknown, from: string): unknown {
+    const s = this.state;
+    if (!s || !isRecord(q) || q.round !== s.round) return undefined;
+    const cs = s.commits[from];
+    if (!cs?.length) return undefined;
+    const ps = cs.map((c) => this.proofs.get(c));
+    if (ps.some((p) => !p)) return undefined;
+    const all = ps as Proof[];
+    return s.mode === 'text' ? { round: s.round, salt: all[0].salt, texts: all[0].texts } : { round: s.round, salt: all[0].salt, pics: all.map((p) => p.pic) };
   }
 
   /**
@@ -567,13 +708,19 @@ export class SlfGame implements Minigame {
       if (s.mode === 'text') {
         void verifyText(commit, r.answers, r.salt, s.categories.length).then((a) => {
           if (this.state?.round !== r.round) return;
-          if (a) this.verified.set(r.from, a);
+          if (a) {
+            this.verified.set(r.from, a);
+            this.proofs.set(commit, { salt: r.salt as string, texts: a });
+          }
           done(!!this.host?.revealText(r.from, a, Date.now()));
         });
       } else {
         void verifyImage(commit, r.cat, r.img, r.cap, r.salt).then((ok) => {
           if (this.state?.round !== r.round) return;
-          if (ok) this.pictures.set(commit, { img: r.img as string, cap: r.cap as string });
+          if (ok) {
+            this.pictures.set(commit, { img: r.img as string, cap: r.cap as string });
+            this.proofs.set(commit, { salt: r.salt as string, pic: { img: r.img as string, cap: r.cap as string } });
+          }
           done(!!this.host?.revealImage(r.from, r.cat, ok ? r.img !== '' : null, Date.now()));
         });
       }

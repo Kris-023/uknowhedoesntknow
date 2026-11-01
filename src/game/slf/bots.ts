@@ -44,7 +44,7 @@ export class SlfBots {
     ids: string[],
     opts: SlfRoom,
   ) {
-    for (const id of ids) this.bots.push({ game: new SlfGame(room.net(id), opts), wait: 0, key: '', filled: -1 });
+    for (const id of ids) this.bots.push({ game: new SlfGame(room.net(id), opts, false), wait: 0, key: '', filled: -1 });
   }
 
   tick(now: number): void {
