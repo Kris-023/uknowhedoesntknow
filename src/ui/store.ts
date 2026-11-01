@@ -160,7 +160,7 @@ const UPGRADES: Array<(o: Stored) => Stored> = [
   },
 ];
 
-const versionOf = (o: Stored): number => (typeof o.version === 'number' ? o.version : 0);
+const versionOf = (o: Stored): number => (typeof o.version === 'number' && Number.isInteger(o.version) && o.version >= 0 ? o.version : 0);
 
 /** Runs every upgrade step from the save's version up to the current one. A newer, unknown version passes through untouched. */
 export function upgradeSettings(raw: Stored): Stored {

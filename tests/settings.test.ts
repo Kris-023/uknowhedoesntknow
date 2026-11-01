@@ -84,6 +84,14 @@ describe('versions', () => {
 });
 
 describe('safety net', () => {
+  it('a corrupted version number counts as 0 instead of throwing', () => {
+    for (const version of [-1, 0.5]) {
+      const o = upgradeSettings({ version, musicOn: false });
+      expect(o.version).toBe(SETTINGS_VERSION);
+      expect(parseSettings(o).musicVolume).toBe(0);
+    }
+  });
+
   it('broken values fall back to the defaults', () => {
     const d = parseSettings({});
     const s = load({ mouseSens: 'x', imageBrightness: 9, glow: 'laut', voiceMode: 'shout', reduceFlicker: 'yes', room: 5 });
