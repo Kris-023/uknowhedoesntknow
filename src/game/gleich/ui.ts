@@ -63,6 +63,7 @@ export class GleichUi {
     this.input.autocomplete = 'off';
     this.input.spellcheck = false;
     this.input.setAttribute('aria-label', 'Dein Wort');
+    this.input.addEventListener('input', () => this.game.setDraft(this.input.value));
     this.send.type = 'submit';
     this.form.append(this.input, this.send);
     this.form.addEventListener('submit', (e) => {
@@ -201,11 +202,13 @@ export class GleichUi {
       const mine = this.game.myWord;
       // After a reload the commitment is still there but its word isn't: write again.
       const typing = playing && (!mine || this.editing);
-      const key = `${stepKey(s)}|${s.tryNo}`;
+      // `playing` is in the key: after a reload the seat comes back a moment after the first state.
+      const key = `${stepKey(s)}|${s.tryNo}|${playing}`;
       if (key !== this.tryKey) {
         this.tryKey = key;
         this.editing = false;
-        this.input.value = '';
+        // What I had typed before a reload.
+        this.input.value = playing && !mine ? this.game.draft : '';
         // The input needs the mouse.
         if (playing && !mine) {
           releaseMouse();

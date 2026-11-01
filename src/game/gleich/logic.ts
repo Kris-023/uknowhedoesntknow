@@ -58,8 +58,8 @@ interface Snap {
 
 export type Intent = { a: 'lock'; c: string } | { a: 'call' } | { a: 'vote'; v: boolean } | { a: 'ready' } | { a: 'end' };
 
-const HEX64 = /^[0-9a-f]{64}$/;
-const SALT = /^[0-9a-f]{16,64}$/;
+export const HEX64 = /^[0-9a-f]{64}$/;
+export const SALT = /^[0-9a-f]{16,64}$/;
 
 export function parseIntent(v: unknown): Intent | null {
   if (typeof v !== 'object' || v === null) return null;
@@ -264,16 +264,34 @@ export class GleichHost {
     return true;
   }
 
-  /** Continue a round from its public state: the new host after the old one left. Secret votes are gone with the old host. */
-  static fromState(state: GleichState, now = Date.now()): GleichHost {
+  /**
+   * Continue a round from its public state: the new host after the old one left. A running vote
+   * goes on: `ballots` are what the old host broadcast next to its state (see `ballots()`), and
+   * `skew` is how far the old host's clock was ahead of mine, so its deadlines hold on this clock.
+   */
+  static fromState(state: GleichState, now = Date.now(), skew = 0, ballots: Record<string, boolean> = {}): GleichHost {
     const h = new GleichHost(state.players, state.scores, state.round, now);
     h.state = structuredClone(state);
-    h.state.vote = null;
-    h.state.voted = false;
-    h.state.undo ??= 0;
+    const s = h.state;
+    s.undo ??= 0;
+    if (s.deadline !== null) s.deadline -= skew;
+    const v = s.vote;
+    if (v && s.phase === 'reveal' && s.words) {
+      v.deadline -= skew;
+      for (const id of v.voters) if (typeof ballots[id] === 'boolean') h.votes.set(id, ballots[id]);
+      // A later undo goes back to before the vote, as it would with the old host.
+      h.beforeVote = { state: { ...structuredClone(s), vote: null, voted: false, last: null }, revealed: [] };
+    } else {
+      s.vote = null;
+    }
     // The collecting window starts over; the clients' verified words are fed back in by the game.
-    if (h.state.phase === 'reveal' && !h.state.words) h.state.deadline = now + GLEICH.collectS * 1000;
+    if (s.phase === 'reveal' && !s.words) s.deadline = now + GLEICH.collectS * 1000;
     return h;
+  }
+
+  /** The running vote's ballots by voter: sent to the other clients next to the state for a host change, never shown. */
+  ballots(): Record<string, boolean> {
+    return Object.fromEntries(this.votes);
   }
 
   /** Players of the round who are in the room. */
