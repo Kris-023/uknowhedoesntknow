@@ -6,7 +6,6 @@ dist/
 # Interne Doku, bleibt lokal (nicht im öffentlichen Repo)
 teamlead/
 docs/
-CLAUDE.md
 reference/
 .claude/
 
