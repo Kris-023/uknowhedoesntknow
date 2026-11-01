@@ -1,5 +1,7 @@
 import { NET, WHOAMI } from '../../config';
-import type { GameNet, Minigame } from '../minigame';
+import { Recovery, type GameNet, type Minigame } from '../minigame';
+import { byTableOrder } from '../tableOrder';
+import { tabStore, type TabStore } from '../tabStore';
 import { parseCardData } from './cardImage';
 import { parseIntent, WhoamiHost, type Intent, type Vote, type WhoamiState } from './logic';
 
@@ -11,12 +13,25 @@ function parseState(v: unknown): (WhoamiState & { sentAt: number }) | null {
   return v as WhoamiState & { sentAt: number };
 }
 
+/** Topic of the "send me the cards I'm missing" ask (see `Recovery`). */
+const CARDS_TOPIC = 'wi:cards';
+/** A card has to be missing this long (ms of the tick clock) before we ask: normally it is just on its way. */
+const MISSING_GRACE_MS = 1500;
+
+const isMyCard = (v: unknown): v is { round: number; img: string } => typeof v === 'object' && v !== null && typeof (v as { round?: unknown }).round === 'number' && typeof (v as { img?: unknown }).img === 'string';
+const isMyVote = (v: unknown): v is { key: string; v: Vote } =>
+  typeof v === 'object' && v !== null && typeof (v as { key?: unknown }).key === 'string' && ['yes', 'no', 'idk'].includes((v as { v?: string }).v as string);
+
 /**
  * "Wer bin ich?" on one client. The host part (rules, secret votes) runs only on the host; every
  * client keeps the public state and the cards it may see.
  *
  * Secrecy: a card goes straight from its author to every player except its target, not through
  * the host (the host is a player too). The target only gets it after solving it or at round end.
+ *
+ * Reload: what is private to this tab (the card I made, my vote) lives in `tabStore` ('wi') and
+ * comes back with the first state. Cards I lack are asked for from the others (`wi:cards`) until I
+ * have them all, so a push that was lost or arrived before the state doesn't matter.
  */
 export class WhoamiGame implements Minigame {
   state: WhoamiState | null = null;
@@ -30,6 +45,10 @@ export class WhoamiGame implements Minigame {
   private revealed = new Set<string>();
   private listeners = new Set<() => void>();
   private lastPublish = 0;
+  private rec: Recovery;
+  /** When the cards I lack were first seen missing (tick clock), and the missing set an ask gave up on. */
+  private missingSince: number | null = null;
+  private gaveUpOn = '';
 
   /** What I voted in the running vote (only here, never sent back), for "Deine Stimme: Ja ✓". */
   myVote: { key: string; v: Vote } | null = null;
@@ -41,8 +60,12 @@ export class WhoamiGame implements Minigame {
     private net: GameNet,
     /** Vote time override for tests (dev only). */
     private devVoteS?: number,
+    /** Private state of this tab; tests give each simulated tab its own scope. */
+    private store: TabStore = tabStore('wi'),
   ) {
     net.onMessage((t, d, f) => this.onMessage(t, d, f));
+    this.rec = new Recovery(net);
+    this.rec.answer(CARDS_TOPIC, (q, from) => this.cardFor(q, from));
   }
 
   private get voteS(): number | undefined {
@@ -94,7 +117,7 @@ export class WhoamiGame implements Minigame {
 
   start(): void {
     if (!this.isHost) return;
-    const order = [...this.net.members()].sort((a, b) => NET.seatOrder.indexOf(a.seat) - NET.seatOrder.indexOf(b.seat)).map((m) => m.id);
+    const order = [...this.net.members()].sort((a, b) => byTableOrder(a.seat, b.seat)).map((m) => m.id);
     if (order.length < 2) return;
     if (this.host) this.scores = { ...this.host.state.scores };
     this.host = new WhoamiHost(order, this.scores, (this.host?.state.round ?? 0) + 1, this.voteS);
@@ -127,6 +150,8 @@ export class WhoamiGame implements Minigame {
     const target = this.myTarget;
     if (!target || this.myCardSent) return;
     this.myCard = img;
+    // Survives a reload: nobody else may hold this card (2 players), and the target needs it once solved.
+    if (this.state) this.store.set('myCard', { round: this.state.round, img });
     this.cards.set(target, img);
     for (const m of this.net.members()) if (m.id !== this.selfId && m.id !== target) this.net.send('wi:card', { target, img }, m.id);
     this.toHost({ a: 'ready' });
@@ -142,6 +167,7 @@ export class WhoamiGame implements Minigame {
   vote(v: Vote): void {
     if (!this.state?.vote || this.myVote?.key === this.voteKey) return;
     this.myVote = { key: this.voteKey, v };
+    this.store.set('myVote', this.myVote);
     this.toHost({ a: 'vote', v });
     this.emit();
   }
@@ -164,6 +190,7 @@ export class WhoamiGame implements Minigame {
   rejoin(oldId: string, newId: string): void {
     if (!this.host?.replace(oldId, newId)) return;
     this.goneSince.delete(oldId);
+    this.renameCard(oldId, newId);
     this.net.send('wi:rejoin', { old: oldId, new: newId });
     this.publish();
     this.resendTo(newId, oldId);
@@ -178,6 +205,65 @@ export class WhoamiGame implements Minigame {
     for (const [target, img] of this.cards) if (target !== newId && target !== oldId && target !== this.selfId) this.net.send('wi:card', { target, img }, newId);
   }
 
+  /** The cards I hold are keyed by target: the target's new id after a reload. */
+  private renameCard(oldId: string, newId: string): void {
+    const img = this.cards.get(oldId);
+    if (img === undefined) return;
+    this.cards.delete(oldId);
+    // Never my own card: it's only mine to see once revealed, and then it comes back through `wi:cards`.
+    if (newId !== this.selfId) this.cards.set(newId, img);
+  }
+
+  /** The card of `target` is shown to them once they solved it or the round is over. */
+  private revealedTo(target: string): boolean {
+    const s = this.state;
+    return !!s && (s.phase === 'done' || s.solved.includes(target));
+  }
+
+  /** Targets whose card I should have but don't: the author has sent it (ready), it's not mine, or mine and revealed. */
+  missingCards(): string[] {
+    const s = this.state;
+    if (!s) return [];
+    return s.players.filter((t) => !this.cards.has(t) && s.ready.includes(s.authorOf[t]) && (t !== this.selfId || this.revealedTo(t)));
+  }
+
+  /** Answer to a `wi:cards` ask: one card the asker lacks (they come one per reply, the asker asks again). */
+  private cardFor(query: unknown, from: string): unknown {
+    const have = (query as { have?: unknown } | null)?.have;
+    if (!this.state || !Array.isArray(have)) return undefined;
+    for (const [target, img] of this.cards) {
+      if (have.includes(target) || !this.state.players.includes(target)) continue;
+      // Their own card only once it's theirs to see.
+      if (target === from && !this.revealedTo(from)) continue;
+      return { target, img };
+    }
+    return undefined;
+  }
+
+  private askForCards(): void {
+    const key = this.missingCards().join(',');
+    this.rec.ask(CARDS_TOPIC, { have: [...this.cards.keys()] }, {
+      onReply: (d, from) => {
+        const c = d as { target?: unknown; img?: unknown } | null;
+        const img = parseCardData(c?.img);
+        // Progress: ask again at once with the new list, so the next card doesn't wait for the interval.
+        if (img && typeof c?.target === 'string' && this.acceptCard(c.target, img, from) && this.missingCards().length) this.askForCards();
+      },
+      done: () => this.missingCards().length === 0,
+      onGiveUp: () => (this.gaveUpOn = key),
+    });
+  }
+
+  /** Take a card from `from` if it may be ours: from its author, or a copy from another player when we have none. */
+  private acceptCard(target: string, img: string, from: string): boolean {
+    const s = this.state;
+    if (!s || !(s.authorOf[target] === from || (s.players.includes(from) && !this.cards.has(target)))) return false;
+    // Our own card only once it's revealed: before that it is dropped, even if someone sends it.
+    if (target === this.selfId && !this.revealedTo(target)) return false;
+    this.cards.set(target, img);
+    this.emit();
+    return true;
+  }
 
   absent(): string[] {
     const s = this.state;
@@ -212,6 +298,8 @@ export class WhoamiGame implements Minigame {
   }
 
   tick(now: number): void {
+    this.rec.tick(now);
+    this.askIfMissing(now);
     // Gave way to another host (network split): their state counts from now on.
     if (this.host && !this.isHost) this.host = null;
     // A new host (the old one left) takes over a running round from its public state.
@@ -252,6 +340,21 @@ export class WhoamiGame implements Minigame {
     if (changed || now - this.lastPublish > 3000) this.publish(now);
   }
 
+  /** Cards missing for a moment (a reload, a lost message) are asked for; an ask that gave up isn't repeated for the same set. */
+  private askIfMissing(now: number): void {
+    const missing = this.missingCards();
+    if (!missing.length) {
+      this.missingSince = null;
+      this.gaveUpOn = '';
+    } else if (this.rec.pending(CARDS_TOPIC) || missing.join(',') === this.gaveUpOn) {
+      // Already asking, or nobody had them.
+    } else if (this.missingSince === null) {
+      this.missingSince = now;
+    } else if (now - this.missingSince >= MISSING_GRACE_MS) {
+      this.askForCards();
+    }
+  }
+
   onMessage(type: string, data: unknown, from: string): void {
     if (type === 'wi:state') {
       if (from !== this.net.hostId()) return;
@@ -263,7 +366,10 @@ export class WhoamiGame implements Minigame {
     } else if (type === 'wi:rejoin') {
       // Someone came back: as an author, give them my card again (unless it's theirs).
       const d = data as { new?: unknown; old?: unknown };
-      if (from === this.net.hostId() && typeof d?.new === 'string' && typeof d.old === 'string' && d.new !== this.selfId) this.resendTo(d.new, d.old);
+      if (from === this.net.hostId() && typeof d?.new === 'string' && typeof d.old === 'string' && d.new !== this.selfId) {
+        this.renameCard(d.old, d.new);
+        this.resendTo(d.new, d.old);
+      }
     } else if (type === 'wi:drop') {
       if (typeof data === 'string') this.dropNow(data);
     } else if (type === 'wi:intent') {
@@ -273,13 +379,9 @@ export class WhoamiGame implements Minigame {
       const d = data as { target?: unknown; img?: unknown };
       const img = parseCardData(d?.img);
       const target = typeof d?.target === 'string' ? d.target : null;
-      const s = this.state;
       // From the author, or a copy from another player after a rejoin (never overwriting what we have).
-      if (!img || !target || !s || !(s.authorOf[target] === from || (s.players.includes(from) && !this.cards.has(target)))) return;
-      // Our own card only once it's revealed: before that it is dropped, even if someone sends it.
-      if (target === this.selfId && !(s.phase === 'done' || s.solved.includes(this.selfId))) return;
-      this.cards.set(target, img);
-      this.emit();
+      // One that comes before we have any state is dropped: the ask for missing cards gets it again.
+      if (img && target) this.acceptCard(target, img, from);
     }
   }
 
@@ -295,12 +397,33 @@ export class WhoamiGame implements Minigame {
     this.applyState(s);
   }
 
+  /** After a reload: the card I made and my vote come back from this tab's store (checked against the state). */
+  private restorePrivate(s: WhoamiState): void {
+    if (!this.myCard && s.ready.includes(this.selfId)) {
+      const c = this.store.get('myCard', isMyCard);
+      const target = this.myTarget;
+      if (c && c.round === s.round && target && parseCardData(c.img)) {
+        this.myCard = c.img;
+        this.cards.set(target, c.img);
+      } else if (c) this.store.remove('myCard');
+    }
+    if (!this.myVote && s.vote) {
+      const v = this.store.get('myVote', isMyVote);
+      if (v && v.key === this.voteKey) this.myVote = v;
+    }
+  }
+
   private applyState(s: WhoamiState): void {
     s.undo ??= 0;
     if (!this.state || s.round !== this.state.round) {
       this.cards.clear();
       this.myCard = null;
       this.revealed.clear();
+      this.missingSince = null;
+      this.gaveUpOn = '';
+      this.rec.cancel(CARDS_TOPIC);
+      // A new round (not the first state after a reload) starts with nothing private.
+      if (this.state) this.store.clear();
     } else if (s.undo !== this.state.undo) {
       // A solve was taken back. What was seen stays seen, but the own card goes back to "?" and
       // its author sends it again when it's solved for real.
@@ -309,6 +432,7 @@ export class WhoamiGame implements Minigame {
       for (const t of [...this.revealed]) if (open(t)) this.revealed.delete(t);
     }
     this.state = s;
+    this.restorePrivate(s);
     // Reveal: the card I made goes to its target once they solved it, or when the round is over.
     const target = this.myTarget;
     if (this.myCard && target && !this.revealed.has(target) && (s.phase === 'done' || s.solved.includes(target))) {

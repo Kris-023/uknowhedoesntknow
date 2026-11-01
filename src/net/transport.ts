@@ -45,7 +45,16 @@ export class MemoryHub {
     return t;
   }
 
-  disconnect(id: string): void {
+  /**
+   * `deliverPending`: what the leaver had already sent still arrives (in order, before everyone sees
+   * it leave), like on a real connection. By default it is dropped, the harsher case.
+   */
+  disconnect(id: string, deliverPending = false): void {
+    if (deliverPending) {
+      const mine = this.queue.filter((p) => p.from === id);
+      this.queue = this.queue.filter((p) => p.from !== id);
+      for (const p of mine) this.nodes.get(p.to)?.deliver(p.type, p.data, p.from);
+    }
     this.nodes.delete(id);
     this.queue = this.queue.filter((p) => p.to !== id && p.from !== id);
     for (const other of this.nodes.values()) other.emitLeave(id);

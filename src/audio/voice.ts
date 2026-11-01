@@ -1,5 +1,6 @@
 import * as THREE from 'three';
 import { VOICE } from '../config';
+import { encodeLevel, parseLevel } from '../net/protocol';
 import type { Transport } from '../net/transport';
 import { onSettings, settings } from '../ui/store';
 import type { RnnoiseWorkletNode } from '@sapphi-red/web-noise-suppressor';
@@ -32,6 +33,21 @@ export function gateStep(open: boolean, level: number, threshold: number, now: n
   const loud = level >= threshold;
   const last = loud ? now : lastLoud;
   return { open: loud || (open && now - last < hangMs), lastLoud: last };
+}
+
+/**
+ * Does the audio of our mic go out? 'mouth' (Nur Mundbewegung) never does: only the mouth level
+ * travels (see `mouthByte`).
+ */
+export function sendsAudio(mode: 'mouth' | 'open' | 'auto' | 'ptt', gateOpen: boolean, pttHeld: boolean): boolean {
+  if (mode === 'mouth') return false;
+  if (mode === 'auto') return gateOpen;
+  return mode === 'open' || pttHeld;
+}
+
+/** The mouth level to send in 'mouth' mode: the measured level while the gate (Schwelle) is open, else shut (0). */
+export function mouthByte(level: number, gateOpen: boolean): number {
+  return gateOpen ? encodeLevel(level) : 0;
 }
 
 /** Chromium's echo canceller ignores Web Audio output (see the bus wiring below); Firefox handles it. */
@@ -73,7 +89,9 @@ const rmsOf = (a: AnalyserNode, buf: Float32Array<ArrayBuffer>): number => {
 /**
  * Voice chat: own microphone into the WebRTC mesh, every remote voice through a panner at that
  * player's head. The mouth levels come from the audio itself (own mic, received streams), so
- * they need no network messages.
+ * they need no network messages. Except in 'mouth' mode (Nur Mundbewegung): that player sends no
+ * audio, only their level as a `lvl` message (one byte, a few times a second), and the receivers
+ * move the mouth from it exactly like from audio.
  */
 export class Voice {
   readonly ctx = new AudioContext();
@@ -98,12 +116,19 @@ export class Voice {
   private micCtx: AudioContext | null = null;
   /** Which noise filter is actually running (the neural one can fail to load). */
   micFilter: 'ki' | 'browser' | 'off' = 'off';
-  /** Voice activation state (only used in 'auto' mode). */
+  /** Voice activation state ('auto': opens the audio; 'mouth': lets the level through). */
   private gateOpen = false;
   private lastLoud = 0;
   private gateTimer = 0;
   private buf = new Float32Array(512);
   private peers = new Map<string, Peer>();
+  /** Received mouth levels of 'mouth' mode players (0..1, when it arrived). */
+  private mouths = new Map<string, { level: number; at: number }>();
+  /** Whether the mic stream is currently offered to the other peers (never in 'mouth' mode). */
+  private streaming = false;
+  /** Last byte and time we sent as our own mouth level. */
+  private sentLevel = 0;
+  private sentAt = 0;
   private volumes = new Map<string, number>();
   private net: Transport | null = null;
   private listeners = new Set<() => void>();
@@ -153,6 +178,9 @@ export class Voice {
       if (s.voiceMode !== last.voiceMode) {
         this.applyLookahead();
         this.applyTransmit();
+        this.applyStream();
+        this.gate();
+        if (s.voiceMode !== 'mouth') this.sendLevel(0);
       }
       last = { ...s };
     });
@@ -203,9 +231,46 @@ export class Voice {
     this.net = net;
     net.onStream?.((stream, from) => this.addPeer(from, stream));
     net.onJoin((id) => {
-      if (this.mic) net.addStream?.(this.mic.send, id);
+      if (this.mic && this.streaming) net.addStream?.(this.mic.send, id);
     });
-    net.onLeave((id) => this.removePeer(id));
+    net.onLeave((id) => {
+      this.removePeer(id);
+      this.mouths.delete(id);
+    });
+    net.on('lvl', (d, from) => {
+      const level = parseLevel(d);
+      if (level !== null && this.roomVoice) this.setMouthLevel(from, level);
+    });
+  }
+
+  /**
+   * A mouth level for player `id` (0..1), as if it had been measured from their audio: from the
+   * network ('mouth' mode players) or from the benchmark, to move any seat's mouth.
+   */
+  setMouthLevel(id: string, level: number): void {
+    this.mouths.set(id, { level: Math.max(0, Math.min(1, level)), at: performance.now() });
+  }
+
+  /** Last received mouth level of `id`, 0 once it is older than `VOICE.mouthStaleMs`. */
+  mouthLevel(id: string): number {
+    const m = this.mouths.get(id);
+    return m && performance.now() - m.at < VOICE.mouthStaleMs ? m.level : 0;
+  }
+
+  /** Offer the mic stream to the peers, or take it back, as the mode requires (never in 'mouth' mode). */
+  private applyStream(): void {
+    const want = !!this.mic && this.roomVoice && settings.voiceMode !== 'mouth';
+    if (want === this.streaming || !this.mic) return;
+    this.streaming = want;
+    if (want) this.net?.addStream?.(this.mic.send);
+    else this.net?.removeStream?.(this.mic.send);
+  }
+
+  private sendLevel(byte: number): void {
+    if (byte === this.sentLevel && byte === 0) return;
+    this.sentLevel = byte;
+    this.sentAt = performance.now();
+    this.net?.send('lvl', byte);
   }
 
   /** Host switched the room's voice chat. The own mic setting stays as it is for the next room. */
@@ -299,7 +364,7 @@ export class Voice {
       // Own timer instead of the render loop: the gate must keep working in a background tab.
       clearInterval(this.gateTimer);
       this.gateTimer = window.setInterval(() => this.gate(), VOICE.vadPollMs);
-      this.net?.addStream?.(dest.stream);
+      this.applyStream();
     } catch (e) {
       const name = (e as DOMException).name;
       this.micState = name === 'NotAllowedError' || name === 'SecurityError' ? 'blocked' : name === 'NotFoundError' ? 'missing' : 'error';
@@ -313,7 +378,9 @@ export class Voice {
     clearInterval(this.gateTimer);
     this.gateOpen = false;
     if (this.mic) {
-      this.net?.removeStream?.(this.mic.send);
+      if (this.streaming) this.net?.removeStream?.(this.mic.send);
+      this.streaming = false;
+      this.sendLevel(0);
       this.mic.raw.getTracks().forEach((t) => t.stop());
       this.mic.src.disconnect();
       this.mic.gain.disconnect();
@@ -325,29 +392,41 @@ export class Voice {
     this.emit();
   }
 
-  /** Whether our voice goes out right now: not muted, and per mode always / above the threshold / key held. */
+  /** Whether our voice goes out right now: not muted, and per mode always / above the threshold / key held. Never in 'mouth' mode. */
   get transmitting(): boolean {
     if (!this.mic || this.muted) return false;
-    if (settings.voiceMode === 'auto') return this.gateOpen;
-    return settings.voiceMode === 'open' || this.pttHeld;
+    return sendsAudio(settings.voiceMode, this.gateOpen, this.pttHeld);
   }
 
-  /** Voice activation is open right now (for the meter and the HUD). */
+  /** 'mouth' mode and the level goes out right now (above the threshold, not muted): the mouth moves. */
+  get mouthing(): boolean {
+    return !!this.mic && !this.muted && settings.voiceMode === 'mouth' && this.gateOpen;
+  }
+
+  /** Voice activation (or the mouth threshold) is open right now (for the meter and the HUD). */
   get gateIsOpen(): boolean {
     return this.gateOpen;
   }
 
   private gate(): void {
-    if (!this.mic || settings.voiceMode !== 'auto') {
+    const mode = settings.voiceMode;
+    if (!this.mic || (mode !== 'auto' && mode !== 'mouth')) {
       this.gateOpen = false;
       return;
     }
+    // Measured after the mic gain, like a received stream is measured: the same level scale for everyone.
     const level = rmsToLevel(rmsOf(this.mic.analyser, this.buf));
-    const { open, lastLoud } = gateStep(this.gateOpen, level, settings.vadLevel, performance.now(), this.lastLoud, VOICE.vadHangMs);
+    const now = performance.now();
+    const { open, lastLoud } = gateStep(this.gateOpen, level, settings.vadLevel, now, this.lastLoud, VOICE.vadHangMs);
     this.lastLoud = lastLoud;
     if (open !== this.gateOpen) {
       this.gateOpen = open;
       this.applyTransmit();
+    }
+    if (mode === 'mouth') {
+      const byte = this.muted ? 0 : mouthByte(level, this.gateOpen);
+      // Quiet stays quiet on the wire: only while talking (or for the closing 0) a packet goes out.
+      if ((byte > 0 || this.sentLevel > 0) && now - this.sentAt >= 1000 / VOICE.mouthHz) this.sendLevel(byte);
     }
   }
 
@@ -373,9 +452,9 @@ export class Voice {
     this.emit();
   }
 
-  /** Own mouth level; also feeds the mic test meter (`raw` ignores mute and push-to-talk). */
+  /** Own mouth level; also feeds the mic test meter (`raw` ignores mute, push-to-talk and the threshold). */
   micLevel(raw = false): number {
-    if (!this.mic || (!raw && !this.transmitting)) return 0;
+    if (!this.mic || (!raw && !this.transmitting && !this.mouthing)) return 0;
     return rmsToLevel(rmsOf(this.mic.analyser, this.buf));
   }
 
@@ -396,13 +475,16 @@ export class Voice {
     });
   }
 
+  /** A remote player's level: from their audio, or from the level they sent ('mouth' mode); the louder of the two. */
   peerLevel(id: string): number {
     const p = this.peers.get(id);
-    return p ? rmsToLevel(rmsOf(p.analyser, this.buf)) : 0;
+    const audio = p ? rmsToLevel(rmsOf(p.analyser, this.buf)) : 0;
+    return Math.max(audio, this.mouthLevel(id));
   }
 
-  hasPeer(id: string): boolean {
-    return this.peers.has(id);
+  /** There is a real voice (audio stream or sent mouth level) for this player: its mouth follows `peerLevel`. */
+  hasVoice(id: string): boolean {
+    return this.peers.has(id) || this.mouths.has(id);
   }
 
   volumeOf(id: string): number {

@@ -2,6 +2,7 @@ import * as THREE from 'three';
 import { EffectComposer } from 'three/examples/jsm/postprocessing/EffectComposer.js';
 import { OutputPass } from 'three/examples/jsm/postprocessing/OutputPass.js';
 import { RenderPass } from 'three/examples/jsm/postprocessing/RenderPass.js';
+import { ShaderPass } from 'three/examples/jsm/postprocessing/ShaderPass.js';
 import { UnrealBloomPass } from 'three/examples/jsm/postprocessing/UnrealBloomPass.js';
 import { BLOOM, LIGHTS, RENDER } from '../config';
 
@@ -22,9 +23,51 @@ class ScaledBloomPass extends UnrealBloomPass {
 }
 
 /**
+ * Final pass in display space (after OutputPass): an edge-darkening vignette. Off by default; with
+ * the uniform at 0 the pass is disabled outright, so it costs nothing.
+ */
+const FinishShader = {
+  name: 'FinishShader',
+  uniforms: {
+    tDiffuse: { value: null as THREE.Texture | null },
+    vignette: { value: 0 },
+  },
+  vertexShader: /* glsl */ `
+    varying vec2 vUv;
+    void main() {
+      vUv = uv;
+      gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
+    }`,
+  fragmentShader: /* glsl */ `
+    uniform sampler2D tDiffuse;
+    uniform float vignette;
+    varying vec2 vUv;
+    void main() {
+      vec4 c = texture2D(tDiffuse, vUv);
+      vec2 d = (vUv - 0.5) * 1.35;
+      gl_FragColor = vec4(c.rgb * (1.0 - vignette * smoothstep(0.08, 0.9, dot(d, d))), c.a);
+    }`,
+};
+
+/**
+ * Vignette strength when switched on. Why: the first version (0.55, falloff from 0.25) darkened the
+ * middle of the screen edges by only ~10 % and was barely visible; starting the falloff earlier and
+ * going to 0.85 gives ~35 % at the edge middles and ~85 % in the corners.
+ */
+const FINISH = { vignette: 0.85 } as const;
+
+class FinishPass extends ShaderPass {
+  constructor() {
+    super(FinishShader);
+    this.enabled = false;
+  }
+}
+
+/**
  * Renderer plus optional bloom. The scene always renders into an HDR target with MSAA; bloom
  * (if on) adds glow above the threshold, and OutputPass applies tone mapping + sRGB at the end.
  * Bloom off only skips the bloom pass, so both paths are antialiased and tone-mapped the same way.
+ * After OutputPass an optional finish pass adds a vignette (off by default).
  * (The canvas used to carry the MSAA, but with post-processing only fullscreen quads reach it:
  * the scene was not antialiased at all with bloom, and bloom off fell back to the costly MSAA canvas.)
  */
@@ -33,9 +76,14 @@ export class Pipeline {
   private composer: EffectComposer;
   private bloom: UnrealBloomPass;
   private scenePass: RenderPass;
+  private finish: FinishPass;
   bloomOn = true;
-  /** Multiplier on BLOOM.strength (player setting). */
+  /** Multiplier on BLOOM.strength (player setting "Leuchten"). */
   bloomStrength = 1;
+  /** Multiplier on the tone-mapping exposure (player setting "Renderhelligkeit"). */
+  renderBrightness = 1;
+  /** "Vignette". */
+  vignette = false;
   private renderScale = 1;
   private size = { w: 1, h: 1 };
 
@@ -61,6 +109,8 @@ export class Pipeline {
     this.bloom = new ScaledBloomPass(BLOOM.resolutionScale, BLOOM.strength, BLOOM.radius, LIGHTS.bloomThreshold);
     this.composer.addPass(this.bloom);
     this.composer.addPass(new OutputPass());
+    this.finish = new FinishPass();
+    this.composer.addPass(this.finish);
   }
 
   /** Another world (map change): same renderer, canvas and passes, new scene and camera. */
@@ -97,11 +147,12 @@ export class Pipeline {
 
   render(): void {
     this.renderer.info.reset();
-    // Follow the active light preset.
-    this.renderer.toneMappingExposure = LIGHTS.exposure;
+    this.renderer.toneMappingExposure = LIGHTS.exposure * this.renderBrightness;
     this.bloom.enabled = this.bloomOn;
     this.bloom.threshold = LIGHTS.bloomThreshold;
     this.bloom.strength = BLOOM.strength * this.bloomStrength;
+    this.finish.enabled = this.vignette;
+    this.finish.uniforms.vignette.value = this.vignette ? FINISH.vignette : 0;
     this.composer.render();
   }
 }

@@ -61,19 +61,21 @@ export interface LightPreset {
   bloomThreshold: number;
 }
 
-export const LIGHT_PRESETS = {
-  /** Night train: the neon strips carry the room, everything else is a faint fill. */
-  nacht: { hemi: 0.04, ceilingWhite: 0.06, neonBlue: 0.9, window: 0.8, neonTubeHdr: 1.9, frameOpacity: 0.28, exposure: 0.85, bloomThreshold: 0.28 },
-  /** The brighter M1 look (as in the prototype), with bloom kept by lifting tubes and threshold together. */
-  hell: { hemi: 0.5, ceilingWhite: 0.45, neonBlue: 1.5, window: 1.0, neonTubeHdr: 3.2, frameOpacity: 0.7, exposure: 1.15, bloomThreshold: 0.62 },
-} satisfies Record<string, LightPreset>;
-export type LightPresetName = keyof typeof LIGHT_PRESETS;
-
 /**
- * The active lighting values. Mutable on purpose: every lighting consumer reads it per frame,
- * so switching presets is a single Object.assign with no plumbing through the scene.
+ * Lighting values every lighting consumer reads per frame. Night train: the neon strips carry
+ * the room, everything else is a faint fill. All maps are tuned for exactly these values; the
+ * player-facing brightness settings act on the output (exposure multiplier, canvas filter), not here.
  */
-export const LIGHTS: LightPreset = { ...LIGHT_PRESETS.nacht };
+export const LIGHTS: Readonly<LightPreset> = {
+  hemi: 0.04,
+  ceilingWhite: 0.06,
+  neonBlue: 0.9,
+  window: 0.8,
+  neonTubeHdr: 1.9,
+  frameOpacity: 0.28,
+  exposure: 0.85,
+  bloomThreshold: 0.28,
+};
 
 export const RENDER = {
   maxPixelRatio: 2,
@@ -105,7 +107,6 @@ export const SPEED = {
 } as const;
 
 export const SHAKE = {
-  maxMm: 30,
   defaultMm: 5,
 } as const;
 
@@ -198,7 +199,11 @@ export const NET = {
   /** Namespace on the relays; the room code is the room inside it. */
   appId: 'uknowhedoesntknow',
   maxPlayers: 4,
-  /** Seat fill order: the first two sit face to face (0 and 2 are opposite each other), not side by side. */
+  /**
+   * Default seat fill order (the hypertrain's). Every map has its own, derived from where its seats
+   * really are (`game/tableOrder.ts:fillOrder`) and handed to the session by main.ts; this is what
+   * the session uses until then, and the seat set the per-map order must be a permutation of.
+   */
   seatOrder: [0, 2, 1, 3] as readonly number[],
   /** Room code length (without the dash). 31 symbols, 8 chars ≈ 40 bits: the code is the only secret. */
   codeLength: 8,
@@ -218,6 +223,14 @@ export const NET = {
   dropWaitMs: 30_000,
   /** Joiner repeats its hello until a host answers (host may still be connecting). */
   helloRetryMs: 2000,
+  /**
+   * A client that has heard nothing from its host this long (no pong, roster, train ...) takes the
+   * host for gone and elects a new one. The last resort that keeps a room from staying host-less
+   * after any race; pings go every `pingSlowMs`, so a working host is heard well within this.
+   */
+  hostSilentMs: 6000,
+  /** The host who hands the role over stays host this long if the new host never confirms (it left, or never heard). */
+  handoverWaitMs: 5000,
   /** Quick pings right after joining for a good clock offset, then occasional ones. */
   pingFastMs: 250,
   pingFastCount: 8,
@@ -259,6 +272,13 @@ export const VOICE = {
   vadHangMs: 450,
   vadLookaheadS: 0.05,
   vadPollMs: 15,
+  /**
+   * "Nur Mundbewegung": no audio goes out, only the mouth level (one byte, `lvl` message) at most
+   * `mouthHz` times a second while it is above the threshold, plus a final 0. A level older than
+   * `mouthStaleMs` counts as silence (lost packet, peer gone or switched mode).
+   */
+  mouthHz: 12,
+  mouthStaleMs: 500,
   /**
    * Outgoing voice: a highpass takes out desk thumps and rumble, a limiter only catches shouts before
    * they clip (it starts above the Schaffner's level, so it doesn't hide shouting from him).
@@ -352,6 +372,11 @@ export const SCHAFFNER = {
   penalty: 1,
   /** How long he stands next to you. */
   showS: 7,
+  /**
+   * His spoken call (and gong) never plays quieter than this announcement volume, even with
+   * Durchsagen at 0 %: he is part of the game (the Punktabzug), so he is not switchable.
+   */
+  minVolume: 0.4,
 } as const;
 
 /** "Zug zurück": the host takes back a wrong collective decision (see src/game/undo.ts). */

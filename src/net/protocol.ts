@@ -86,6 +86,8 @@ export function parseOpts(v: unknown): RoomOpts {
 }
 
 export interface Welcome {
+  /** Host-Epoche of the sender (see `Session.epoch`): settles which of two hosts stays. */
+  epoch: number;
   seed: number;
   startMs: number;
   /** Host clock (ms) at send time, for a first rough offset. */
@@ -167,6 +169,32 @@ export function parseRoster(v: unknown): RosterEntry[] | null {
   return out;
 }
 
+/** Largest |Host-Epoche| `parseEpoch` accepts; a host never computes an epoch beyond it (`clampEpoch`). */
+export const EPOCH_LIMIT = 1e9;
+
+/** Keep an epoch we compute inside what every peer's `parseEpoch` takes, so our own messages are never dropped. */
+export function clampEpoch(e: number): number {
+  return Math.max(-EPOCH_LIMIT, Math.min(EPOCH_LIMIT, e));
+}
+
+/** Host-Epoche on the wire: a whole number within `EPOCH_LIMIT`; anything else makes the message invalid. */
+export function parseEpoch(v: unknown): number | null {
+  return typeof v === 'number' && Number.isSafeInteger(v) && Math.abs(v) <= EPOCH_LIMIT ? v : null;
+}
+
+/** The host's `roster` message: its Host-Epoche and the roster. */
+export interface RosterMsg {
+  epoch: number;
+  roster: RosterEntry[];
+}
+
+export function parseRosterMsg(v: unknown): RosterMsg | null {
+  if (!isObj(v)) return null;
+  const epoch = parseEpoch(v.e);
+  const roster = parseRoster(v.r);
+  return epoch === null || !roster ? null : { epoch, roster };
+}
+
 export function parseTrain(v: unknown): Train | null {
   if (!isObj(v)) return null;
   const kmh = num(v.kmh, 0, 100000);
@@ -177,6 +205,7 @@ export function parseTrain(v: unknown): Train | null {
 
 export function parseWelcome(v: unknown): Welcome | null {
   if (!isObj(v)) return null;
+  const epoch = parseEpoch(v.epoch);
   const seed = num(v.seed, -(2 ** 31), 2 ** 32);
   const startMs = num(v.startMs, 0, 1e15);
   const hostMs = num(v.hostMs, 0, 1e15);
@@ -184,8 +213,8 @@ export function parseWelcome(v: unknown): Welcome | null {
   const train = parseTrain(v.train);
   // A broken blackout time only loses the blackout, not the whole welcome.
   const blackoutAt = num(v.blackoutAt, -1e9, 1e9);
-  if (seed === null || startMs === null || hostMs === null || !roster || !train) return null;
-  return { seed: seed | 0, startMs, hostMs, roster, train, blackoutAt, opts: parseOpts(v.opts) };
+  if (epoch === null || seed === null || startMs === null || hostMs === null || !roster || !train) return null;
+  return { epoch, seed: seed | 0, startMs, hostMs, roster, train, blackoutAt, opts: parseOpts(v.opts) };
 }
 
 /** Pose on the wire: [yaw, pitch], rounded to keep packets tiny. */
@@ -196,4 +225,13 @@ export function parsePose(v: unknown): { yaw: number; pitch: number } | null {
   const yaw = num(v[0], -HEAD.maxYaw, HEAD.maxYaw);
   const pitch = num(v[1], HEAD.minPitch, HEAD.maxPitch);
   return yaw === null || pitch === null ? null : { yaw, pitch };
+}
+
+/** Mouth level on the wire ("Nur Mundbewegung"): one byte, 0 = shut, 255 = wide open. */
+export const encodeLevel = (level: number): number => Math.max(0, Math.min(255, Math.round(level * 255)));
+
+/** Back to 0..1; anything that is not an integer byte is dropped. */
+export function parseLevel(v: unknown): number | null {
+  const b = num(v, 0, 255);
+  return b !== null && Number.isInteger(b) ? b / 255 : null;
 }

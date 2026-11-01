@@ -89,7 +89,7 @@ export class BenchPanel {
   private frames = new FrameTrace();
   private lastSample: BenchSample | null = null;
 
-  constructor(host: HTMLElement, onMenu: () => void, trace: MouseTrace | null = null, mouseK: () => number = () => 0) {
+  constructor(host: HTMLElement, onMenu: () => void, trace: MouseTrace | null = null, mouseK: () => number = () => 0, onMicBots: ((on: boolean) => Promise<boolean>) | null = null) {
     this.root.setAttribute('aria-label', 'Benchmark');
     const head = el('div', 'bench-head');
     head.append(el('h2', 'bench-title', 'Benchmark'));
@@ -126,7 +126,7 @@ export class BenchPanel {
             render: r,
             gpuTimer: this.diag.gpuTimer,
             heapPrecise: this.diag.heapPrecise(),
-            settings: `Licht ${settings.light} · Leuchten ${settings.bloom ? `an (${Math.round(settings.bloomStrength * 100)} %)` : 'aus'} · Auflösung ${Math.round(settings.renderScale * 100)} %`,
+            settings: `Leuchten ${settings.glow} · Renderhelligkeit ${Math.round(settings.renderBrightness * 100)} % · Vignette ${settings.vignette ? 'an' : 'aus'} · Auflösung ${Math.round(settings.renderScale * 100)} %`,
           });
         },
       }),
@@ -141,8 +141,31 @@ export class BenchPanel {
           },
         }),
       );
+    if (onMicBots) this.root.append(this.micBots(onMicBots));
     this.root.append(this.settings.root);
     host.append(this.root);
+  }
+
+  /** Toggle: the own mic drives all bot mouths. `set` returns whether it is active now (false = no mic access). */
+  private micBots(set: (on: boolean) => Promise<boolean>): HTMLElement {
+    const box = el('section', 'stutter');
+    const b = el('button', 'btn toggle', 'Aus');
+    b.type = 'button';
+    b.setAttribute('aria-pressed', 'false');
+    const info = 'Dein Mikrofon bewegt die Münder aller simulierten Mitspieler (mit deiner Schwelle). So prüfst du nur die Mundanimation.';
+    const hint = el('p', 'note', info);
+    let on = false;
+    b.addEventListener('click', async () => {
+      b.disabled = true;
+      const want = !on;
+      on = await set(want);
+      b.disabled = false;
+      b.textContent = on ? 'An' : 'Aus';
+      b.setAttribute('aria-pressed', String(on));
+      hint.textContent = want && !on ? 'Kein Zugriff auf das Mikrofon. Erlaube es im Browser und versuche es noch einmal.' : info;
+    });
+    box.append(el('h3', 'eyebrow', 'Mundbewegung testen'), hint, b);
+    return box;
   }
 
   /** Record for `seconds`, then show the report with a copy button. */

@@ -336,8 +336,8 @@ describe('Zug zurück over the network', async () => {
   const { ZeigGame } = await import('../src/game/zeig/game');
   const { GleichGame } = await import('../src/game/gleich/game');
   const roster = () => [
-    { id: 'a', seat: 0, name: 'A' },
-    { id: 'b', seat: 2, name: 'B' },
+    { id: 'a', seat: 2, name: 'A' },
+    { id: 'b', seat: 0, name: 'B' },
     { id: 'c', seat: 1, name: 'C' },
   ];
   const cardOf = (n: string) => `data:image/jpeg;base64,${btoa(n)}`;

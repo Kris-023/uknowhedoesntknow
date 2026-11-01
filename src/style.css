@@ -43,9 +43,8 @@ kbd { font: inherit; border: 1px solid var(--line); padding: 1px 5px; color: var
 .ctl input[type="range"] { flex: 1; min-width: 100px; accent-color: var(--amber); }
 .ctl output { font: 500 12px/1 var(--font-mono); min-width: 64px; text-align: right; font-variant-numeric: tabular-nums; }
 
-.seg { display: inline-flex; flex-wrap: wrap; border: 1px solid var(--line); }
-.seg button { background: transparent; color: var(--muted); border: 0; padding: 7px 9px; font: 500 11px/1 var(--font-mono); letter-spacing: .06em; text-transform: uppercase; cursor: pointer; }
-.seg button + button { border-left: 1px solid var(--line); }
+.seg { display: inline-flex; flex-wrap: wrap; gap: 1px; background: var(--line); border: 1px solid var(--line); }
+.seg button { flex: 1 1 auto; background: var(--bg); color: var(--muted); border: 0; padding: 7px 9px; font: 500 11px/1 var(--font-mono); letter-spacing: .06em; text-transform: uppercase; cursor: pointer; }
 .seg button:hover { color: var(--fg); }
 .seg button[aria-pressed="true"] { background: var(--amber); color: var(--on-amber); }
 
@@ -67,8 +66,27 @@ kbd { font: inherit; border: 1px solid var(--line); padding: 1px 5px; color: var
 .treehead { font: 500 10.5px/1 var(--font-mono); letter-spacing: .1em; text-transform: uppercase; color: var(--muted); }
 .tree { margin: 0; font: 11px/1.5 var(--font-mono); background: #0e131c; border: 1px solid var(--line); padding: 10px; overflow-x: auto; white-space: pre; color: var(--fg2); }
 
+/* "Unschärfe hinter Fenstern" (settings.uiBlur, class set by ui/settingsView.ts): every window lets the 3D image through and blurs it.
+   Off by default because a blur over the live canvas is re-done every frame. A new window-like box (menu, panel, bar, dialog, toast,
+   result box) belongs in this list. Not in it on purpose: the per-player floating labels (.nametag, .card-tag), which are many and move
+   every frame, and the boxes inside a window (.sa-card, .gg-chip, .room-box, ...), which stay solid so text stays readable. */
+.ui-blur :is(
+  .menu-frame, .room-dialog,                                   /* main/Esc menu, room settings dialog */
+  .panel, .bench,                                              /* debug panel, benchmark panel */
+  .hint-bar, .mic, .absent-row, .undo-ask, .undo-host > .btn,  /* HUD: hint line, mic, absent notice, "Zug zurück" */
+  .problem,                                                    /* graphics crash / offline box */
+  .wi-board, .wi-maker, .wi-done, .wi-bar                      /* all minigames: scoreboard, card maker/sheet, end screens, top/bottom bars + lobby */
+) { background: rgba(14, 19, 28, .62); -webkit-backdrop-filter: blur(12px); backdrop-filter: blur(12px); }
+/* Result banner of every game ("Wer bin ich?" vote result, Sag's anders, Stadt Land Fluss, map change): same blur, darker like the bars. */
+.ui-blur :is(.wi-bar, .wi-banner) { background: rgba(5, 8, 16, .5); -webkit-backdrop-filter: blur(12px); backdrop-filter: blur(12px); }
+/* The Esc menu's dimmed backdrop blurs the whole screen (4px). That makes it a backdrop root, so the frame inside could not blur the
+   canvas on its own. With the setting on, the frame does the blurring and the backdrop only dims. */
+.ui-blur .menu.pause { -webkit-backdrop-filter: none; backdrop-filter: none; }
+
 @media (max-width: 700px) { .panel { top: auto; height: 55vh; width: auto; left: 12px; } }
-.seg button:disabled, .btn:disabled, .ctl input:disabled { opacity: .4; cursor: not-allowed; }
+.seg button:disabled { opacity: 1; cursor: not-allowed; color: color-mix(in srgb, var(--muted) 40%, var(--bg)); }
+.seg button[aria-pressed="true"]:disabled { background: color-mix(in srgb, var(--amber) 40%, var(--bg)); }
+.btn:disabled, .ctl input:disabled { opacity: .4; cursor: not-allowed; }
 
 /* ---------- Menus (main menu and Esc menu share the frame) ---------- */
 .menu { position: fixed; inset: 0; z-index: 10; display: grid; place-items: center; padding: 16px; overflow-y: auto;
@@ -87,6 +105,7 @@ kbd { font: inherit; border: 1px solid var(--line); padding: 1px 5px; color: var
 .brand-name { margin: 0; font: 800 clamp(2rem, 5vw, 2.9rem)/.95 var(--font-display); letter-spacing: .01em; color: var(--fg); }
 .brand-name.small { font-size: 2rem; }
 .tabs { display: flex; gap: 2px; }
+.menu-head .tabs { flex-wrap: wrap; }
 .tab { background: transparent; border: 0; border-bottom: 2px solid transparent; color: var(--muted); cursor: pointer;
   padding: 10px 14px 12px; font: 600 12px/1 var(--font-mono); letter-spacing: .1em; text-transform: uppercase; }
 .tab:hover { color: var(--fg); }
@@ -128,20 +147,31 @@ kbd { font: inherit; border: 1px solid var(--line); padding: 1px 5px; color: var
 .text-input:focus { border-color: var(--amber); outline: none; }
 .text-input.code { font-family: var(--font-mono); letter-spacing: .12em; text-transform: uppercase; max-width: 220px; }
 .editor, .settings { display: flex; flex-direction: column; gap: 16px; }
-/* Settings sub-tabs: smaller than the menu tabs, and the pane title is the tab itself. */
+/* Settings sub-tabs: smaller than the menu tabs. Every group in a pane keeps its own heading. */
 .tabs.sub { flex-wrap: wrap; border-bottom: 1px solid var(--line); }
 .tabs.sub .tab { padding: 8px 12px 10px; font-size: 11px; }
 .settings-pane { display: flex; flex-direction: column; gap: 16px; }
 .settings-pane[hidden] { display: none; }
-.settings.tabbed .settings-pane > .group:first-child > .group-title { display: none; }
-.settings.tabbed .settings-pane > .group:first-child { border-top: 0; padding-top: 0; }
-.group { border: 0; margin: 0; padding: 14px 0 0; border-top: 1px solid var(--line); display: flex; flex-direction: column; gap: 10px; }
+.settings-pane > .group:first-child { border-top: 0; padding-top: 0; }
+.group { border: 0; margin: 0; padding: 14px 0 0; border-top: 1px solid var(--line); display: flex; flex-direction: column; gap: 10px; min-width: 0; }
 .group-title { padding: 0 0 4px; font: 500 11px/1 var(--font-mono); letter-spacing: .12em; text-transform: uppercase; color: var(--amber); }
-.field { display: grid; grid-template-columns: 110px minmax(0, 1fr); gap: 4px 12px; align-items: center; }
+.field { display: grid; grid-template-columns: 130px minmax(0, 1fr); gap: 4px 12px; align-items: center; }
 .field[hidden] { display: none; }
 .field.off { opacity: .45; }
-.field-label { font: 500 11px/1.2 var(--font-mono); letter-spacing: .08em; text-transform: uppercase; color: var(--muted); }
+.field.top { align-items: start; }
+.field.top > .field-label { padding-top: 8px; }
+.field-label { font: 500 11px/1.2 var(--font-mono); letter-spacing: .08em; text-transform: uppercase; color: var(--muted); overflow-wrap: anywhere; }
 .field-hint { grid-column: 2; font-size: 12px; color: var(--muted); }
+.field-hint code { font: 500 11.5px/1 var(--font-mono); color: var(--fg2); background: #0e131c; border: 1px solid var(--line); padding: 1px 4px; }
+.field.off input:disabled, .select:disabled { cursor: not-allowed; }
+/* "Erweitert": a legend that is a button, folding the group body. */
+.disclosure { all: unset; cursor: pointer; display: inline-flex; align-items: center; gap: 8px; font: inherit; letter-spacing: inherit; text-transform: inherit; color: inherit; }
+.disclosure:focus-visible { outline: 2px solid var(--amber); outline-offset: 3px; }
+.disclosure::before { content: "▸"; display: inline-block; width: 1em; }
+.disclosure[aria-expanded="true"]::before { content: "▾"; }
+.disclosure:hover { color: #ffc24f; }
+.group-body { display: flex; flex-direction: column; gap: 10px; }
+.group-body[hidden] { display: none; }
 .field > * { justify-self: start; }
 .field > .text-input { width: 100%; }
 .field > .slider { justify-self: stretch; }
@@ -213,7 +243,8 @@ kbd { font: inherit; border: 1px solid var(--line); padding: 1px 5px; color: var
   overflow-y: auto; z-index: 4; background: var(--panel); border: 1px solid var(--line); padding: 14px 16px; display: flex; flex-direction: column; gap: 12px; }
 .bench-head { display: flex; align-items: center; justify-content: space-between; }
 .bench-title { margin: 0; font: 800 1.6rem/1 var(--font-display); text-transform: uppercase; letter-spacing: .03em; }
-.bench .field { grid-template-columns: 90px minmax(0, 1fr); }
+.bench .field { grid-template-columns: 1fr; }
+.bench .field-hint { grid-column: 1; }
 .bench .slider input { max-width: none; min-width: 0; }
 .trace-out { width: 100%; height: 140px; margin-top: 8px; font: 500 .7rem/1.35 var(--font-mono); background: rgba(0, 0, 0, .35); color: #c9d2e3; border: 1px solid var(--line); resize: vertical; }
 

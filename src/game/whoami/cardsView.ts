@@ -2,11 +2,25 @@ import * as THREE from 'three';
 import { COLORS, WHOAMI } from '../../config';
 import { el } from '../../ui/dom';
 import { Placer, trackSize, type Size } from '../../ui/stageSize';
-import { settings } from '../../ui/store';
 import type { Players } from '../players';
 
 /** Very wide or tall pictures are clamped, so a card never turns into a strip. */
 const ASPECT = { min: 0.6, max: 1.7 };
+/** Border width of `.card-tag` in style.css (both sides count in the box width). */
+const BORDER = 3;
+
+/** Card height in px for box width `px`: picture (box minus borders, at `aspect`), name strip (1.25 line + .15em padding twice), borders. */
+export function cardHeight(px: number, aspect: number, font: number): number {
+  return (px - 2 * BORDER) / aspect + font * 1.55 + 2 * BORDER;
+}
+
+/**
+ * Does the card, bottom-centred at (x, y) with size w * h, touch the viewport 0..vw x 0..vh? The card grows
+ * up and out sideways from its anchor, so only the whole rectangle being outside hides it.
+ */
+export function cardOnScreen(x: number, y: number, w: number, h: number, vw: number, vh: number): boolean {
+  return x + w / 2 > 0 && x - w / 2 < vw && y > 0 && y - h < vh;
+}
 
 /**
  * Cards above the heads (backlog B1): HTML on top of the canvas, so they are sharp, never glow,
@@ -88,7 +102,16 @@ export class CardsView {
       this.players.cardPos(seat, this.v);
       const dist = this.v.distanceTo(this.cam);
       this.v.project(this.camera);
-      if (this.v.z > 1 || Math.abs(this.v.x) > 1.3 || Math.abs(this.v.y) > 1.3) {
+      // A hidden card ('?') is square; its stored aspect is reset below.
+      const aspect = card === '?' ? 1 : t.aspect;
+      // Same area for every aspect ratio, so no card looks more important than another.
+      const px = Math.max(28, (WHOAMI.cardSizeM * focal) / dist) * Math.sqrt(aspect);
+      const font = Math.round(Math.max(9, Math.min(16, px / 9)) * 2) / 2;
+      // The anchor is the card's bottom edge, just above the head.
+      const ax = ((this.v.x + 1) / 2) * w;
+      const ay = ((1 - this.v.y) / 2) * h;
+      // Hidden only behind the camera or when the whole card is off screen (the anchor alone says nothing for big cards).
+      if (this.v.z > 1 || !cardOnScreen(ax, ay, px, cardHeight(px, aspect, font), w, h)) {
         if (!t.box.hidden) t.box.hidden = true;
         return;
       }
@@ -108,14 +131,11 @@ export class CardsView {
       }
       const name = nameOf(seat);
       if (t.name.textContent !== name) t.name.textContent = name;
-      // Same area for every aspect ratio, so no card looks more important than another.
-      const px = Math.max(28, (WHOAMI.cardSizeM * settings.cardScale * focal) / dist) * Math.sqrt(t.aspect);
       // Negated so the first frame (t.px still NaN) writes too.
       if (!(Math.abs(px - t.px) <= 0.5)) {
         t.px = px;
         t.box.style.width = `${px.toFixed(1)}px`;
       }
-      const font = Math.round(Math.max(9, Math.min(16, px / 9)) * 2) / 2;
       if (font !== t.font) {
         t.font = font;
         t.box.style.fontSize = `${font}px`;
@@ -125,8 +145,7 @@ export class CardsView {
         t.z = z;
         t.box.style.zIndex = String(z);
       }
-      // The anchor is the card's bottom edge, just above the head.
-      t.placer.place(((this.v.x + 1) / 2) * w, ((1 - this.v.y) / 2) * h);
+      t.placer.place(ax, ay);
     });
   }
 }

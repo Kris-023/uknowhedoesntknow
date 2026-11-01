@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { SAGS } from '../src/config';
 import { SagsGame } from '../src/game/sagsanders/game';
 import { guessersOf, parseIntent, SagsHost, watchersOf } from '../src/game/sagsanders/logic';
-import { LocalGameRoom, type Member } from '../src/game/minigame';
+import { LocalGameRoom, Recovery, type Member } from '../src/game/minigame';
 import { RoomLists } from '../src/game/roomLists';
 import { normWord, parseCard } from '../src/words/custom';
 import { builtinDeck, drawCard, wordPool } from '../src/words';
@@ -170,7 +170,7 @@ describe("Sag's anders rules", () => {
 
 describe("Sag's anders over the network", () => {
   const room = (n: number) => {
-    const members: Member[] = Array.from({ length: n }, (_, i) => ({ id: `p${i}`, seat: [0, 2, 1, 3][i], name: `P${i}` }));
+    const members: Member[] = Array.from({ length: n }, (_, i) => ({ id: `p${i}`, seat: [2, 0, 1, 3][i], name: `P${i}` }));
     const r = new LocalGameRoom(members);
     const decks = () => ['normal', 'custom'] as const;
     // Own words travel through the shared room lists, one instance per client like in main.ts.
@@ -222,5 +222,152 @@ describe("Sag's anders over the network", () => {
     for (const g of games) if (g !== explainer) expect(g.seen).toBeNull();
     // Submissions from the room are in the explainer's pool, but not the guessers' own ones first.
     expect(lists[games.indexOf(explainer)].cards().length).toBe(3);
+  });
+});
+
+describe("Sag's anders after a reload", () => {
+  const ROOM = ['p0', 'p1', 'p2', 'p3'];
+  const seatOf = (id: string) => [1, 2, 0, 3][ROOM.indexOf(id.slice(0, 2))];
+  const opts = { decks: () => ['normal' as const], turnS: () => 60, teams: () => true, cards: () => [], pidOf: () => undefined };
+  const setup = () => {
+    // Every member also has a "b" twin: the same person after a reload (new id, same seat), not in the room yet.
+    const room = new LocalGameRoom([...ROOM, ...ROOM.map((id) => `${id}b`)].map((id) => ({ id, seat: seatOf(id), name: id.toUpperCase() })));
+    room.roster.length = ROOM.length;
+    let host = 'p0';
+    const make = (id: string) => new SagsGame({ ...room.net(id), isHost: () => host === id, hostId: () => host }, opts);
+    const games: Record<string, SagsGame> = Object.fromEntries(ROOM.map((id) => [id, make(id)]));
+    let now = 1000;
+    const run = (ms = 0) => {
+      now += ms;
+      for (let k = 0; k < 4; k++) {
+        Object.values(games).forEach((g) => g.tick(now));
+        room.pump();
+      }
+    };
+    /** `id` reloads: gone from the room, a new client (fresh game) comes back with the twin id and the same seat. */
+    const reload = (id: string) => {
+      const twin = `${id}b`;
+      room.roster.splice(
+        room.roster.findIndex((m) => m.id === id),
+        1,
+        { id: twin, seat: seatOf(id), name: id.toUpperCase() },
+      );
+      delete games[id];
+      games[twin] = make(twin);
+      return twin;
+    };
+    return { room, games, run, reload, make, host: (id?: string) => (id ? (host = id) : games[host]) };
+  };
+
+  /** A started round: p1 explains (table order), p2 and p3 watch for fouls, p0 guesses with p1. */
+  const turn = () => {
+    const t = setup();
+    t.games.p0.start();
+    t.run();
+    t.games.p1.begin();
+    t.run();
+    expect(t.games.p0.state).toMatchObject({ phase: 'turn', explainer: 'p1' });
+    expect(t.games.p1.hand).not.toBeNull();
+    expect(t.games.p2.seen?.card.word).toBe(t.games.p1.hand!.card.word);
+    return t;
+  };
+
+  it('a watcher who reloads gets the current card back from the explainer, and stops asking', () => {
+    const t = turn();
+    const word = t.games.p1.hand!.card.word;
+    const w = t.reload('p3');
+    (t.host() as SagsGame).rejoin('p3', w);
+    t.run();
+    expect(t.games[w].state?.players).toContain(w);
+    expect(t.games[w].seen).toBeNull();
+    // The card is asked for after a short grace, not at once.
+    t.run(500);
+    expect(t.games[w].seen).toBeNull();
+    t.run(2000);
+    expect(t.games[w].seen?.card.word).toBe(word);
+    expect(t.games[w].seen?.no).toBe(t.games[w].state!.cardNo);
+    expect(t.games[w]['rec'].pending('sa:card')).toBe(false);
+    // And can call a foul on it.
+    t.games[w].foul();
+    t.run();
+    expect(t.games.p1.state!.log[0]).toMatchObject({ result: 'foul', foulBy: w });
+  });
+
+  it('the guessing teammate gets nothing, however they ask', () => {
+    const t = turn();
+    let got: unknown = 'nothing';
+    const peek = new Recovery(t.room.net('p0'));
+    peek.ask('sa:card', { no: t.games.p1.state!.cardNo }, { onReply: (d) => (got = d) });
+    t.run();
+    expect(got).toBe('nothing');
+    expect(t.games.p0.seen).toBeNull();
+  });
+
+  it('a watcher keeps asking until the card turns up', () => {
+    const t = turn();
+    const w = t.reload('p3');
+    (t.host() as SagsGame).rejoin('p3', w);
+    // The explainer can't answer for a while: the asks go unanswered.
+    const rec = t.games.p1['rec'];
+    const answer = rec['answers'].get('sa:card')!;
+    rec['answers'].delete('sa:card');
+    t.run();
+    t.run(2000);
+    t.run(2000);
+    expect(t.games[w].seen).toBeNull();
+    expect(t.games[w]['rec'].pending('sa:card')).toBe(true);
+    rec.answer('sa:card', answer);
+    t.run(2000);
+    expect(t.games[w].seen).not.toBeNull();
+  });
+
+  it('an explainer who reloads draws a new card for the same turn and the watchers follow', () => {
+    const t = turn();
+    const e = t.reload('p1');
+    (t.host() as SagsGame).rejoin('p1', e);
+    t.run();
+    expect(t.games.p0.state).toMatchObject({ phase: 'turn', explainer: e });
+    const hand = t.games[e].hand!;
+    expect(hand.no).toBe(t.games[e].state!.cardNo);
+    for (const id of ['p2', 'p3']) expect(t.games[id].seen?.card.word, id).toBe(hand.card.word);
+    expect(t.games.p0.seen).toBeNull();
+    // The turn goes on: a guessed word scores for the team and the next card comes.
+    t.games[e].got(null);
+    t.run();
+    expect(t.games.p0.state!.scores[e]).toBe(SAGS.teamGot);
+    expect(t.games[e].hand!.no).toBe(t.games[e].state!.cardNo);
+    expect(t.games.p2.seen?.no).toBe(t.games[e].state!.cardNo);
+  });
+
+  it('a host who reloads mid-round: the next one takes over from the public state and the round continues', () => {
+    const t = turn();
+    t.games.p1.got(null);
+    t.run();
+    const before = t.games.p2.state!;
+    expect(before.scores.p1).toBe(SAGS.teamGot);
+    // p0 (host) leaves; p2 is the longest-present player now.
+    t.room.roster.splice(0, 1);
+    t.host('p2');
+    delete t.games.p0;
+    t.run();
+    const after = t.games.p2.state!;
+    expect(after).toMatchObject({ round: before.round, phase: 'turn', explainer: 'p1', cardNo: before.cardNo });
+    expect(after.scores.p1).toBe(SAGS.teamGot);
+    expect(t.games.p3.seen?.no).toBe(after.cardNo);
+    // p0 comes back as a new client; the new host keeps their place.
+    t.room.roster.push({ id: 'p0b', seat: 1, name: 'P0' });
+    t.games.p0b = t.make('p0b');
+    t.games.p2.rejoin('p0', 'p0b');
+    t.run();
+    expect(t.games.p0b.state?.players).toContain('p0b');
+    expect(t.games.p0b.state?.players).not.toContain('p0');
+    // The round goes on under the new host: a guessed word, the next card, a foul from the other team.
+    t.games.p1.got(null);
+    t.run();
+    expect(t.games.p2.state!.scores.p1).toBe(SAGS.teamGot * 2);
+    t.games.p3.foul();
+    t.run();
+    expect(t.games.p1.state!.log.map((p) => p.result)).toEqual(['got', 'got', 'foul']);
+    expect(t.games.p1.hand!.no).toBe(t.games.p1.state!.cardNo);
   });
 });

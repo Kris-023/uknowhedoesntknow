@@ -1,21 +1,30 @@
 import * as THREE from 'three';
-import { CAMERA, SPEED } from '../config';
+import { CAMERA, SHAKE, SPEED } from '../config';
 import type { SharedClock } from '../core/clock';
-import { noise1, shake } from '../core/motion';
+import { comfortOf, noise1, shake, shakeAmplitude } from '../core/motion';
 import { Npcs } from '../game/npcs';
 import { Players } from '../game/players';
 import { mapDef } from '../maps';
 import type { MapDef, MapId, MapScene } from '../maps/types';
 import { trainDistance, type Train } from '../net/protocol';
+import { setTableSeats } from '../game/tableOrder';
 import { collectResources, disposeExcept } from './dispose';
+import { streakSpeed } from './streakSpeed';
 
 /** Overview of the map, or first person from the head of the local player. */
 export type CamMode = 'wagon' | 'pov';
 
+/** The comfort settings the scene reads each frame (a subset of the room settings). */
 export interface WorldParams {
-  shakeMm: number;
-  shakeOn: boolean;
+  /** Weniger Bewegung: no camera shake. */
+  reduceMotion: boolean;
+  /** Weniger Flackern: steady lights. */
+  reduceFlicker: boolean;
+  /** Stromausfälle überblenden: only effective with reduceFlicker. */
+  fadeBlackouts: boolean;
 }
+
+const CALM: WorldParams = { reduceMotion: true, reduceFlicker: false, fadeBlackouts: false };
 
 const FORWARD = new THREE.Vector3(0, 0, 1);
 
@@ -52,8 +61,9 @@ export class World {
     this.map = this.def.build(this.scene, clock.seed);
     // People come after the map: baked copies (the hypertrain's neighbour coaches) must not contain them.
     this.players = new Players(this.map.root, clock.seed, this.map.seats);
+    setTableSeats(this.map.seats);
     this.npcs = new Npcs(this.map.root, clock.seed, this.map.npcs);
-    this.update(0, 0, { shakeMm: 0, shakeOn: false });
+    this.update(0, 0, CALM);
   }
 
   /**
@@ -68,7 +78,7 @@ export class World {
     this.zoom = prev.zoom;
     this.zoomK = prev.zoomK;
     this.players.adopt(prev.players);
-    this.update(this.clock.now(), 0, { shakeMm: 0, shakeOn: false });
+    this.update(this.clock.now(), 0, CALM);
   }
 
   /** Free this world's GPU memory, except what `next` (the world replacing it) uses too. */
@@ -85,13 +95,13 @@ export class World {
     const kmh = this.train.kmh;
     const sf = kmh / SPEED.maxKmh;
     this.distance = trainDistance(this.train, t) * SPEED.visualScale;
-    const amp = p.shakeOn ? (p.shakeMm / 1000) * this.map.shake : 0;
-    this.map.update({ t, dt, kmh, distance: this.distance, blackouts: this.blackouts, forcedBlackoutAt: this.forcedBlackoutAt, camera: this.camera });
+    const amp = shakeAmplitude(p.reduceMotion, SHAKE.defaultMm, this.map.shake);
+    this.map.update({ t, dt, kmh, distance: this.distance * streakSpeed(p.reduceMotion), blackouts: this.blackouts, forcedBlackoutAt: this.forcedBlackoutAt, comfort: comfortOf(p), camera: this.camera });
     this.players.update(t, dt, this.cam === 'pov');
     this.npcs.update(t, dt, amp);
     this.zoomK += ((this.cam === 'pov' ? this.zoom : 0) - this.zoomK) * (1 - Math.exp(-dt * CAMERA.zoomRate));
     // Only moving maps widen the view with speed.
-    this.updateCamera(t, amp, sf * (this.map.speedFov ?? 0));
+    this.updateCamera(t, amp, sf * streakSpeed(p.reduceMotion) * (this.map.speedFov ?? 0));
   }
 
   /** Current POV field-of-view factor (1 = normal); mouse sensitivity scales with it. */

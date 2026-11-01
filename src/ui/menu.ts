@@ -12,6 +12,7 @@ import { settings, updateSettings } from './store';
 import { ListsView } from './listsView';
 import { deckLock } from '../words/content';
 import { mapDef, mapList } from '../maps';
+import { byTableOrder } from '../game/tableOrder';
 import type { MapId } from '../maps/types';
 
 export type LobbyChoice = { kind: 'create'; code: string; opts: RoomOpts } | { kind: 'join'; code: string } | { kind: 'bench' };
@@ -350,6 +351,8 @@ export class PauseMenu extends MenuShell {
   volume: VolumeControl | null = null;
   /** Host: change the room settings for everyone. */
   onRoomOpts: ((o: RoomOpts) => void) | null = null;
+  /** Host: hand the host role to this player (the button in the player list). */
+  onHandover: ((id: string) => boolean) | null = null;
   /** Minigame block in the game tab (start/end a round), built by the game. */
   gameControls: (() => HTMLElement | null) | null = null;
   /** Solo: switch the map right here (in a room it's part of the host's room settings). */
@@ -416,6 +419,45 @@ export class PauseMenu extends MenuShell {
     return box;
   }
 
+  /**
+   * "Host übergeben" next to another player, host only. The click is easy to hit by accident, so the
+   * first one only asks "Wirklich?" for a few seconds; the second hands the role over.
+   */
+  private handoverButton(id: string, name: string, alone: boolean): HTMLElement {
+    const label = 'Host übergeben';
+    const b = el('button', 'btn small ghost', label);
+    b.type = 'button';
+    b.setAttribute('aria-label', `Host an ${name || 'Mitspieler'} übergeben`);
+    if (alone) b.style.marginLeft = 'auto';
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    b.addEventListener('click', () => {
+      if (timer === undefined) {
+        b.textContent = 'Wirklich?';
+        b.classList.add('danger');
+        timer = setTimeout(() => {
+          timer = undefined;
+          b.textContent = label;
+          b.classList.remove('danger');
+        }, 4000);
+        return;
+      }
+      clearTimeout(timer);
+      timer = undefined;
+      b.classList.remove('danger');
+      if (!this.onHandover?.(id)) {
+        // Not possible right now (the player just left, or a handover is still running).
+        b.textContent = label;
+        flash(b, 'Nicht möglich');
+        return;
+      }
+      b.disabled = true;
+      b.textContent = 'Übergebe …';
+      // Focus inside the panel blocks the refresh that shows the new roles.
+      b.blur();
+    });
+    return b;
+  }
+
   /** Everyone in a room sees where it plays; only the host changes it (room settings). */
   private mapLine(): HTMLElement {
     const m = mapDef(this.mapId);
@@ -473,13 +515,14 @@ export class PauseMenu extends MenuShell {
       const codeRow = el('div', 'row');
       codeRow.append(el('span', 'room-code', formatRoomCode(r.code)), copy);
       const list = el('ul', 'players');
-      for (const p of [...r.players].sort((a, b) => NET.seatOrder.indexOf(a.seat) - NET.seatOrder.indexOf(b.seat))) {
+      for (const p of [...r.players].sort((a, b) => byTableOrder(a.seat, b.seat))) {
         const li = el('li');
         li.style.setProperty('--c', `#${COLORS.players[p.seat].toString(16).padStart(6, '0')}`);
         li.append(el('span', 'pname', p.name || 'Ohne Namen'));
         if (p.me) li.append(el('span', 'tag', 'Du'));
         if (p.host) li.append(el('span', 'tag', 'Host'));
         if (!p.me && this.volume) li.append(this.volSlider(p.id, p.name));
+        if (!p.me && r.role === 'host' && this.onHandover) li.append(this.handoverButton(p.id, p.name, !this.volume));
         list.append(li);
       }
       const meta = [`${r.players.length}/${NET.maxPlayers} im Raum`, r.role === 'host' ? 'du bist Host' : 'du bist Gast'];
@@ -510,11 +553,12 @@ export class PauseMenu extends MenuShell {
     const keys = [
       ['Maus', 'umsehen (erst ins Bild klicken)'],
       ['Rechte Maustaste', 'heranzoomen'],
+      ['Mittlere Maustaste', 'Maus freigeben'],
       ['M', 'Mikro stumm an/aus'],
       ['V', 'halten zum Sprechen (bei Push-to-talk)'],
       ['G', 'Wer bin ich? starten (Host)'],
       ['F / R / P', 'fragen, raten, weitergeben (wenn du dran bist)'],
-      ['1 / 2 / 3', 'Ja, Nein, Weiß nicht'],
+      ['1 / 2 / 3 oder A / S / D', 'Ja, Nein, Weiß nicht'],
       ['Esc', 'dieses Menü'],
     ];
     for (const [k, v] of keys) help.append(el('dt', '', k), el('dd', '', v));

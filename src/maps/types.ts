@@ -1,4 +1,5 @@
 import type * as THREE from 'three';
+import type { Comfort } from '../core/motion';
 
 // A map is the place the players sit in: its geometry, light, extras and sounds. Everything in it
 // is a pure function of the shared clock and the room seed, like the hypertrain before it, so
@@ -40,13 +41,15 @@ export interface FrameCtx {
   /** Room setting: random power failures; and a forced one (debug/host) at this clock time. */
   blackouts: boolean;
   forcedBlackoutAt: number;
+  /** Comfort settings: how light is drawn (steady / faded), never what happens. `power` stays the raw supply. */
+  comfort: Comfort;
   camera: THREE.Camera;
 }
 
 export interface MapScene {
   /** Parent of everything the world adds (people sit in this space). */
   readonly root: THREE.Object3D;
-  /** The four player seats, in seat-index order (0 and 1 face each other). */
+  /** The four player seats, in seat-index order. Layout differs per map; turn order comes from game/tableOrder.ts, not from the index. */
   readonly seats: readonly Spot[];
   readonly npcs: readonly NpcSpot[];
   /** Where the Schaffner (or the map's equivalent) stands to tell seat `i` off; feet on the floor. */

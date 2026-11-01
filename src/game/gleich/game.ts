@@ -4,7 +4,9 @@ import { content } from '../../words/content';
 import { questionPool } from '../../words/lists';
 import type { DeckId } from '../../words/types';
 import type { GameNet, Minigame } from '../minigame';
-import { cleanWord, commitOf, GleichHost, newSalt, parseIntent, verifyReveal, type GleichState, type Intent, type Words } from './logic';
+import { byTableOrder } from '../tableOrder';
+import { tabStore, type TabStore } from '../tabStore';
+import { cleanWord, commitOf, GleichHost, HEX64, newSalt, parseIntent, SALT, verifyReveal, type GleichState, type Intent, type Words } from './logic';
 
 const isStrings = (v: unknown): v is string[] => Array.isArray(v) && v.length <= 8 && v.every((x) => typeof x === 'string' && x.length <= 64);
 const isRecord = (v: unknown): v is Record<string, unknown> => typeof v === 'object' && v !== null && !Array.isArray(v);
@@ -17,6 +19,13 @@ function parseWords(v: unknown): Words | null {
   return out;
 }
 
+/** The ballots of a running vote, as the host broadcasts them next to its state (for a host change only). */
+function parseBallots(v: unknown): Record<string, boolean> {
+  const out: Record<string, boolean> = {};
+  if (isRecord(v)) for (const [k, b] of Object.entries(v)) if (typeof b === 'boolean') out[k] = b;
+  return out;
+}
+
 /** Shape check of the host's broadcast; the host is trusted for game decisions anyway. */
 function parseState(v: unknown): (GleichState & { sentAt: number }) | null {
   if (!isRecord(v)) return null;
@@ -26,7 +35,9 @@ function parseState(v: unknown): (GleichState & { sentAt: number }) | null {
   const words = v.words === null ? null : parseWords(v.words);
   const history = v.history.map(parseWords);
   if ((v.words !== null && !words) || history.some((h) => !h)) return null;
-  return { ...(v as unknown as GleichState), words, history: history as Words[], sentAt: v.sentAt };
+  // The ballots travel beside the state, not in it: nothing the screens read.
+  const { ballots: _ballots, ...rest } = v;
+  return { ...(rest as unknown as GleichState), words, history: history as Words[], sentAt: v.sentAt };
 }
 
 /** Room settings the game reads when it draws questions. */
@@ -44,6 +55,25 @@ interface Secret {
   commit: string;
 }
 
+/** What this tab keeps of my locked word, so a reload doesn't lose it (key `word.<round>`). */
+interface StoredWord {
+  tryNo: number;
+  word: string;
+  salt: string;
+  commit: string;
+}
+
+const isStoredWord = (v: unknown): v is StoredWord =>
+  isRecord(v) && Number.isInteger(v.tryNo) && cleanWord(v.word) === v.word && typeof v.salt === 'string' && SALT.test(v.salt) && typeof v.commit === 'string' && HEX64.test(v.commit);
+
+/** The word typed but not yet locked (key `draft.<round>`). */
+interface Draft {
+  tryNo: number;
+  text: string;
+}
+
+const isDraft = (v: unknown): v is Draft => isRecord(v) && Number.isInteger(v.tryNo) && typeof v.text === 'string';
+
 interface RawReveal {
   round: number;
   tryNo: number;
@@ -55,6 +85,10 @@ interface RawReveal {
  * "Gleich gedacht" on one client. The host part (rules, votes, points) runs only on the host. A
  * word leaves its writer only as a commitment until the host calls the reveal; then everybody
  * sends {word, salt} to everybody and every client checks it against the commitment in the state.
+ *
+ * Reload (F5): the typed draft and the locked word with its salt are kept in this tab (`tabStore`)
+ * and come back with the next state, so the word can still be revealed. A running vote's ballots
+ * ride along the host's state to the others, so a new host can go on with it (never shown).
  */
 export class GleichGame implements Minigame {
   state: GleichState | null = null;
@@ -77,10 +111,20 @@ export class GleichGame implements Minigame {
   private asked = new Set<string>();
   private goneSince = new Map<string, number>();
   private dropAsked = new Map<string, number>();
+  /** Ballots of the host's running vote as last broadcast; only read when this client becomes the host. */
+  private ballots: Record<string, boolean> = {};
+  private draftMem: (Draft & { round: number }) | null = null;
+  /** The try I looked for a stored word of (once per try), the round whose keys I hold, the end I cleaned up after. */
+  private restoredKey = '';
+  private storedRound: number | null = null;
+  private cleanedKey = '';
+  private relockAt = -Infinity;
 
   constructor(
     private net: GameNet,
     private room: GleichRoom,
+    /** This tab's private store, looked up at each use (the room code in the address may come after the game). Tests give each client its own. */
+    private tab: () => TabStore = () => tabStore('gleich'),
   ) {
     net.onMessage((t, d, f) => this.onMessage(t, d, f));
   }
@@ -113,16 +157,50 @@ export class GleichGame implements Minigame {
     return v ? Math.max(0, (v.deadline - (Date.now() + this.hostSkew)) / 1000) : 0;
   }
 
-  /** My locked word of this try, if I hold the secret to it (after a reload I don't, and can write again). */
+  private get store(): TabStore {
+    return this.tab();
+  }
+
+  /**
+   * My locked word of this try, if I hold the secret to it (kept over a reload; without it I write
+   * again). While writing the secret counts even if the host hasn't got my commitment (yet).
+   */
   get myWord(): string | null {
     const s = this.state;
     const k = this.secret;
-    return s && k && k.round === s.round && k.tryNo === s.tryNo && s.commits[this.selfId] === k.commit ? k.word : null;
+    if (!s || !k || k.round !== s.round || k.tryNo !== s.tryNo) return null;
+    return s.phase === 'write' || s.commits[this.selfId] === k.commit ? k.word : null;
+  }
+
+  /** What I typed in this try without locking it; survives a reload. */
+  get draft(): string {
+    const s = this.state;
+    if (!s) return '';
+    let d = this.draftMem;
+    if (!d || d.round !== s.round) {
+      const st = this.store.get(`draft.${s.round}`, isDraft);
+      d = st ? { ...st, round: s.round } : null;
+    }
+    return d && d.tryNo === s.tryNo ? [...d.text].slice(0, GLEICH.maxWordLen).join('') : '';
+  }
+
+  setDraft(text: string): void {
+    const s = this.state;
+    if (!s || s.phase !== 'write') return;
+    if (!text) return this.clearDraft(s.round);
+    this.draftMem = { round: s.round, tryNo: s.tryNo, text };
+    this.store.set(`draft.${s.round}`, { tryNo: s.tryNo, text });
+  }
+
+  private clearDraft(round: number): void {
+    this.draftMem = null;
+    this.store.remove(`draft.${round}`);
   }
 
   get iVoted(): boolean {
     const s = this.state;
-    return !!s && this.votedKey === `${s.round}|${s.tryNo}|${s.undo}`;
+    // Also from the public list: after a reload my own mark is gone, but the host remembers I voted.
+    return !!s && (this.votedKey === `${s.round}|${s.tryNo}|${s.undo}` || !!s.vote?.voters.includes(this.selfId));
   }
 
   nameOf(id: string | null): string {
@@ -152,7 +230,7 @@ export class GleichGame implements Minigame {
 
   start(): void {
     if (!this.isHost) return;
-    const order = [...this.net.members()].sort((a, b) => NET.seatOrder.indexOf(a.seat) - NET.seatOrder.indexOf(b.seat)).map((m) => m.id);
+    const order = [...this.net.members()].sort((a, b) => byTableOrder(a.seat, b.seat)).map((m) => m.id);
     if (order.length < 2) return;
     if (this.host) this.scores = { ...this.host.state.scores };
     const { normal, nsfw } = content().gleich;
@@ -197,6 +275,9 @@ export class GleichGame implements Minigame {
     if (!now || now.phase !== 'write' || now.round !== s.round || now.tryNo !== s.tryNo) return false;
     // Before the intent: as host my own intent can already end the writing, and the reveal needs the secret.
     this.secret = { round: s.round, tryNo: s.tryNo, word, salt, commit };
+    this.relockAt = performance.now();
+    this.store.set(`word.${s.round}`, { tryNo: s.tryNo, word, salt, commit } satisfies StoredWord);
+    this.clearDraft(s.round);
     this.toHost({ a: 'lock', c: commit });
     this.emit();
     return true;
@@ -274,12 +355,13 @@ export class GleichGame implements Minigame {
     if (this.host && !this.isHost) this.host = null;
     // A new host (the old one left) takes over a running round from its public state.
     if (!this.host && this.isHost && this.state) {
-      this.host = GleichHost.fromState(this.state);
+      this.host = GleichHost.fromState(this.state, Date.now(), this.hostSkew, this.ballots);
       this.scores = { ...this.state.scores };
       this.host.present = this.hereSet();
       for (const [id, w] of this.verified) this.host.reveal(id, w, Date.now());
       this.publish(now);
     }
+    this.relock(now);
     if (!this.host) return;
     const t = Date.now();
     const here = this.hereSet();
@@ -317,6 +399,7 @@ export class GleichGame implements Minigame {
       const s = parseState(data);
       if (s) {
         this.hostSkew = s.sentAt - Date.now();
+        this.ballots = s.vote ? parseBallots((data as Record<string, unknown>).ballots) : {};
         this.applyState(s);
       }
     } else if (type === 'gg:drop') {
@@ -342,8 +425,53 @@ export class GleichGame implements Minigame {
     if (!this.host) return;
     this.lastPublish = now;
     const s = { ...structuredClone(this.host.state), sentAt: Date.now() };
-    this.net.send('gg:state', s);
+    // The ballots go next to the state: the others keep them for a host change and never show them.
+    this.net.send('gg:state', s.vote ? { ...s, ballots: this.host.ballots() } : s);
     this.applyState(s);
+  }
+
+  /** The secret is mine alone; the commitment in the state is what the others hold. */
+  private get lockedSecret(): Secret | null {
+    const s = this.state;
+    const k = this.secret;
+    return s && k && k.round === s.round && k.tryNo === s.tryNo ? k : null;
+  }
+
+  /**
+   * The host doesn't hold my commitment (it dropped it when I came back under a new id) but I still
+   * hold the word: lock again with the same commitment. Not more than every 2 s.
+   */
+  private relock(now: number): void {
+    const s = this.state;
+    const k = this.lockedSecret;
+    if (!s || !k || s.phase !== 'write' || !s.players.includes(this.selfId) || s.commits[this.selfId] || now - this.relockAt < 2000) return;
+    this.relockAt = now;
+    this.toHost({ a: 'lock', c: k.commit });
+  }
+
+  /** This tab's private state follows the state: the word and draft of a reload come back, finished rounds are cleaned up. */
+  private syncStore(s: GleichState, key: string): void {
+    if (this.storedRound !== null && this.storedRound !== s.round) {
+      this.store.remove(`word.${this.storedRound}`);
+      this.clearDraft(this.storedRound);
+    }
+    this.storedRound = s.round;
+    if (s.phase === 'done') {
+      // Nothing of this round is needed any more (a taken-back result lands on shown words).
+      const end = `${s.round}|${s.undo}`;
+      if (this.cleanedKey !== end) {
+        this.cleanedKey = end;
+        this.store.clear();
+        this.draftMem = null;
+      }
+      return;
+    }
+    this.cleanedKey = '';
+    if (this.restoredKey === key) return;
+    this.restoredKey = key;
+    if (this.lockedSecret) return;
+    const w = this.store.get(`word.${s.round}`, isStoredWord);
+    if (w && w.tryNo === s.tryNo) this.secret = { round: s.round, ...w };
   }
 
   private applyState(s: GleichState): void {
@@ -356,6 +484,8 @@ export class GleichGame implements Minigame {
       this.raw.clear();
     }
     this.state = s;
+    this.syncStore(s, key);
+    this.relock(performance.now());
     // The host called the reveal: my word goes to everyone, with the salt that proves it is the one I locked.
     const k = this.secret;
     if (s.phase === 'reveal' && k && k.round === s.round && k.tryNo === s.tryNo && s.commits[this.selfId] === k.commit && this.sentKey !== key) {

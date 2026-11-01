@@ -25,15 +25,11 @@ export function wgSound(kit: SoundKit, seed: number): MapSound {
   fridgeOsc.connect(new BiquadFilterNode(ctx, { type: 'lowpass', frequency: 130 })).connect(fridge).connect(kit.bed);
   fridgeOsc.start();
 
-  // TV: hiss for snow, a thin test tone for the test card.
+  // TV: hiss for snow.
   const hissSrc = new AudioBufferSourceNode(ctx, { buffer: kit.noise, loop: true });
   const hiss = new GainNode(ctx, { gain: 0 });
   hissSrc.connect(new BiquadFilterNode(ctx, { type: 'bandpass', frequency: 3800, Q: 0.5 })).connect(hiss).connect(kit.bed);
   hissSrc.start();
-  const toneOsc = new OscillatorNode(ctx, { type: 'sine', frequency: 1000 });
-  const tone = new GainNode(ctx, { gain: 0 });
-  toneOsc.connect(tone).connect(kit.bed);
-  toneOsc.start();
 
   // Through the ceiling: knocks and the shout lose their highs.
   const ceiling = new BiquadFilterNode(ctx, { type: 'lowpass', frequency: 900, Q: 0.6 });
@@ -176,7 +172,6 @@ export function wgSound(kit: SoundKit, seed: number): MapSound {
 
       const snow = tvSnow(t, seed);
       hiss.gain.setTargetAtTime(snow ? 0.006 * power : 0, now, 0.05);
-      tone.gain.setTargetAtTime(snow ? 0 : 0.0018 * power, now, 0.05);
 
       const slot = Math.floor(t / CLINK_SLOT);
       const clinkAt = slot * CLINK_SLOT + 0.5 + hash01(seed, slot, 82) * 5.5;

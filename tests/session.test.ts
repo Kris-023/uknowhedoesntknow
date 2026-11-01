@@ -4,6 +4,7 @@ import type { PersonState } from '../src/characters/person';
 import { SharedClock } from '../src/core/clock';
 import { mulberry32 } from '../src/core/rng';
 import { parseOpts, parseState, parseWelcome, trainDistance } from '../src/net/protocol';
+import { Recovery, sessionNet } from '../src/game/minigame';
 import { Session } from '../src/net/session';
 import { MemoryHub } from '../src/net/transport';
 
@@ -36,6 +37,42 @@ describe('Session', () => {
       expect(p.s.roster.size).toBe(3);
       expect(p.s.roster.get('ccc')!.state.name).toBe('P3');
     }
+  });
+
+  it('a seat order set from the map decides who fills which seat, and the default stays', () => {
+    const fill = (order?: number[]) => {
+      const hub = new MemoryHub();
+      const t = { ms: 1_000_000 };
+      const ps = [peer(hub, 'a', true, 0, t), peer(hub, 'bb', false, 0, t), peer(hub, 'ccc', false, 0, t), peer(hub, 'dddd', false, 0, t)];
+      if (order) ps[0].s.setSeatOrder(order);
+      hub.flush();
+      return ps.map((p) => p.s.mySeat);
+    };
+    // Join messages are delivered on flush: the order is set before anyone is seated.
+    expect(fill()).toEqual([0, 2, 1, 3]);
+    expect(fill([0, 1, 2, 3])).toEqual([0, 1, 2, 3]);
+    expect(fill([0, 3, 2, 1])).toEqual([0, 3, 2, 1]);
+    // Not a permutation of the seats: ignored.
+    expect(fill([0, 1, 2])).toEqual([0, 2, 1, 3]);
+    expect(fill([0, 1, 1, 3])).toEqual([0, 2, 1, 3]);
+  });
+
+  it('the host-takeover rank follows the seat order, and a change reseats nobody', () => {
+    const hub = new MemoryHub();
+    const t = { ms: 1_000_000 };
+    const a = peer(hub, 'a', true, 0, t);
+    const b = peer(hub, 'b', false, 0, t);
+    const c = peer(hub, 'c', false, 0, t);
+    hub.flush();
+    // Default order [0,2,1,3]: b has seat 2, c seat 1 -> b ranks before c.
+    expect([b.s.mySeat, c.s.mySeat]).toEqual([2, 1]);
+    // The map (and so the order) changes mid-room: everyone keeps their seat, c now ranks before b.
+    for (const p of [a, b, c]) p.s.setSeatOrder([0, 1, 2, 3]);
+    expect([a.s.mySeat, b.s.mySeat, c.s.mySeat]).toEqual([0, 2, 1]);
+    a.s.leave();
+    hub.flush();
+    expect(c.s.role).toBe('host');
+    expect(b.s.hostId).toBe('c');
   });
 
   it('clock sync removes the wall-clock skew of a client', () => {
@@ -278,14 +315,64 @@ describe('rejoin', () => {
     expect(host.roster.has('z')).toBe(true);
   });
 
-  it('two hosts after a split: the smaller room gives way and joins the bigger one', () => {
+  it('two hosts after a split: the room that elected a new host stays, the cut-off ex-host joins it like a returning player', () => {
+    const hub = new MemoryHub();
+    const t = { ms: 1_000_000 };
+    const now = () => t.ms;
+    // 'a' is the smallest id: ids must not decide this.
+    const ex = new Session(hub.connect('a'), new SharedClock(1, now()), true, state(1), now, 'tok-a');
+    const m = new Session(hub.connect('m'), new SharedClock(2, now()), false, state(2), now, 'tok-m');
+    const n = new Session(hub.connect('n'), new SharedClock(3, now()), false, state(3), now, 'tok-n');
+    const tick = (all: Session[]) => {
+      for (let i = 0; i < 10; i++) {
+        t.ms += 300;
+        for (const x of all) x.tick();
+        hub.flush();
+      }
+    };
+    tick([ex, m, n]);
+    // a loses its connection: nothing crosses between a and the others, and each side sees the other leave.
+    const h = hub as unknown as { post(p: { from: string }, to?: string): void; nodes: Map<string, unknown> };
+    const post = h.post.bind(h);
+    let split = true;
+    h.post = (p, to) => {
+      for (const id of to ? [to] : [...h.nodes.keys()]) if (!split || (id === 'a') === (p.from === 'a')) post(p, id);
+    };
+    const links = (x: Session) => x as unknown as { onLeave(id: string): void; onJoin(id: string): void };
+    links(m).onLeave('a');
+    links(n).onLeave('a');
+    links(ex).onLeave('m');
+    links(ex).onLeave('n');
+    tick([ex, m, n]);
+    expect(ex.role).toBe('host');
+    expect(m.role).toBe('host');
+    // The room plays on without a.
+    m.setSpeed(321, 5);
+    hub.flush();
+    split = false;
+    for (const x of [m, n]) links(x).onJoin('a');
+    links(ex).onJoin('m');
+    links(ex).onJoin('n');
+    hub.flush();
+    tick([ex, m, n]);
+    expect(ex.role).toBe('client');
+    expect(m.role).toBe('host');
+    expect([ex.hostId, n.hostId]).toEqual(['m', 'm']);
+    expect(ex.train.kmh).toBe(321);
+    expect(n.train.kmh).toBe(321);
+    expect(ex.mySeat).toBe(0);
+    expect(m.roster.size).toBe(3);
+  });
+
+  it('two rooms opened under the same code (both hosts from the start): the smaller id stays, the other joins it like a returning player', () => {
     const hub = new MemoryHub();
     const t = { ms: 1_000_000 };
     const now = () => t.ms;
     const big = new Session(hub.connect('m'), new SharedClock(1, now()), true, state(1), now, 'tok-m');
     new Session(hub.connect('n'), new SharedClock(2, now()), false, state(2), now, 'tok-n');
     hub.flush();
-    const lone = new Session(hub.connect('a'), new SharedClock(3, now()), true, state(3), now, 'tok-a');
+    // Same Host-Epoche on both sides: the id decides, not the room size; 'z' is the larger id.
+    const lone = new Session(hub.connect('z'), new SharedClock(3, now()), true, state(3), now, 'tok-z');
     const status: string[] = [];
     lone.listen({ status: (s) => status.push(s) });
     hub.flush();
@@ -296,7 +383,186 @@ describe('rejoin', () => {
     expect(lone.role).toBe('client');
     expect(lone.hostId).toBe('m');
     expect(big.role).toBe('host');
-    expect(big.roster.has('a')).toBe(true);
+    expect(big.roster.has('z')).toBe(true);
     expect(lone.mySeat).toBeGreaterThanOrEqual(0);
+  });
+});
+
+describe('game messages around a rejoin', () => {
+  function room() {
+    const hub = new MemoryHub();
+    const t = { ms: 1_000_000 };
+    const now = () => t.ms;
+    const mk = (id: string, host: boolean) => new Session(hub.connect(id), new SharedClock(1, now()), host, state(id.length), now, `tok-${id}`);
+    const h = mk('h', true);
+    const b1 = mk('b1', false);
+    const c = mk('c1', false);
+    hub.flush();
+    const got = (s: Session) => {
+      const log: string[] = [];
+      s.onGame((ty, d, from) => log.push(`${from}:${ty}:${JSON.stringify(d)}`));
+      return log;
+    };
+    return { hub, t, mk, h, b1, c, got };
+  }
+
+  it('a message from a just-rejoined peer reaches a peer whose roster does not know it yet', () => {
+    const { hub, mk, c, got } = room();
+    const log = got(c);
+    hub.disconnect('b1');
+    hub.flush();
+    const b2 = mk('b2', false);
+    // Sent before the host's roster has told c1 about b2.
+    b2.sendGame('wi:card', { x: 1 }, 'c1');
+    hub.flush();
+    expect(c.roster.has('b2')).toBe(true);
+    expect(log).toEqual(['b2:wi:card:{"x":1}']);
+  });
+
+  it('a message to a peer that is not welcomed yet is delivered once it is', () => {
+    const { hub, mk, c, got } = room();
+    const b2 = mk('b2', false);
+    const log = got(b2);
+    c.sendGame('wi:state', 7, 'b2');
+    hub.flush();
+    expect(b2.roster.has('b2')).toBe(true);
+    expect(log).toEqual(['c1:wi:state:7']);
+  });
+
+  it('held messages keep their order', () => {
+    const { hub, mk, c, got } = room();
+    const log = got(c);
+    const d = mk('d2', false);
+    d.sendGame('a', 1, 'c1');
+    d.sendGame('b', 2, 'c1');
+    d.sendGame('a', 3, 'c1');
+    hub.flush();
+    expect(log).toEqual(['d2:a:1', 'd2:b:2', 'd2:a:3']);
+  });
+
+  it.each([
+    [1_000, ['p4:a:"early"']],
+    [9_000, []],
+  ])('a message from someone the roster only learns of %i ms before its hello retry is delivered only if fresh', (wait, expected) => {
+    const { hub, t, h, got } = room();
+    const log = got(h);
+    const mk = (id: string) => new Session(hub.connect(id), new SharedClock(1, t.ms), false, state(1), () => t.ms, `tok-${id}`);
+    mk('p3');
+    hub.flush();
+    // Room is full: p4 is turned away, but already said something.
+    const p4 = mk('p4');
+    p4.sendGame('a', 'early', 'h');
+    hub.flush();
+    expect(h.roster.has('p4')).toBe(false);
+    // The hello retry comes 2 s after the first (+0.5 s slack).
+    t.ms += wait + 2_500;
+    hub.disconnect('p3');
+    hub.flush();
+    p4.tick();
+    hub.flush();
+    expect(h.roster.has('p4')).toBe(true);
+    expect(log).toEqual(expected);
+  });
+});
+
+describe('Recovery (ask for what I am missing)', () => {
+  function room() {
+    const hub = new MemoryHub();
+    const t = { ms: 1_000_000 };
+    const now = () => t.ms;
+    const mk = (id: string, host: boolean) => new Session(hub.connect(id), new SharedClock(1, now()), host, state(id.length), now, `tok-${id}`);
+    const h = mk('h', true);
+    const b = mk('b', false);
+    hub.flush();
+    return { hub, t, mk, h, b, hr: new Recovery(sessionNet(h)), br: new Recovery(sessionNet(b)) };
+  }
+
+  it('the host answers an ask, the reply reaches onReply once and ends the ask', () => {
+    const { hub, hr, br } = room();
+    hr.answer('x:cards', (q) => ({ you: q, cards: [1, 2] }));
+    const got: unknown[] = [];
+    br.ask('x:cards', 'me', { to: () => 'h', onReply: (d, from) => got.push([d, from]) });
+    hub.flush();
+    expect(got).toEqual([[{ you: 'me', cards: [1, 2] }, 'h']]);
+    expect(br.pending('x:cards')).toBe(false);
+  });
+
+  it('a peer that cannot answer yet stays silent and the ask is resent until it can', () => {
+    const { hub, hr, br } = room();
+    let ready = false;
+    hr.answer('x:q', () => (ready ? 'now' : undefined));
+    const got: unknown[] = [];
+    br.ask('x:q', null, { to: 'h', onReply: (d) => got.push(d) });
+    hub.flush();
+    br.tick(0);
+    br.tick(1_000);
+    hub.flush();
+    expect(got).toEqual([]);
+    ready = true;
+    br.tick(2_000);
+    hub.flush();
+    expect(got).toEqual(['now']);
+    br.tick(10_000);
+    hub.flush();
+    expect(got).toEqual(['now']);
+  });
+
+  it('gives up after maxTries sends', () => {
+    const { hub, hr, br } = room();
+    let asked = 0;
+    hr.answer('x:q', () => void asked++);
+    let gaveUp = 0;
+    br.ask('x:q', null, { to: 'h', onReply: () => {}, intervalMs: 100, maxTries: 3, onGiveUp: () => gaveUp++ });
+    for (let i = 0; i < 20; i++) {
+      br.tick(i * 100);
+      hub.flush();
+    }
+    expect(asked).toBe(3);
+    expect(gaveUp).toBe(1);
+    expect(br.pending('x:q')).toBe(false);
+  });
+
+  it('with done(), replies are taken until the game has everything; to-function follows the host', () => {
+    const { hub, h, hr, br } = room();
+    hr.answer('x:cards', () => 'part');
+    const got: unknown[] = [];
+    let have = 0;
+    br.ask('x:cards', null, { to: () => h.selfId, onReply: (d) => (got.push(d), have++), done: () => have >= 2, intervalMs: 100 });
+    hub.flush();
+    expect(br.pending('x:cards')).toBe(true);
+    br.tick(0);
+    br.tick(100);
+    hub.flush();
+    expect(got).toEqual(['part', 'part']);
+    expect(br.pending('x:cards')).toBe(false);
+  });
+
+  it('an ask from a just-rejoined player is answered even though the host has just learned of it', () => {
+    const { hub, mk, hr } = room();
+    hr.answer('x:q', () => 'hi');
+    hub.disconnect('b');
+    hub.flush();
+    const b2 = mk('b2', false);
+    const r2 = new Recovery(sessionNet(b2));
+    const got: unknown[] = [];
+    // Right at the start, before the welcome: sent to everyone (default).
+    r2.ask('x:q', null, { onReply: (d) => got.push(d) });
+    hub.flush();
+    expect(got).toEqual(['hi']);
+  });
+
+  it('asks for unknown topics are ignored and cancel stops an ask', () => {
+    const { hub, br, hr } = room();
+    let seen = 0;
+    hr.answer('x:q', () => ++seen);
+    br.ask('y:other', null, { to: 'h', onReply: () => {} });
+    br.cancel('y:other');
+    br.ask('x:q', null, { to: 'h', onReply: () => {} });
+    br.cancel('x:q');
+    br.tick(0);
+    br.tick(5_000);
+    hub.flush();
+    expect(br.pending('y:other')).toBe(false);
+    expect(seen).toBe(1); // only the immediate first send of x:q
   });
 });

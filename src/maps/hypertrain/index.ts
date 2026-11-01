@@ -1,6 +1,6 @@
 import * as THREE from 'three';
 import { AMBIENCE, BLACKOUT, CAMERA, COLORS, HALT_CYCLE_S, NPC_DEFS, PLAYER_SEATS, RENDER, SEAT_X, SPEED, STATIONS, TRAIN } from '../../config';
-import { coachPower, haltCountdown, nextStopIndex } from '../../core/motion';
+import { coachPower, haltCountdown, LightPower, nextStopIndex } from '../../core/motion';
 import { hash01 } from '../../core/rng';
 import { bakeCrowd, crowdMaterial } from '../../game/crowd';
 import { buildCoach } from '../../scene/coach';
@@ -36,6 +36,7 @@ function build(scene: THREE.Scene, seed: number): MapScene {
     ...('seat' in d ? { pose: 'sit' as const, at: seatSpot(d.seat.side, d.seat.z) } : { pose: 'stand' as const, at: { x: d.stand.x, y: 0, z: d.stand.z, yaw: d.stand.yaw } }),
   }));
 
+  const glow = new LightPower();
   const map: MapScene = {
     root: coach.root,
     seats: PLAYER_SEATS.map((s) => seatSpot(s.side, s.z)),
@@ -55,10 +56,11 @@ function build(scene: THREE.Scene, seed: number): MapScene {
     update(f) {
       const sf = f.kmh / SPEED.maxKmh;
       map.power = coachPower(f.t, seed, f.blackouts ? BLACKOUT : NO_BLACKOUTS, f.forcedBlackoutAt);
+      const lit = glow.step(map.power, f.dt, f.comfort);
       tunnel.update(f.t, f.distance, f.kmh);
-      lighting.update(f.t, sf, map.power);
-      coach.setPower(map.power);
-      neighbours.update(f.t);
+      lighting.update(f.t, sf, lit, f.comfort.steady);
+      coach.setPower(lit);
+      neighbours.update(f.t, f.comfort.steady);
       coach.halt.draw(haltCountdown(f.t, HALT_CYCLE_S), STATIONS[nextStopIndex(f.t, HALT_CYCLE_S, STATIONS.length)]);
       junk.update(f.t);
       neighbours.cull(f.camera);

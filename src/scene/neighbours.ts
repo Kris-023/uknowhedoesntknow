@@ -6,7 +6,7 @@ import { crowdHemi } from '../game/crowd';
 import { group, tag, type Role } from './build';
 
 export interface Neighbours {
-  update(t: number): void;
+  update(t: number, steady?: boolean): void;
   /** Hide each side's copies unless its door opening is in view (after the camera moved). */
   cull(camera: THREE.Camera): void;
 }
@@ -98,9 +98,9 @@ export function buildNeighbours(
   const frustum = new THREE.Frustum();
   const viewProj = new THREE.Matrix4();
   return {
-    update(t) {
+    update(t, steady = false) {
       for (const c of copies) {
-        const k = flick(t, c.seed);
+        const k = flick(t, c.seed, steady);
         c.tube.color.copy(neonColor).multiplyScalar((0.04 + 0.96 * k) * LIGHTS.neonTubeHdr);
         c.halo.opacity = 0.55 * k;
       }

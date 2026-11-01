@@ -6,8 +6,11 @@ dist/
 # Interne Doku, bleibt lokal (nicht im öffentlichen Repo)
 teamlead/
 docs/
-CLAUDE.md
 reference/
+.claude/
 
 # Klartext der eingebauten Stapel (Wörter, Fragen, Kategorien); ins Repo kommt nur src/words/vault.json (npm run seal)
 private/
+
+# Lokale Vite-Umgebung (z. B. UKHDK_ALLOWED_HOSTS), bleibt lokal
+.env.local

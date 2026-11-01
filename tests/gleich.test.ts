@@ -1,7 +1,8 @@
-import { describe, expect, it, onTestFinished } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, onTestFinished } from 'vitest';
 import { GLEICH } from '../src/config';
 import { mulberry32 } from '../src/core/rng';
 import { botWord } from '../src/game/gleich/bots';
+import { tabStore } from '../src/game/tabStore';
 import {
   biggestGroup,
   cleanWord,
@@ -459,8 +460,8 @@ describe('Gleich gedacht over the network', async () => {
   const ids = ['a', 'b', 'c'];
   const make = (decks: ('normal' | 'nsfw')[] = ['normal']) => {
     const room = new LocalGameRoom([
-      { id: 'a', seat: 0, name: 'A' },
-      { id: 'b', seat: 2, name: 'B' },
+      { id: 'a', seat: 2, name: 'A' },
+      { id: 'b', seat: 0, name: 'B' },
       { id: 'c', seat: 1, name: 'C' },
     ]);
     const g = Object.fromEntries(ids.map((id) => [id, new GleichGame(room.net(id), { decks: () => decks })]));
@@ -547,8 +548,8 @@ describe('Gleich gedacht over the network', async () => {
 
   it('a rejoiner in the writing phase locks under the new id', async () => {
     const room = new LocalGameRoom([
-      { id: 'a', seat: 0, name: 'A' },
-      { id: 'b', seat: 2, name: 'B' },
+      { id: 'a', seat: 2, name: 'A' },
+      { id: 'b', seat: 0, name: 'B' },
       { id: 'c', seat: 1, name: 'C' },
       { id: 'b2', seat: -1, name: 'B' },
     ]);
@@ -558,7 +559,7 @@ describe('Gleich gedacht over the network', async () => {
     room.pump();
     await gg.b.lock('Mond');
     room.pump();
-    room.roster.splice(1, 1, { ...late, seat: 2 });
+    room.roster.splice(1, 1, { ...late, seat: 0 });
     gg.a.rejoin('b', 'b2');
     room.pump();
     expect(gg.b2.state?.players).toContain('b2');
@@ -575,8 +576,8 @@ describe('Gleich gedacht over the network', async () => {
 
   it('a new host takes over a running round from the public state', async () => {
     const room = new LocalGameRoom([
-      { id: 'a', seat: 0, name: 'A' },
-      { id: 'b', seat: 2, name: 'B' },
+      { id: 'a', seat: 2, name: 'A' },
+      { id: 'b', seat: 0, name: 'B' },
       { id: 'c', seat: 1, name: 'C' },
     ]);
     let host = 'a';
@@ -598,6 +599,233 @@ describe('Gleich gedacht over the network', async () => {
     room.pump();
     expect(gg.b.state!.solved).toBe(true);
     expect(gg.c.state!.solved).toBe(true);
+  });
+
+  describe('reload and host change', () => {
+    /** A Map-backed sessionStorage shared by all "tabs" (each client keeps to its own scope). */
+    const storage = (): Storage => {
+      const m = new Map<string, string>();
+      return {
+        get length() {
+          return m.size;
+        },
+        key: (i) => [...m.keys()][i] ?? null,
+        getItem: (k) => m.get(k) ?? null,
+        setItem: (k, v) => void m.set(k, String(v)),
+        removeItem: (k) => void m.delete(k),
+        clear: () => m.clear(),
+      };
+    };
+    beforeEach(() => {
+      const s = storage();
+      Object.defineProperty(globalThis, 'sessionStorage', { configurable: true, get: () => s });
+    });
+    afterEach(() => {
+      delete (globalThis as { sessionStorage?: unknown }).sessionStorage;
+    });
+
+    /** Three players, host a; b can reload as b2 (a client whose messages stop once it is "closed"). */
+    const rig = () => {
+      const room = new LocalGameRoom([
+        { id: 'a', seat: 2, name: 'A' },
+        { id: 'b', seat: 0, name: 'B' },
+        { id: 'c', seat: 1, name: 'C' },
+        { id: 'b2', seat: -1, name: 'B' },
+      ]);
+      const late = room.roster.pop()!;
+      let closed = false;
+      const nb = room.net('b');
+      const netB = { ...nb, send: (t: string, d: unknown, to?: string) => !closed && nb.send(t, d, to), onMessage: (h: (t: string, d: unknown, f: string) => void) => nb.onMessage((t, d, f) => !closed && h(t, d, f)) };
+      const opts = { decks: () => ['normal' as const] };
+      const g = {
+        a: new GleichGame(room.net('a'), opts, () => tabStore('gleich', 'tabA')),
+        b: new GleichGame(netB, opts, () => tabStore('gleich', 'tabB')),
+        c: new GleichGame(room.net('c'), opts, () => tabStore('gleich', 'tabC')),
+      };
+      const close = () => {
+        closed = true;
+      };
+      /** B reloads: the old tab is gone, a new one with the same tab storage but a new id arrives, and the host hands over the seat. */
+      const reload = () => {
+        closed = true;
+        room.roster.splice(1, 1, { ...late, seat: 0 });
+        const b2 = new GleichGame(room.net('b2'), opts, () => tabStore('gleich', 'tabB'));
+        g.a.rejoin('b', 'b2');
+        room.pump();
+        return b2;
+      };
+      return { room, g, close, reload };
+    };
+
+    it('the typed draft is still there after a reload, the word not yet locked', async () => {
+      const { room, g, reload } = rig();
+      g.a.start();
+      room.pump();
+      g.b.setDraft('Mon');
+      const b2 = reload();
+      expect(b2.state?.players).toContain('b2');
+      expect(b2.draft).toBe('Mon');
+      expect(b2.myWord).toBeNull();
+      // Locking uses it up.
+      await b2.lock('Mond');
+      expect(b2.draft).toBe('');
+    });
+
+    it('a word locked while writing survives a reload: back in place without typing it again', async () => {
+      const { room, g, reload } = rig();
+      g.a.start();
+      room.pump();
+      await g.b.lock('Mond');
+      room.pump();
+      const commit = g.a.state!.commits.b;
+      expect(commit).toBeTruthy();
+      const b2 = reload();
+      // The old commitment went with the old id; the same one is locked again from the kept word.
+      room.pump();
+      expect(b2.myWord).toBe('Mond');
+      expect(g.a.state!.commits.b2).toBe(commit);
+      expect(g.a.state!.phase).toBe('write');
+      await g.a.lock('Mond');
+      await g.c.lock('Mond');
+      await until(room, () => g.a.state?.phase === 'done', () => g.a.tick(performance.now()));
+      expect(g.a.state!.solved).toBe(true);
+      expect(g.a.state!.words).toEqual({ a: 'Mond', b2: 'Mond', c: 'Mond' });
+    });
+
+    it('a reload while the words are collected: the kept word and salt are revealed afterwards', async () => {
+      const { room, g, close, reload } = rig();
+      g.a.start();
+      room.pump();
+      await g.b.lock('Mond');
+      await g.a.lock('Mond');
+      room.pump();
+      // The reveal starts while b's tab is closing: their word never leaves it.
+      close();
+      await g.c.lock('Mond');
+      room.pump();
+      expect(g.a.state!.phase).toBe('reveal');
+      expect(g.a.state!.words).toBeNull();
+      const b2 = reload();
+      await until(room, () => g.a.state?.phase === 'done', () => g.a.tick(performance.now()));
+      expect(g.a.state!.solved).toBe(true);
+      expect(g.a.state!.words?.b2).toBe('Mond');
+      room.pump();
+      expect(b2.wordsView()?.b2).toBe('Mond');
+    });
+
+    it('a stored word of another try or round, or a broken one, is not taken', async () => {
+      const { room, g, reload } = rig();
+      const store = tabStore('gleich', 'tabB');
+      g.a.start();
+      room.pump();
+      store.set('word.1', { tryNo: 2, word: 'Mond', salt: 'a'.repeat(32), commit: 'b'.repeat(64) });
+      expect(reload().myWord).toBeNull();
+      const { room: room2, g: g2, reload: reload2 } = rig();
+      g2.a.start();
+      room2.pump();
+      store.set('word.1', { tryNo: 1, word: ' Mond ', salt: 'zz', commit: 'nope' });
+      expect(reload2().myWord).toBeNull();
+    });
+
+    it('the private store is emptied when the round is over', async () => {
+      const { room, g } = rig();
+      g.a.start();
+      room.pump();
+      g.b.setDraft('Mo');
+      await g.b.lock('Mond');
+      await g.a.lock('Mond');
+      await g.c.lock('Mond');
+      expect(tabStore('gleich', 'tabB').get('word.1')).toBeTruthy();
+      await until(room, () => g.b.state?.phase === 'done', () => g.a.tick(performance.now()));
+      expect(tabStore('gleich', 'tabB').get('word.1')).toBeUndefined();
+      expect(tabStore('gleich', 'tabB').get('draft.1')).toBeUndefined();
+    });
+
+    /** Everyone locks a different word and the host judges: the words are on the table, nobody solved it. */
+    const toWords = async (room: InstanceType<typeof LocalGameRoom>, gg: Record<string, InstanceType<typeof GleichGame>>) => {
+      gg.a.start();
+      room.pump();
+      await gg.a.lock('Tee');
+      await gg.b.lock('Kanne');
+      await gg.c.lock('Teestube');
+      await until(room, () => !!gg.a.state?.words);
+    };
+
+    it('a running vote goes on with the new host: the ballots of the old one still count', async () => {
+      const room = new LocalGameRoom([
+        { id: 'a', seat: 2, name: 'A' },
+        { id: 'b', seat: 0, name: 'B' },
+        { id: 'c', seat: 1, name: 'C' },
+      ]);
+      let host = 'a';
+      const net = (id: string) => ({ ...room.net(id), isHost: () => host === id, hostId: () => host });
+      const gg = Object.fromEntries(ids.map((id) => [id, new GleichGame(net(id), { decks: () => ['normal'] }, () => tabStore('gleich', `tab${id}`))]));
+      await toWords(room, gg);
+      expect(gg.a.state!.solved).toBe(false);
+      gg.a.call();
+      room.pump();
+      gg.a.vote(true);
+      gg.b.vote(true);
+      room.pump();
+      expect(gg.c.state!.vote?.voters).toEqual(['a', 'b']);
+      // Nobody's screen gets to see who voted what.
+      for (const id of ids) expect(JSON.stringify(gg[id].state)).not.toContain('ballots');
+      // The host leaves in the middle of the vote; b takes over.
+      room.roster.shift();
+      host = 'b';
+      gg.b.tick(performance.now());
+      room.pump();
+      expect(gg.c.state!.vote?.voters).toEqual(['a', 'b']);
+      expect(gg.c.iVoted).toBe(false);
+      gg.c.vote(false);
+      await until(room, () => gg.b.state?.phase === 'done', () => gg.b.tick(performance.now()));
+      // Two yes (a and b, cast before) against one no.
+      expect(gg.b.state!.solved).toBe(true);
+      expect(gg.c.state!.solved).toBe(true);
+    });
+
+    it('the vote of the new host keeps its time and can be taken back with "Zug zurück"', async () => {
+      const room = new LocalGameRoom([
+        { id: 'a', seat: 2, name: 'A' },
+        { id: 'b', seat: 0, name: 'B' },
+        { id: 'c', seat: 1, name: 'C' },
+      ]);
+      let host = 'a';
+      const net = (id: string) => ({ ...room.net(id), isHost: () => host === id, hostId: () => host });
+      const gg = Object.fromEntries(ids.map((id) => [id, new GleichGame(net(id), { decks: () => ['normal'] }, () => tabStore('gleich', `tab${id}`))]));
+      await toWords(room, gg);
+      gg.a.call();
+      room.pump();
+      const deadline = gg.c.state!.vote!.deadline;
+      room.roster.shift();
+      host = 'b';
+      gg.b.tick(performance.now());
+      room.pump();
+      expect(gg.c.state!.vote).not.toBeNull();
+      expect(Math.abs(gg.c.state!.vote!.deadline - deadline)).toBeLessThan(1000);
+      gg.b.vote(false);
+      gg.c.vote(false);
+      await until(room, () => !!gg.b.state?.last, () => gg.b.tick(performance.now()));
+      expect(gg.b.state!.last?.result).toBe('no');
+      // Back to before the vote: it can be called again.
+      expect(gg.b.canUndo).toBe(true);
+      gg.b.undo();
+      room.pump();
+      expect(gg.c.state!.voted).toBe(false);
+      expect(gg.c.state!.vote).toBeNull();
+    });
+
+    it('someone who reloads in the middle of a vote sees that they voted', async () => {
+      const { room, g, reload } = rig();
+      await toWords(room, g);
+      g.a.call();
+      room.pump();
+      g.b.vote(true);
+      room.pump();
+      const b2 = reload();
+      expect(b2.state!.vote?.voters).toContain('b2');
+      expect(b2.iVoted).toBe(true);
+    });
   });
 
   it('locked decks: the fallback questions, also in a room with NSFW on', () => {

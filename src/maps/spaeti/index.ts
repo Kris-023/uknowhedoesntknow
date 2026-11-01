@@ -1,6 +1,6 @@
 import * as THREE from 'three';
 import { LIGHT_SCALE, LIGHTS, POINT_LIGHT_SCALE } from '../../config';
-import { coachPower, flick, noise1 } from '../../core/motion';
+import { coachPower, flick, LightPower, noise1 } from '../../core/motion';
 import { group } from '../../scene/build';
 import type { MapDef, MapScene, NpcSpot, Spot } from '../types';
 import { CARS, CYCLIST, SEATING, SPAETI_BLACKOUT, SPAETI_LIGHT, STREET } from './config';
@@ -55,6 +55,7 @@ function build(scene: THREE.Scene, seed: number): MapScene {
   const tmp = new THREE.Matrix4();
   const rot = new THREE.Matrix4();
 
+  const glow = new LightPower();
   const map: MapScene = {
     root,
     seats,
@@ -72,29 +73,32 @@ function build(scene: THREE.Scene, seed: number): MapScene {
     events: () => [...(map.power < 0.98 ? ['Stromausfall'] : []), ...(police ? ['Polizeistreife'] : []), ...(collector ? ['Pfandsammler'] : [])],
     update(f) {
       const t = f.t;
-      const power = (map.power = coachPower(t, seed, f.blackouts ? SPAETI_BLACKOUT : NO_BLACKOUTS, f.forcedBlackoutAt));
+      const raw = (map.power = coachPower(t, seed, f.blackouts ? SPAETI_BLACKOUT : NO_BLACKOUTS, f.forcedBlackoutAt));
+      // What the lights show: steady / faded on request. `map.power` stays the raw supply.
+      const power = glow.step(raw, f.dt, f.comfort);
+      const steady = f.comfort.steady;
       // Brighter light presets lift the bloom threshold; the room follows so the walls never glow.
       const pk = LIGHTS.bloomThreshold / 0.28;
       const tubeK = LIGHTS.neonTubeHdr / 1.9;
 
       // Tubes: one fixture is dying, the rest hum along.
-      const bad = flick(t, 2.1 + seedShift);
+      const bad = flick(t, 2.1 + seedShift, steady);
       dim(shop.tubes, power * tubeK);
       dim(shop.badTube, (0.03 + 0.97 * bad) * power * tubeK);
       hemi.intensity = LIGHT_SCALE * pk * (L.hemiBlackout + (L.hemi - L.hemiBlackout) * power);
       main.intensity = POINT_LIGHT_SCALE * pk * L.main * power * (0.88 + 0.12 * bad);
       // Fridges run on their own circuit (and the story needs them): they stay lit in a blackout.
       fridge.intensity = POINT_LIGHT_SCALE * pk * L.fridge;
-      const lampK = power * (0.3 + 0.7 * flick(t * 0.6, 5.3 + seedShift));
+      const lampK = power * (0.3 + 0.7 * flick(t * 0.6, 5.3 + seedShift, steady));
       lamp.intensity = POINT_LIGHT_SCALE * pk * L.lamp * lampK;
       dim(shop.lampHead, 0.04 + lampK);
       dim(shop.lampPool, lampK);
       for (const m of shop.signs) dim(m, power);
       for (const m of shop.slushMats) dim(m, power);
       dim(shop.heatLamp, power);
-      dim(shop.neon, power * (0.92 + 0.08 * Math.sin(t * 40)));
-      dim(shop.tv, 0.35 + 0.45 * Math.abs(noise1(t * 2.7)));
-      shop.tv.color.r *= 0.7 + 0.3 * Math.sin(t * 1.3);
+      dim(shop.neon, power * (steady ? 0.96 : 0.92 + 0.08 * Math.sin(t * 40)));
+      dim(shop.tv, steady ? 0.6 : 0.35 + 0.45 * Math.abs(noise1(t * 2.7)));
+      if (!steady) shop.tv.color.r *= 0.7 + 0.3 * Math.sin(t * 1.3);
 
       // Slush swirl and sausages rolling.
       shop.slush.forEach((tx, i) => {

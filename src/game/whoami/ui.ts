@@ -10,7 +10,9 @@ const RESULT_TEXT: Record<Result, string> = { yes: 'Ja', no: 'Nein', idk: 'Weiß
 const RESULT_SHOW_MS = 3200;
 
 /** Keys while playing, so nobody has to let go of the mouse look to vote. */
-const KEYS = { ask: 'KeyF', guess: 'KeyR', pass: 'KeyP', yes: 'Digit1', no: 'Digit2', idk: 'Digit3' } as const;
+const KEYS = { ask: 'KeyF', guess: 'KeyR', pass: 'KeyP' } as const;
+/** Votes: the digits, and A/S/D as a second set (left hand, like WASD); only the Esc menu mentions A/S/D. */
+const VOTE_KEYS = { yes: ['Digit1', 'KeyA'], no: ['Digit2', 'KeyS'], idk: ['Digit3', 'KeyD'] } as const;
 
 /** What the game screens need to know about the room. */
 export interface LobbyInfo {
@@ -423,12 +425,15 @@ export class WhoamiUi {
 
   private key(e: KeyboardEvent): void {
     const s = this.game.state;
-    if (e.repeat || e.target instanceof HTMLInputElement || e.target instanceof HTMLSelectElement) return;
+    // Ctrl/Cmd/Alt + A, S, D or a digit is a browser or system shortcut, never a vote.
+    if (e.ctrlKey || e.metaKey || e.altKey) return;
+    if (e.repeat || e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement || e.target instanceof HTMLSelectElement) return;
     if (!s || s.phase !== 'play') return;
     const me = this.game.selfId;
     const v = s.vote;
     if (v && v.guesser !== me && !v.voters.includes(me)) {
-      const vote: Vote | null = e.code === KEYS.yes ? 'yes' : e.code === KEYS.no ? 'no' : e.code === KEYS.idk && v.kind === 'question' ? 'idk' : null;
+      const is = (keys: readonly string[]) => keys.includes(e.code);
+      const vote: Vote | null = is(VOTE_KEYS.yes) ? 'yes' : is(VOTE_KEYS.no) ? 'no' : is(VOTE_KEYS.idk) && v.kind === 'question' ? 'idk' : null;
       if (vote) this.game.vote(vote);
     } else if (!v && s.turn === me) {
       if (e.code === KEYS.ask) this.game.toHost({ a: 'ask' });

@@ -1,0 +1,39 @@
+# Built-in decks — sealed word, question and category content
+
+The built-in content of the word games (word cards, "Gleich gedacht" questions, "Zeig drauf" endings, "Stadt, Land, Fluss" categories, each with a Normal and an NSFW part) ships only in encrypted form. A password unlocks it once per browser; after that, one unlocked player can hand the key to everyone in the room.
+
+## How it works
+
+- **Why sealed.** The repo is public and the bundle is deployed, so neither may carry the decks in plain text. `src/words/vault.json` holds only ciphertext. Plaintext lives in the gitignored `private/` folder and nowhere else.
+- **Vault format.** `src/words/vault.ts:Vault`: `{ format: 'ukhdk-vault', v: 1, kdf: { name: 'PBKDF2', hash: 'SHA-256', iterations }, cipher: 'AES-256-GCM', salt, iv, data }` (base64 fields, 16-byte salt, 12-byte IV). Iterations are `KDF_ITERATIONS` = 600 000 (the script uses the same number; the OWASP recommendation for PBKDF2-HMAC-SHA256); the key is `KEY_BYTES` = 32. `vault.ts:parseVault` rejects anything malformed; `VAULT` is the vault of this build, or `null` if the file is broken (the game then just keeps the fallback).
+- **Content shape.** `src/words/types.ts:Content` (`v: 1`, `words`, `gleich`, `zeig`, `slf`); `vault.ts:parseContent` checks the shape of decrypted data. *Why:* GCM authenticates it, but it may come from an older script version.
+- **Key derivation and opening.** `vault.ts:deriveKey` (WebCrypto, slow on purpose) turns a password into a raw AES key; `vault.ts:openVault` decrypts and returns `null` for a wrong key (GCM authentication fails) or a broken vault. `vault.ts:sealContent` does the same sealing as the script and lets tests seal fixtures in memory. *Why:* what is kept and shared is the derived key, never the password.
+- **Salt names the vault.** `Vault.salt` identifies it: a key only fits a vault with the same salt, so keys from another build are ignored (`DeckLock.offer`) and a kept key for an older vault is dropped by `restore`.
+- **Lock state.** `src/words/content.ts:DeckLock` holds `content` (starts as `src/words/fallback.ts:FALLBACK`), `unlocked`, and `shared` (the `SharedKey` `{ salt, key }` to hand to peers, `null` while locked). Methods: `unlock(password)`, `offer(key)` (from storage or a peer; counts only if it opens this vault; failed keys are remembered, up to 64, so a peer repeating one costs nothing), `restore()` at startup, `forget()`, `onChange(f)`. The key is kept in `localStorage` under `DECK_KEY_STORAGE` (`ukhdk.deckkey.v1`); with no storage it stays unlocked for this tab only. `content.ts:deckLock` is the browser's instance and `content.ts:content` is what games draw from. Games read it when they draw, so a key arriving mid-round only changes what the next draw sees.
+- **Cards.** `src/words/index.ts:builtinDeck` turns entries into `WordCard`s, `wordPool` mixes decks with submissions (first duplicate wins, so a built-in word beats the same custom one), `drawCard` skips submissions by the guessers while anything else is left. Card ids derive from the word, with prefix `n:` / `x:` for sealed normal / NSFW, `f:` for the fallback, `c:<author>:<n>` for submissions. *Why:* ids stay put when a list is reordered, and a card played before unlocking never counts as a sealed one. `index.ts:DECK_NAMES` are the labels (Normal, NSFW, Eigene).
+- **Fallback.** `src/words/fallback.ts:FALLBACK` is a small public stand-in, written separately from the sealed decks, used while locked or when a build has no vault. NSFW parts exist only in the vault. Bot word lists in `src/game/*/bots.ts` rely on the SLF categories there being the classic ones.
+- **Sealing.** `scripts/seal-content.mjs` reads the plaintext files from `private/content/` (file names from its `FILES` map: `woerter-normal.txt`, `woerter-nsfw.txt`, `gleich-normal.txt`, `gleich-nsfw.txt`, `zeig-normal.txt`, `zeig-nsfw.txt`, `slf-text.txt`, `slf-bild.txt`, `slf-nsfw.txt`), validates (length limits in `LIMITS`, no duplicates within a file or across Normal/NSFW words, Stadt/Land/Fluss must be in `slf-text.txt`, no empty lists), seals, and writes `src/words/vault.json`.
+  - **Password from a file only.** Never argv, never stdin, never printed (`readPassword`). The source is a password file in the user's config directory, or the path in the env var `UKHDK_DECK_PASS_FILE`. A file readable by others triggers a hint to restrict its permissions; a trailing newline is stripped; fewer than 8 characters is refused. *Why:* argv shows up in process lists and shell history, and prompts get captured by tooling; a file with tight permissions leaks neither.
+  - **Salt kept for the same password.** `previousSalt`: if the existing vault opens with the current password and today's iteration count, its salt is reused (fresh IV every time). *Why:* the key everyone's browser remembered still fits, so a content update needs no re-unlock. A new password means a new salt, and everybody unlocks once more (the script says which case happened).
+  - Options without secrets: `--content <dir>`, `--out <file>` (tests point them at fixtures). Messages are German.
+- **Room key sharing.** `src/game/roomKey.ts:RoomKey`: `tick()` runs per frame and sends the key (`dk:key`, a `SharedKey`) to each member that has not had it, addressed to that one member, never broadcast and never in game state; newcomers and rejoiners (new ids) get it too; a member whose key I already hold is not sent it back. `RoomKey.onMessage` validates with `content.ts:parseSharedKey` and calls `DeckLock.offer`. Created in `src/main.ts` (`new RoomKey(gameNet, deckLock)`). *Why:* cards are drawn on the explaining client, so every client has to open the decks locally; the key never touches the host or a server.
+
+## Using it
+
+Update the content (maintainer): edit the files in `private/content/`, then
+
+    npm run seal         # private/content -> src/words/vault.json
+    npm run seal:check   # decrypts the committed vault, prints counts only, compares with private/content
+
+Create the password file once (restricted permissions) in the user's config directory, or point `UKHDK_DECK_PASS_FILE` at another file; the script prints a German how-to when it is missing. Commit only `src/words/vault.json`. Never write plaintext deck entries, the password or a key into the repo, docs, logs or tests.
+
+Player: `src/ui/deckLockView.ts:DeckLockView` is the unlock box ("Eingebaute Stapel"), shown in the **Eigene Listen** tab and, with `compact`, in the room dialog (`src/ui/roomDialog.ts`). It shows `deckStateText` ("Stapel: freigeschaltet" / "Stapel: gesperrt") and, while locked, a password field and the button **Freischalten** ("Prüfe …" while busy). Errors: "Passwort falsch."; without WebCrypto "Geht hier nicht (WebCrypto fehlt, nur über https oder localhost)."; a build without a vault shows "Dieser Build hat keine versiegelten Stapel. Es gibt nur den Ersatzstapel." Unlocked, it shows the counts and **Schlüssel vergessen** (`DeckLock.forget`). The view follows `deckLock.onChange`, so a key arriving from someone in the room flips it to unlocked by itself. `deckLockView.ts:LOCKED_HINT` explains that locked play uses the small fallback deck and NSFW needs unlocking. The lobby and room dialog show the same state text; the room dialog does not let NSFW be switched on while locked (it would be empty).
+
+## Related links
+
+- [Custom lists](custom-lists.md) (own entries work whether locked or not)
+- [Networking](networking.md) (member-to-member messages via `GameNet`)
+- [Menu and settings](menu-settings.md)
+- [Architecture overview](../architecture/overview.md)
+- [Terminology](../meta/TERMINOLOGY.md)
+- Tests: `tests/vault.test.ts` (seal/open, tamper, lock, key sharing), `tests/seal-script.test.mjs` (no password file, no leaks, salt kept, duplicates refused, plain node)

@@ -1,8 +1,8 @@
 import * as THREE from 'three';
 import { Ambience } from './audio/ambience';
-import { echoNeedsHeadphones, getVoice, type Voice } from './audio/voice';
+import { echoNeedsHeadphones, gateStep, getVoice, type Voice } from './audio/voice';
 import type { PersonState } from './characters/person';
-import { AMBIENCE, CAMERA, HEAD, LIGHT_PRESETS, LIGHTS, NET, SCHAFFNER, VOICE } from './config';
+import { AMBIENCE, CAMERA, HEAD, NET, SCHAFFNER, VOICE } from './config';
 import { SharedClock } from './core/clock';
 import { DebugPanel } from './debug/panel';
 import { sceneTree } from './debug/sceneTree';
@@ -14,7 +14,7 @@ import { trysteroTransport } from './net/trystero';
 import { Pipeline } from './render/pipeline';
 import { World } from './scene/world';
 import { MAP_IDS, type MapId } from './maps/types';
-import { el } from './ui/dom';
+import { el, releaseMouse } from './ui/dom';
 import { BenchPanel } from './ui/benchPanel';
 import { MouseTrace } from './debug/mouseTrace';
 import { GpuTimer, HeapWatch } from './debug/gpuTimer';
@@ -24,6 +24,7 @@ import { NameTags } from './ui/nametags';
 import { UndoButton } from './ui/undoButton';
 import { LocalGameRoom, sessionNet, type GameNet, type GameUi, type Minigame, type PlayableGame } from './game/minigame';
 import { LoudTracker, SchaffnerFigure } from './game/schaffner';
+import { fillOrder } from './game/tableOrder';
 import { WhoamiBots } from './game/whoami/bots';
 import { CardsView } from './game/whoami/cardsView';
 import { WhoamiGame } from './game/whoami/game';
@@ -51,7 +52,7 @@ import { RoomLists } from './game/roomLists';
 import { RoomKey } from './game/roomKey';
 import { deckLock } from './words/content';
 import { initUiScale } from './ui/scale';
-import { loadProfile, onSettings, saveProfile, settings, updateSettings } from './ui/store';
+import { GLOW_LEVELS, loadProfile, onSettings, saveProfile, settings, updateSettings } from './ui/store';
 import './style.css';
 
 // The prototype's palette was tuned on r128, where hex colours went into the shader unconverted.
@@ -72,10 +73,6 @@ const setProfile = (p: PersonState) => {
 };
 
 initUiScale();
-
-const applyLight = () => Object.assign(LIGHTS, LIGHT_PRESETS[settings.light]);
-applyLight();
-onSettings(applyLight);
 
 void start();
 
@@ -166,6 +163,8 @@ function launch(clock: SharedClock, session: Session | null, startCam: 'wagon' |
   // Rebuilt on a map change (swapMap); everything below reads these at call time, never a copy.
   let world = new World(clock, mapId);
   let players = world.players;
+  // Seats fill (and a host is picked) in the order of the room's map; every peer shows the room's map, so all agree.
+  session?.setSeatOrder(fillOrder(world.map.seats));
 
   let pipeline: Pipeline | null = null;
   try {
@@ -193,7 +192,7 @@ function launch(clock: SharedClock, session: Session | null, startCam: 'wagon' |
     {
       onSight: (on) => {
         setSightMode(world.scene, on);
-        applyBloom();
+        applyRender();
       },
       onCam: (cam) => {
         world.cam = cam;
@@ -214,14 +213,16 @@ function launch(clock: SharedClock, session: Session | null, startCam: 'wagon' |
     },
     debug,
   );
-  const applyBloom = () => {
+  const applyRender = () => {
     if (!pipeline) return;
-    pipeline.bloomOn = settings.bloom && !panel.state.sight;
-    pipeline.bloomStrength = settings.bloomStrength;
+    pipeline.bloomOn = settings.glow !== 'aus' && !panel.state.sight;
+    pipeline.bloomStrength = GLOW_LEVELS[settings.glow];
+    pipeline.renderBrightness = settings.renderBrightness;
+    pipeline.vignette = settings.vignette;
     pipeline.setRenderScale(settings.renderScale);
   };
-  applyBloom();
-  onSettings(applyBloom);
+  applyRender();
+  onSettings(applyRender);
 
   // Your own character: the menu profile goes onto your seat (in a room it came with the hello).
   if (!session) players.applyState(players.active, profile);
@@ -242,7 +243,43 @@ function launch(clock: SharedClock, session: Session | null, startCam: 'wagon' |
   };
   const mouseK = () => CAMERA.mouseSensitivity * settings.mouseSens * world.fovFactor;
   const trace = bench ? new MouseTrace() : null;
-  const benchPanel = bench ? new BenchPanel(document.body, toMenu, trace, mouseK) : null;
+  // Benchmark "Mundbewegung testen": the own mic level (above the Schwelle, with its hang) moves every bot mouth.
+  let micByToggle = false;
+  let botGate = { open: false, lastLoud: 0 };
+  const setMicBots = async (on: boolean): Promise<boolean> => {
+    if (!voice) return false;
+    if (!on) {
+      players.botLevel = null;
+      if (micByToggle) voice.stopMic();
+      micByToggle = false;
+      return false;
+    }
+    if (voice.micState === 'starting') {
+      await new Promise<void>((r) => {
+        const off = voice.onChange(() => {
+          if (voice.micState !== 'starting') {
+            off();
+            r();
+          }
+        });
+      });
+    } else if (voice.micState !== 'on') {
+      micByToggle = true;
+      await voice.startMic();
+    }
+    if (voice.micState !== 'on') {
+      micByToggle = false;
+      return false;
+    }
+    botGate = { open: false, lastLoud: 0 };
+    players.botLevel = () => {
+      const level = voice.micLevel(true);
+      botGate = gateStep(botGate.open, level, settings.vadLevel, performance.now(), botGate.lastLoud, VOICE.vadHangMs);
+      return botGate.open ? level : 0;
+    };
+    return true;
+  };
+  const benchPanel = bench ? new BenchPanel(document.body, toMenu, trace, mouseK, voice ? (on) => setMicBots(on) : null) : null;
   // Benchmark diagnostics: GPU time per frame (where the browser has timer queries) and GC as heap drops.
   const gpuTimer = benchPanel && pipeline ? GpuTimer.create(pipeline.renderer.getContext()) : null;
   const heap = benchPanel ? new HeapWatch() : null;
@@ -276,7 +313,7 @@ function launch(clock: SharedClock, session: Session | null, startCam: 'wagon' |
     for (let i = 0; i < levels.length; i++) {
       const id = seatIds[i];
       if (i === players.active) levels[i] = voice?.micState === 'on' ? voice.micLevel() : -1;
-      else levels[i] = voice && id && voice.hasPeer(id) ? voice.peerLevel(id) : -1;
+      else levels[i] = voice && id && voice.hasVoice(id) ? voice.peerLevel(id) : -1;
     }
   };
   // -1 = no real voice on that seat: solo fake peers keep their scripted mouths.
@@ -603,6 +640,15 @@ function launch(clock: SharedClock, session: Session | null, startCam: 'wagon' |
   stage.addEventListener('contextmenu', (e) => e.preventDefault());
   stage.addEventListener('mousedown', (e) => {
     if (e.button === 2 && world.cam === 'pov') world.zoom = 1;
+    // Middle button frees the mouse quietly (no pause menu) so HUD buttons can be clicked.
+    // preventDefault stops the browser's autoscroll circle and middle-click paste.
+    if (e.button === 1) {
+      e.preventDefault();
+      releaseMouse();
+    }
+  });
+  stage.addEventListener('auxclick', (e) => {
+    if (e.button === 1) e.preventDefault();
   });
   addEventListener('mouseup', (e) => {
     if (e.button === 2) world.zoom = 0;
@@ -679,7 +725,7 @@ function launch(clock: SharedClock, session: Session | null, startCam: 'wagon' |
     if (gameNet.isHost() && voice && session?.opts.schaffner !== 'off') {
       loudLevels.clear();
       for (const m of gameNet.members()) {
-        const lv = m.id === gameNet.selfId ? voice.micLevel() : voice.hasPeer(m.id) ? voice.peerLevel(m.id) : 0;
+        const lv = m.id === gameNet.selfId ? voice.micLevel() : voice.hasVoice(m.id) ? voice.peerLevel(m.id) : 0;
         loudLevels.set(m.id, lv);
       }
       const caught = loud.feed(loudLevels, dt, t);
@@ -741,6 +787,7 @@ function launch(clock: SharedClock, session: Session | null, startCam: 'wagon' |
     next.adopt(prev);
     world = next;
     players = next.players;
+    session?.setSeatOrder(fillOrder(next.map.seats));
     if (panel.state.sight) {
       // Originals back first, so the old map frees its own materials and not the shared wireframes.
       setSightMode(prev.scene, false);
@@ -793,6 +840,7 @@ function connect(session: Session, w: () => World, panel: DebugPanel, pause: Pau
       opts: session.opts,
     });
   pause.onRoomOpts = (o) => session.setOpts(o);
+  pause.onHandover = (id) => session.handOver(id);
   const roster = (includeMe: boolean) => {
     w().players.applyRoster([...session.roster.values()], session.mySeat, includeMe);
     panel.setNetRole(session.role);

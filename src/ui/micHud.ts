@@ -51,6 +51,10 @@ export class MicHud {
         if (v.muted) {
           text = 'Stumm · M';
           warn = true;
+        } else if (settings.voiceMode === 'mouth') {
+          // Nobody hears us, only the mouth moves above the threshold.
+          text = 'Nur Mundbewegung';
+          level = v.micLevel(true);
         } else if (settings.voiceMode === 'ptt' && !v.pttHeld) text = 'V halten zum Sprechen';
         else if (settings.voiceMode === 'auto' && !v.gateIsOpen) {
           text = 'Mikro · Automatisch';
@@ -63,7 +67,7 @@ export class MicHud {
     if (this.text.textContent !== text) this.text.textContent = text;
     this.root.classList.toggle('warn', warn);
     this.bar.hidden = v.micState !== 'on' || v.muted || (settings.voiceMode === 'ptt' && !v.pttHeld);
-    this.bar.classList.toggle('gated', settings.voiceMode === 'auto' && !v.gateIsOpen);
+    this.bar.classList.toggle('gated', (settings.voiceMode === 'auto' || settings.voiceMode === 'mouth') && !v.gateIsOpen);
     this.bar.style.setProperty('--l', level.toFixed(3));
   }
 }

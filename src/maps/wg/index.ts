@@ -1,5 +1,5 @@
 import * as THREE from 'three';
-import { coachPower } from '../../core/motion';
+import { coachPower, LightPower } from '../../core/motion';
 import { group } from '../../scene/build';
 import type { MapDef, MapScene, Spot } from '../types';
 import { Batch } from './batch';
@@ -39,6 +39,7 @@ function build(scene: THREE.Scene, seed: number): MapScene {
 
   let k = knock(0, seed);
   let lastT = 0;
+  const glow = new LightPower();
   const map: MapScene = {
     root,
     seats: SEATS,
@@ -64,7 +65,8 @@ function build(scene: THREE.Scene, seed: number): MapScene {
       lastT = f.t;
       map.power = coachPower(f.t, seed, f.blackouts ? FUSE : NO_FUSE, f.forcedBlackoutAt);
       k = knock(f.t, seed);
-      fx.update(f.t, map.power, k);
+      // The room's lights show the steady / faded supply; `map.power` stays the raw one.
+      fx.update(f.t, glow.step(map.power, f.dt, f.comfort), k, f.comfort.steady);
       figures.update(f.t, f.dt, k);
     },
   };

@@ -278,12 +278,31 @@ describe('Ahnungslos: leaving, returning, new host', () => {
     expect(Object.values(k.state.scores).every((v) => v === 0)).toBe(true);
   });
 
-  it('a new host cannot know the secret: a running round is aborted without telling it', () => {
+  it('a new host with the secret goes on: word, clueless player, points and turn intact', () => {
     const h = host('c');
     h.intent('a', clue('Ampel'), 0, true);
-    const n = AhnHost.fromState(structuredClone(h.state));
-    expect(n.state).toMatchObject({ phase: 'done', outcome: 'aborted', why: 'host', word: null, clueless: null });
-    expect(n.secret).toBeNull();
+    const n = AhnHost.fromState(structuredClone(h.state), { ...h.secret!, taboo: [...h.secret!.taboo] });
+    expect(n.state).toEqual(h.state);
+    expect(n.secret).toEqual(h.secret);
+    expect(n.onTurn).toBe('b');
+    allClues(n);
+    for (const p of ['a', 'b', 'd']) n.intent(p, aim('c'), 0, p === 'a');
+    n.intent('c', aim('a'), 0, false);
+    expect(n.state.phase).toBe('guess');
+    expect(n.state.clueless).toBe('c');
+    n.intent('c', { a: 'guess', word: 'Zebrastreifen' }, 0, false);
+    expect(n.state).toMatchObject({ phase: 'done', outcome: 'guessed', word: CARD.word, clueless: 'c' });
+    expect(n.state.scores.c).toBe(AHNUNG.guessPoints);
+  });
+
+  it('a new host without (or with a useless) secret aborts a running round without telling it', () => {
+    const h = host('c');
+    h.intent('a', clue('Ampel'), 0, true);
+    for (const sec of [null, { word: CARD.word, taboo: [], clueless: 'nobody' }]) {
+      const n = AhnHost.fromState(structuredClone(h.state), sec);
+      expect(n.state).toMatchObject({ phase: 'done', outcome: 'aborted', why: 'host', word: null, clueless: null });
+      expect(n.secret).toBeNull();
+    }
     // A finished round stays as it was.
     const k = host('c');
     k.intent('a', { a: 'end' }, 0, true);
@@ -362,7 +381,7 @@ describe('Ahnungslos over the network', async () => {
   const ids = ['a', 'b', 'c'];
   type Game = InstanceType<typeof AhnungGame>;
   const make = (who = ids, hostOf?: () => string) => {
-    const room = new LocalGameRoom(who.map((id, i) => ({ id, seat: [0, 2, 1, 3][i], name: id.toUpperCase() })));
+    const room = new LocalGameRoom(who.map((id, i) => ({ id, seat: [2, 0, 1, 3][i], name: id.toUpperCase() })));
     const seen: Record<string, string[]> = Object.fromEntries(who.map((id) => [id, []]));
     const g: Record<string, Game> = {};
     for (const id of who) {
@@ -408,7 +427,8 @@ describe('Ahnungslos over the network', async () => {
     clueAll(g, room);
     expect(g.b.state!.phase).toBe('vote');
     // Nothing that reached the clueless client, nor any public state, carries the word so far.
-    expect(seen[cl].join('\n')).not.toMatch(SECRET);
+    // (The hidden copy for a host change is the one exception, and it lives in JS state only: see below.)
+    expect(seen[cl].filter((m) => !m.startsWith('ah:backup ')).join('\n')).not.toMatch(SECRET);
     for (const id of ids) expect(JSON.stringify(g[id].state)).not.toMatch(SECRET);
   });
 
@@ -461,12 +481,12 @@ describe('Ahnungslos over the network', async () => {
       const cl = ['a', 'b', 'c'].find((id) => g[id].iAmClueless)!;
       if (cl !== 'b') continue;
       // b reloads and comes back as b2.
-      room.roster.splice(1, 1, { ...late, seat: 2 });
+      room.roster.splice(1, 1, { ...late, seat: 0 });
       g.a.rejoin('b', 'b2');
       room.pump();
       expect(g.b2.state!.players).toContain('b2');
       expect(g.b2.iAmClueless).toBe(true);
-      expect(seen.b2.join('\n')).not.toMatch(SECRET);
+      expect(seen.b2.filter((m) => !m.startsWith('ah:backup ')).join('\n')).not.toMatch(SECRET);
       return;
     }
     throw new Error('b was never clueless');
@@ -489,11 +509,108 @@ describe('Ahnungslos over the network', async () => {
     expect(g[cl].iAmClueless).toBe(true);
   });
 
-  it('the host leaves mid-round: the new host aborts it without points', () => {
+  it('the clueless player holds the word hidden, but nothing they can see carries it', () => {
+    const { g, cl, room } = startedWithGuestClueless();
+    clueAll(g, room);
+    const me = g[cl];
+    // The copy for a host change is there ...
+    expect((me as unknown as { backup: { word: string; clueless: string } }).backup).toMatchObject({ word: CARD.word, clueless: cl });
+    // ... but everything the UI renders from is free of the word: the public state, the word and taboo getters.
+    expect(me.myWord).toBeNull();
+    expect(me.iAmClueless).toBe(true);
+    expect(me.taboo).toEqual([]);
+    expect(JSON.stringify(me.state)).not.toMatch(SECRET);
+    expect(JSON.stringify({ w: me.myWord, t: me.taboo, k: me.knowsRole, c: me.iAmClueless, p: me.pickable() })).not.toMatch(SECRET);
+  });
+
+  it('the host leaves mid-round: the new host goes on with word, clueless player and points', () => {
+    const who = ['a', 'b', 'c', 'd'];
+    for (let i = 0; i < 60; i++) {
+      let hostId = 'a';
+      const { room, g } = make(who, () => hostId);
+      g.a.start();
+      room.pump();
+      const cl = who.find((id) => g[id].iAmClueless)!;
+      if (cl === 'a') continue;
+      room.roster.shift();
+      hostId = 'b';
+      g.b.tick(performance.now());
+      room.pump();
+      // Not aborted; nobody lost anything.
+      for (const id of ['b', 'c', 'd']) {
+        expect(g[id].state).toMatchObject({ phase: 'clues', round: 1 });
+        expect(Object.values(g[id].state!.scores).every((v) => v === 0)).toBe(true);
+        expect(g[id].iAmClueless).toBe(id === cl);
+        if (id !== cl) expect(g[id].myWord).toBe(CARD.word);
+      }
+      // The old host is really gone: play on without them.
+      g.b.drop('a');
+      room.pump();
+      const left = ['b', 'c', 'd'];
+      for (let k = 0; g.b.state!.phase === 'clues' && k < 20; k++) {
+        expect(g[g.b.onTurn!].clue(`Hinweis${k}`)).toBeNull();
+        room.pump();
+      }
+      expect(g.b.state!.phase).toBe('vote');
+      for (const id of left) {
+        if (id === cl) g[id].lock(left.find((p) => p !== cl)!);
+        else {
+          g[id].aim(cl);
+          g[id].lock();
+        }
+      }
+      room.pump();
+      expect(g.b.state!.phase).toBe('guess');
+      expect(g.c.state!.clueless).toBe(cl);
+      expect(g[cl].guess('Zebrastreifen')).toBe(true);
+      room.pump();
+      for (const id of left) expect(g[id].state).toMatchObject({ phase: 'done', outcome: 'guessed', word: CARD.word, clueless: cl });
+      expect(g.b.state!.scores[cl]).toBe(AHNUNG.guessPoints);
+      return;
+    }
+    throw new Error('no round with a guest as clueless');
+  });
+
+  it('the old host comes back as a normal player and gets their part back', () => {
+    const who = ['a', 'b', 'c', 'a2'];
+    const seen = new Set<boolean>();
+    for (let i = 0; i < 200 && seen.size < 2; i++) {
+      let hostId = 'a';
+      const { room, g } = make(who, () => hostId);
+      const late = room.roster.pop()!;
+      g.a.start();
+      room.pump();
+      const cl = ['a', 'b', 'c'].find((id) => g[id].iAmClueless)!;
+      const wasClueless = cl === 'a';
+      if (seen.has(wasClueless)) continue;
+      seen.add(wasClueless);
+      room.roster.shift();
+      hostId = 'b';
+      g.b.tick(performance.now());
+      room.pump();
+      expect(g.b.state!.phase).toBe('clues');
+      // a reloads: new id, rejoins the room, the new host moves everything over.
+      room.roster.push({ ...late, seat: 2 });
+      g.b.rejoin('a', 'a2');
+      room.pump();
+      room.pump();
+      expect(g.a2.state!.players).toContain('a2');
+      expect(g.a2.state!.players).not.toContain('a');
+      expect(g.a2.state!.phase).toBe('clues');
+      expect(g.a2.knowsRole).toBe(true);
+      expect(g.a2.iAmClueless).toBe(wasClueless);
+      expect(g.a2.myWord).toBe(wasClueless ? null : CARD.word);
+      expect(g.a2.isHost).toBe(false);
+    }
+    expect(seen.size).toBe(2);
+  });
+
+  it('a new host that never got a copy of the secret still aborts without points', () => {
     let hostId = 'a';
     const { room, g } = make(ids, () => hostId);
     g.a.start();
     room.pump();
+    (g.b as unknown as { backup: null }).backup = null;
     room.roster.shift();
     hostId = 'b';
     g.b.tick(performance.now());
@@ -502,5 +619,12 @@ describe('Ahnungslos over the network', async () => {
       expect(g[id].state).toMatchObject({ phase: 'done', outcome: 'aborted', why: 'host' });
       expect(Object.values(g[id].state!.scores).every((v) => v === 0)).toBe(true);
     }
+  });
+
+  it('only the host may send the hidden copy', () => {
+    const { g, cl } = startedWithGuestClueless();
+    const other = ids.find((p) => p !== 'a' && p !== cl)!;
+    g[other].onMessage('ah:backup', { round: g[other].state!.round, word: 'Falle', taboo: [], clueless: other }, cl);
+    expect((g[other] as unknown as { backup: { word: string } }).backup.word).toBe(CARD.word);
   });
 });
