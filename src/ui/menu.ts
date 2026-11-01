@@ -12,6 +12,7 @@ import { settings, updateSettings } from './store';
 import { ListsView } from './listsView';
 import { deckLock } from '../words/content';
 import { mapDef, mapList } from '../maps';
+import { byTableOrder } from '../game/tableOrder';
 import type { MapId } from '../maps/types';
 
 export type LobbyChoice = { kind: 'create'; code: string; opts: RoomOpts } | { kind: 'join'; code: string } | { kind: 'bench' };
@@ -473,7 +474,7 @@ export class PauseMenu extends MenuShell {
       const codeRow = el('div', 'row');
       codeRow.append(el('span', 'room-code', formatRoomCode(r.code)), copy);
       const list = el('ul', 'players');
-      for (const p of [...r.players].sort((a, b) => NET.seatOrder.indexOf(a.seat) - NET.seatOrder.indexOf(b.seat))) {
+      for (const p of [...r.players].sort((a, b) => byTableOrder(a.seat, b.seat))) {
         const li = el('li');
         li.style.setProperty('--c', `#${COLORS.players[p.seat].toString(16).padStart(6, '0')}`);
         li.append(el('span', 'pname', p.name || 'Ohne Namen'));

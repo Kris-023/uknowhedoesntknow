@@ -1,5 +1,6 @@
 import { NET, WHOAMI } from '../../config';
 import type { GameNet, Minigame } from '../minigame';
+import { byTableOrder } from '../tableOrder';
 import { parseCardData } from './cardImage';
 import { parseIntent, WhoamiHost, type Intent, type Vote, type WhoamiState } from './logic';
 
@@ -94,7 +95,7 @@ export class WhoamiGame implements Minigame {
 
   start(): void {
     if (!this.isHost) return;
-    const order = [...this.net.members()].sort((a, b) => NET.seatOrder.indexOf(a.seat) - NET.seatOrder.indexOf(b.seat)).map((m) => m.id);
+    const order = [...this.net.members()].sort((a, b) => byTableOrder(a.seat, b.seat)).map((m) => m.id);
     if (order.length < 2) return;
     if (this.host) this.scores = { ...this.host.state.scores };
     this.host = new WhoamiHost(order, this.scores, (this.host?.state.round ?? 0) + 1, this.voteS);

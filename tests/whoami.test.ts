@@ -96,8 +96,8 @@ describe('Wer bin ich? over the network', async () => {
 
   it('nobody ever holds their own card before solving it; it arrives afterwards', () => {
     const room = new LocalGameRoom([
-      { id: 'a', seat: 0, name: 'A' },
-      { id: 'b', seat: 2, name: 'B' },
+      { id: 'a', seat: 2, name: 'A' },
+      { id: 'b', seat: 0, name: 'B' },
       { id: 'c', seat: 1, name: 'C' },
     ]);
     const g = Object.fromEntries(['a', 'b', 'c'].map((id) => [id, new WhoamiGame(room.net(id))]));
@@ -111,7 +111,7 @@ describe('Wer bin ich? over the network', async () => {
       expect(g[id].cards.has(id)).toBe(false);
       expect(g[id].cards.size).toBe(2);
     }
-    // Order is by seat order 0, 2, 1: a, b, c. a guesses right.
+    // Order is by table order (top right first, counter-clockwise): a, b, c. a guesses right.
     g.a.toHost({ a: 'guess' });
     room.pump();
     g.b.toHost({ a: 'vote', v: 'yes' });
@@ -158,8 +158,8 @@ describe('Wer bin ich? resilience', async () => {
 
   it("after a rejoin the returning player gets the others' cards again, never their own", () => {
     const room = new LocalGameRoom([
-      { id: 'a', seat: 0, name: 'A' },
-      { id: 'b', seat: 2, name: 'B' },
+      { id: 'a', seat: 2, name: 'A' },
+      { id: 'b', seat: 0, name: 'B' },
       { id: 'c', seat: 1, name: 'C' },
       { id: 'b2', seat: -1, name: 'B' },
     ]);
@@ -172,7 +172,7 @@ describe('Wer bin ich? resilience', async () => {
     room.pump();
     room.pump();
     // b reloads: gone, then back as b2 on the same seat.
-    room.roster.splice(1, 1, { ...late, seat: 2 });
+    room.roster.splice(1, 1, { ...late, seat: 0 });
     g.a.rejoin('b', 'b2');
     room.pump();
     room.pump();
@@ -202,8 +202,8 @@ describe('dropped-out players', async () => {
 
   it('they keep their place until someone plays on without them, and only then', () => {
     const room = new LocalGameRoom([
-      { id: 'a', seat: 0, name: 'A' },
-      { id: 'b', seat: 2, name: 'B' },
+      { id: 'a', seat: 2, name: 'A' },
+      { id: 'b', seat: 0, name: 'B' },
       { id: 'c', seat: 1, name: 'C' },
     ]);
     const g = Object.fromEntries(['a', 'b', 'c'].map((id) => [id, new WhoamiGame(room.net(id))]));
@@ -232,8 +232,8 @@ describe('dropped-out players', async () => {
 
   it('a request to play on waits until the host sees them gone too', () => {
     const room = new LocalGameRoom([
-      { id: 'a', seat: 0, name: 'A' },
-      { id: 'b', seat: 2, name: 'B' },
+      { id: 'a', seat: 2, name: 'A' },
+      { id: 'b', seat: 0, name: 'B' },
       { id: 'c', seat: 1, name: 'C' },
     ]);
     const g = Object.fromEntries(['a', 'b', 'c'].map((id) => [id, new WhoamiGame(room.net(id))]));

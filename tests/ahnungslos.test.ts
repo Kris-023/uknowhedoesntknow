@@ -362,7 +362,7 @@ describe('Ahnungslos over the network', async () => {
   const ids = ['a', 'b', 'c'];
   type Game = InstanceType<typeof AhnungGame>;
   const make = (who = ids, hostOf?: () => string) => {
-    const room = new LocalGameRoom(who.map((id, i) => ({ id, seat: [0, 2, 1, 3][i], name: id.toUpperCase() })));
+    const room = new LocalGameRoom(who.map((id, i) => ({ id, seat: [2, 0, 1, 3][i], name: id.toUpperCase() })));
     const seen: Record<string, string[]> = Object.fromEntries(who.map((id) => [id, []]));
     const g: Record<string, Game> = {};
     for (const id of who) {
@@ -461,7 +461,7 @@ describe('Ahnungslos over the network', async () => {
       const cl = ['a', 'b', 'c'].find((id) => g[id].iAmClueless)!;
       if (cl !== 'b') continue;
       // b reloads and comes back as b2.
-      room.roster.splice(1, 1, { ...late, seat: 2 });
+      room.roster.splice(1, 1, { ...late, seat: 0 });
       g.a.rejoin('b', 'b2');
       room.pump();
       expect(g.b2.state!.players).toContain('b2');

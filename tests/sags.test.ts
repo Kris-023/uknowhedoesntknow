@@ -170,7 +170,7 @@ describe("Sag's anders rules", () => {
 
 describe("Sag's anders over the network", () => {
   const room = (n: number) => {
-    const members: Member[] = Array.from({ length: n }, (_, i) => ({ id: `p${i}`, seat: [0, 2, 1, 3][i], name: `P${i}` }));
+    const members: Member[] = Array.from({ length: n }, (_, i) => ({ id: `p${i}`, seat: [2, 0, 1, 3][i], name: `P${i}` }));
     const r = new LocalGameRoom(members);
     const decks = () => ['normal', 'custom'] as const;
     // Own words travel through the shared room lists, one instance per client like in main.ts.

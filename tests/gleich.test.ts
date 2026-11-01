@@ -459,8 +459,8 @@ describe('Gleich gedacht over the network', async () => {
   const ids = ['a', 'b', 'c'];
   const make = (decks: ('normal' | 'nsfw')[] = ['normal']) => {
     const room = new LocalGameRoom([
-      { id: 'a', seat: 0, name: 'A' },
-      { id: 'b', seat: 2, name: 'B' },
+      { id: 'a', seat: 2, name: 'A' },
+      { id: 'b', seat: 0, name: 'B' },
       { id: 'c', seat: 1, name: 'C' },
     ]);
     const g = Object.fromEntries(ids.map((id) => [id, new GleichGame(room.net(id), { decks: () => decks })]));
@@ -547,8 +547,8 @@ describe('Gleich gedacht over the network', async () => {
 
   it('a rejoiner in the writing phase locks under the new id', async () => {
     const room = new LocalGameRoom([
-      { id: 'a', seat: 0, name: 'A' },
-      { id: 'b', seat: 2, name: 'B' },
+      { id: 'a', seat: 2, name: 'A' },
+      { id: 'b', seat: 0, name: 'B' },
       { id: 'c', seat: 1, name: 'C' },
       { id: 'b2', seat: -1, name: 'B' },
     ]);
@@ -558,7 +558,7 @@ describe('Gleich gedacht over the network', async () => {
     room.pump();
     await gg.b.lock('Mond');
     room.pump();
-    room.roster.splice(1, 1, { ...late, seat: 2 });
+    room.roster.splice(1, 1, { ...late, seat: 0 });
     gg.a.rejoin('b', 'b2');
     room.pump();
     expect(gg.b2.state?.players).toContain('b2');
@@ -575,8 +575,8 @@ describe('Gleich gedacht over the network', async () => {
 
   it('a new host takes over a running round from the public state', async () => {
     const room = new LocalGameRoom([
-      { id: 'a', seat: 0, name: 'A' },
-      { id: 'b', seat: 2, name: 'B' },
+      { id: 'a', seat: 2, name: 'A' },
+      { id: 'b', seat: 0, name: 'B' },
       { id: 'c', seat: 1, name: 'C' },
     ]);
     let host = 'a';

@@ -3,6 +3,7 @@ import { parseCard } from '../../words/custom';
 import { drawCard, wordPool } from '../../words';
 import type { DeckId, WordCard } from '../../words/types';
 import type { GameNet, Minigame } from '../minigame';
+import { byTableOrder } from '../tableOrder';
 import { guessersOf, parseIntent, SagsHost, watchersOf, type Intent, type SagsState } from './logic';
 
 /** Light shape check of the host's broadcast; the host is trusted for game decisions anyway. */
@@ -90,7 +91,7 @@ export class SagsGame implements Minigame {
 
   start(): void {
     if (!this.isHost) return;
-    const order = [...this.net.members()].sort((a, b) => NET.seatOrder.indexOf(a.seat) - NET.seatOrder.indexOf(b.seat)).map((m) => m.id);
+    const order = [...this.net.members()].sort((a, b) => byTableOrder(a.seat, b.seat)).map((m) => m.id);
     if (order.length < 2) return;
     if (this.host) this.scores = { ...this.host.state.scores };
     this.host = new SagsHost(order, this.scores, (this.host?.state.round ?? 0) + 1, this.room.turnS(), this.room.teams());

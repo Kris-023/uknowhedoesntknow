@@ -5,6 +5,7 @@ import { questionPool } from '../../words/lists';
 import type { DeckId } from '../../words/types';
 import { PickState, type GazeTarget } from '../gaze';
 import type { GameNet, Minigame } from '../minigame';
+import { byTableOrder } from '../tableOrder';
 import { drawQuestions, parseIntent, ZeigHost, type Intent, type Picks, type ZeigRecord, type ZeigState } from './logic';
 
 const isStrings = (v: unknown, max = 8): v is string[] => Array.isArray(v) && v.length <= max && v.every((x) => typeof x === 'string' && x.length <= 200);
@@ -152,7 +153,7 @@ export class ZeigGame implements Minigame, GazeTarget {
 
   start(): void {
     if (!this.isHost) return;
-    const order = [...this.net.members()].sort((a, b) => NET.seatOrder.indexOf(a.seat) - NET.seatOrder.indexOf(b.seat)).map((m) => m.id);
+    const order = [...this.net.members()].sort((a, b) => byTableOrder(a.seat, b.seat)).map((m) => m.id);
     if (order.length < ZEIG.minPlayers) return;
     if (this.host) this.scores = { ...this.host.state.scores };
     const { normal, nsfw } = content().zeig;

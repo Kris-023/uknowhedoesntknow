@@ -220,8 +220,8 @@ describe('Zeig drauf over the network', async () => {
   const ids = ['a', 'b', 'c'];
   const make = (decks: ('normal' | 'nsfw')[] = ['normal']) => {
     const room = new LocalGameRoom([
-      { id: 'a', seat: 0, name: 'A' },
-      { id: 'b', seat: 2, name: 'B' },
+      { id: 'a', seat: 2, name: 'A' },
+      { id: 'b', seat: 0, name: 'B' },
       { id: 'c', seat: 1, name: 'C' },
     ]);
     const g = Object.fromEntries(ids.map((id) => [id, new ZeigGame(room.net(id), { decks: () => decks })]));
@@ -303,8 +303,8 @@ describe('Zeig drauf over the network', async () => {
 
   it('needs three players', () => {
     const room = new LocalGameRoom([
-      { id: 'a', seat: 0, name: 'A' },
-      { id: 'b', seat: 2, name: 'B' },
+      { id: 'a', seat: 2, name: 'A' },
+      { id: 'b', seat: 0, name: 'B' },
     ]);
     const a = new ZeigGame(room.net('a'), { decks: () => ['normal'] });
     a.start();
@@ -313,8 +313,8 @@ describe('Zeig drauf over the network', async () => {
 
   it('does not wait for an absent player, who can be dropped', () => {
     const room = new LocalGameRoom([
-      { id: 'a', seat: 0, name: 'A' },
-      { id: 'b', seat: 2, name: 'B' },
+      { id: 'a', seat: 2, name: 'A' },
+      { id: 'b', seat: 0, name: 'B' },
       { id: 'c', seat: 1, name: 'C' },
       { id: 'd', seat: 3, name: 'D' },
     ]);
@@ -338,8 +338,8 @@ describe('Zeig drauf over the network', async () => {
 
   it('a reload: the new id keeps the place, points and the lock it had', () => {
     const room = new LocalGameRoom([
-      { id: 'a', seat: 0, name: 'A' },
-      { id: 'b', seat: 2, name: 'B' },
+      { id: 'a', seat: 2, name: 'A' },
+      { id: 'b', seat: 0, name: 'B' },
       { id: 'c', seat: 1, name: 'C' },
       { id: 'b2', seat: -1, name: 'B' },
     ]);
@@ -349,7 +349,7 @@ describe('Zeig drauf over the network', async () => {
     room.pump();
     g.b.lock('c');
     room.pump();
-    room.roster.splice(1, 1, { ...late, seat: 2 });
+    room.roster.splice(1, 1, { ...late, seat: 0 });
     g.a.rejoin('b', 'b2');
     room.pump();
     expect(g.b2.state!.players).toContain('b2');
@@ -363,8 +363,8 @@ describe('Zeig drauf over the network', async () => {
 
   it('a new host takes over mid-question and gets the picks again', () => {
     const room = new LocalGameRoom([
-      { id: 'a', seat: 0, name: 'A' },
-      { id: 'b', seat: 2, name: 'B' },
+      { id: 'a', seat: 2, name: 'A' },
+      { id: 'b', seat: 0, name: 'B' },
       { id: 'c', seat: 1, name: 'C' },
       { id: 'd', seat: 3, name: 'D' },
     ]);

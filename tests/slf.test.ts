@@ -462,8 +462,8 @@ describe('Stadt, Land, Fluss over the network', async () => {
   const ids = ['a', 'b', 'c'];
   const make = (mode: 'text' | 'bild' = 'text', custom: string[] = [], decks: ('normal' | 'custom')[] = ['normal']) => {
     const room = new LocalGameRoom([
-      { id: 'a', seat: 0, name: 'A' },
-      { id: 'b', seat: 2, name: 'B' },
+      { id: 'a', seat: 2, name: 'A' },
+      { id: 'b', seat: 0, name: 'B' },
       { id: 'c', seat: 1, name: 'C' },
     ]);
     const g = Object.fromEntries(ids.map((id) => [id, new SlfGame(room.net(id), { decks: () => decks, mode: () => mode, custom: () => custom })]));
@@ -619,8 +619,8 @@ describe('Stadt, Land, Fluss over the network', async () => {
 
   it('a rejoiner while writing writes again under the new id', async () => {
     const room = new LocalGameRoom([
-      { id: 'a', seat: 0, name: 'A' },
-      { id: 'b', seat: 2, name: 'B' },
+      { id: 'a', seat: 2, name: 'A' },
+      { id: 'b', seat: 0, name: 'B' },
       { id: 'b2', seat: -1, name: 'B' },
     ]);
     const late = room.roster.pop()!;
@@ -631,7 +631,7 @@ describe('Stadt, Land, Fluss over the network', async () => {
     for (let c = 0; c < 6; c++) gg.b.setText(c, `${L}b`);
     await gg.b.stop();
     room.pump();
-    room.roster.splice(1, 1, { ...late, seat: 2 });
+    room.roster.splice(1, 1, { ...late, seat: 0 });
     gg.a.rejoin('b', 'b2');
     room.pump();
     expect(gg.b2.state!.players).toEqual(['a', 'b2']);
@@ -646,8 +646,8 @@ describe('Stadt, Land, Fluss over the network', async () => {
 
   it('a new host takes over a picture round and the pictures stay', async () => {
     const room = new LocalGameRoom([
-      { id: 'a', seat: 0, name: 'A' },
-      { id: 'b', seat: 2, name: 'B' },
+      { id: 'a', seat: 2, name: 'A' },
+      { id: 'b', seat: 0, name: 'B' },
       { id: 'c', seat: 1, name: 'C' },
     ]);
     let host = 'a';
@@ -882,8 +882,8 @@ describe('Stadt, Land, Fluss: Zug zurück (over the network)', async () => {
 
   it('text: a flag vote taken back can be raised and voted on again by every client', async () => {
     const room = new LocalGameRoom([
-      { id: 'a', seat: 0, name: 'A' },
-      { id: 'b', seat: 2, name: 'B' },
+      { id: 'a', seat: 2, name: 'A' },
+      { id: 'b', seat: 0, name: 'B' },
       { id: 'c', seat: 1, name: 'C' },
     ]);
     const g = Object.fromEntries(ids.map((id) => [id, new SlfGame(room.net(id), { decks: () => ['normal'], mode: () => 'text' })]));

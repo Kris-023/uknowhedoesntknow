@@ -3,6 +3,7 @@ import { mulberry32 } from '../../core/rng';
 import type { DeckId } from '../../words/types';
 import { newSalt } from '../gleich/logic';
 import type { GameNet, Minigame } from '../minigame';
+import { byTableOrder } from '../tableOrder';
 import { stepKey } from '../undo';
 import {
   categoryPool,
@@ -248,7 +249,7 @@ export class SlfGame implements Minigame {
 
   start(): void {
     if (!this.isHost) return;
-    const order = [...this.net.members()].sort((a, b) => NET.seatOrder.indexOf(a.seat) - NET.seatOrder.indexOf(b.seat)).map((m) => m.id);
+    const order = [...this.net.members()].sort((a, b) => byTableOrder(a.seat, b.seat)).map((m) => m.id);
     if (order.length < 2) return;
     if (this.host) this.scores = { ...this.host.state.scores };
     const mode = this.room.mode();

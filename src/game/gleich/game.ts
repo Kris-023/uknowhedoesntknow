@@ -4,6 +4,7 @@ import { content } from '../../words/content';
 import { questionPool } from '../../words/lists';
 import type { DeckId } from '../../words/types';
 import type { GameNet, Minigame } from '../minigame';
+import { byTableOrder } from '../tableOrder';
 import { cleanWord, commitOf, GleichHost, newSalt, parseIntent, verifyReveal, type GleichState, type Intent, type Words } from './logic';
 
 const isStrings = (v: unknown): v is string[] => Array.isArray(v) && v.length <= 8 && v.every((x) => typeof x === 'string' && x.length <= 64);
@@ -152,7 +153,7 @@ export class GleichGame implements Minigame {
 
   start(): void {
     if (!this.isHost) return;
-    const order = [...this.net.members()].sort((a, b) => NET.seatOrder.indexOf(a.seat) - NET.seatOrder.indexOf(b.seat)).map((m) => m.id);
+    const order = [...this.net.members()].sort((a, b) => byTableOrder(a.seat, b.seat)).map((m) => m.id);
     if (order.length < 2) return;
     if (this.host) this.scores = { ...this.host.state.scores };
     const { normal, nsfw } = content().gleich;
