@@ -130,10 +130,12 @@ Selected `Settings` fields touched by this page:
 | `mouseRaw` | true | boolean; only effective where `pointerrawupdate` exists |
 | `renderScale` | 1 | 0.5 to 1 |
 | `reduceMotion` | `prefers-reduced-motion` | boolean, "Weniger Bewegung" |
-| `reduceFlicker` / `fadeBlackouts` | false / false | booleans, "Weniger Flackern" / "Stromausfälle überblenden" (the second only acts with the first) |
+| `reduceFlicker` / `fadeBlackouts` | false / true | booleans, "Weniger Flackern" / "Stromausfälle überblenden" (the second only acts with the first) |
 | `glow` | `standard` | `standard` / `mittel` / `niedrig` / `aus` (`GLOW_LEVELS` 1 / 0.5 / 0.15 / 0) |
 | `renderBrightness` | 1 | 0.5 to 2 |
-| `vignette` / `uiBlur` | false | booleans |
+| `vignette` / `uiBlur` | true | booleans |
+
+Why: `vignette`, `uiBlur` and `fadeBlackouts` default to on because that is the look chosen after testing; `fadeBlackouts` is stored independently, so switching on `Weniger Flackern` fades blackouts right away. `Unschärfe hinter Fenstern` costs GPU time every frame, so players on weak hardware can switch it off. Defaults only: saved values of existing players are kept, no `SETTINGS_VERSION` bump.
 | `voiceMode` | `mouth` | `mouth` / `open` / `auto` / `ptt` |
 | `musicVolume` / `announceVolume` | 0.7 / 0.8 | 0 to 1.5; 0 means off (no on/off switches any more) |
 | `room` | `parseOpts(undefined)` | see `RoomOpts` |

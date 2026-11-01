@@ -9,7 +9,7 @@ describe('settings defaults', () => {
     expect(s.voiceMode).toBe('mouth');
     expect(s.glow).toBe('standard');
     expect(s.renderBrightness).toBe(1);
-    expect([s.reduceFlicker, s.fadeBlackouts, s.vignette, s.uiBlur]).toEqual([false, false, false, false]);
+    expect([s.reduceFlicker, s.fadeBlackouts, s.vignette, s.uiBlur]).toEqual([false, true, true, true]);
     expect(persistedSettings(s).version).toBe(SETTINGS_VERSION);
   });
 

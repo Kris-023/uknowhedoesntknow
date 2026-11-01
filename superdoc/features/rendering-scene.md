@@ -88,7 +88,7 @@ All of it lives in `src/scene/world.ts:World`, mostly `updateCamera`.
 | --- | --- | --- |
 | `settings.glow` | `standard` | "Leuchten": bloom strength level, `standard` / `mittel` / `niedrig` / `aus` = 1 / 0.5 / 0.15 / 0 times `BLOOM.strength` (`src/ui/store.ts:GLOW_LEVELS`) |
 | `settings.renderBrightness` | 1 | Exposure multiplier, 0.5..2 |
-| `settings.vignette` | off | Switches the `FinishPass` vignette |
+| `settings.vignette` | on | Switches the `FinishPass` vignette |
 | `settings.renderScale` | 1 | Render resolution factor, 0.5..1 |
 | `settings.reduceMotion` | follows `prefers-reduced-motion` | "Weniger Bewegung": no camera shake, tunnel streaks at `REDUCED_STREAK_SPEED` |
 | `SHAKE.defaultMm` | 5 | Fixed shake base, times `MapScene.shake` |
