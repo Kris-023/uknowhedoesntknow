@@ -82,6 +82,8 @@ export class Session {
   train: Train = { kmh: 0, t0: 0, d0: 0 };
   blackoutAt: number | null = null;
   opts: RoomOpts = parseOpts(undefined);
+  /** Seat fill order and takeover rank: the room map's (`setSeatOrder`), `NET.seatOrder` until it is known. */
+  private seatOrder: readonly number[] = NET.seatOrder;
   private lastHello = -Infinity;
   /**
    * Host-Epoche: on a host, its own claim; on a client, the claim of the host it follows (as that host
@@ -308,6 +310,18 @@ export class Session {
     this.ev.train?.(this.train);
   }
 
+  /**
+   * The order seats fill in for newcomers, and which seat ranks first when a host has to be replaced
+   * (earlier = in the room longer). It depends on the room's map, which the session does not know, so
+   * the game driver sets it on every peer from the map the room shows; same map, same order, same
+   * election. Nobody is reseated by a change: seats in the roster stay, only later joins and later
+   * elections follow the new order. Anything that is not a permutation of the seats is ignored.
+   */
+  setSeatOrder(order: readonly number[]): void {
+    const same = order.length === NET.seatOrder.length && NET.seatOrder.every((s) => order.includes(s));
+    if (same) this.seatOrder = [...order];
+  }
+
   /** Host only: change room settings for everyone. */
   setOpts(o: RoomOpts): void {
     if (this.role !== 'host') return;
@@ -425,7 +439,7 @@ export class Session {
    * list the dead).
    */
   private elect(connectedOnly: boolean, skip?: string): RosterEntry | undefined {
-    const rank = (e: RosterEntry) => NET.seatOrder.indexOf(e.seat);
+    const rank = (e: RosterEntry) => this.seatOrder.indexOf(e.seat);
     const ok = (e: RosterEntry) => e.id !== skip && (!connectedOnly || e.id === this.net.selfId || this.peers.has(e.id));
     const hinted = this.successor && this.now() - this.successor.at <= SUCCESSOR_MS ? this.roster.get(this.successor.id) : undefined;
     this.successor = null;
@@ -546,7 +560,7 @@ export class Session {
       const back = this.findGone(keys, state.name);
       // Seats of people who just dropped stay free for them while others are left.
       const held = new Set([...this.gone.values()].filter((g) => g !== back).map((g) => g.seat));
-      const seat = back && !used.has(back.seat) ? back.seat : (NET.seatOrder.find((s) => !used.has(s) && !held.has(s)) ?? NET.seatOrder.find((s) => !used.has(s)));
+      const seat = back && !used.has(back.seat) ? back.seat : (this.seatOrder.find((s) => !used.has(s) && !held.has(s)) ?? this.seatOrder.find((s) => !used.has(s)));
       if (seat === undefined) {
         this.net.send('full', null, from);
         return;

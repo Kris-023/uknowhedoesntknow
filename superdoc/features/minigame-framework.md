@@ -55,8 +55,8 @@ Every game folder has the same four files:
   current order in a module-level variable; the `World` constructor (`src/scene/world.ts`) calls it with `map.seats`, so a
   map swap updates it. `byTableOrder(a, b)` is the comparator over seat indices (hypertrain seats until a world exists;
   unknown seats go last). *Why:* the maps number their seats differently ([Maps](maps.md), "Seat layouts and turn order"),
-  so the order has to come from geometry. `NET.seatOrder` is *not* the turn order any more: it is only the order seats are
-  filled and the rank for host takeover ([Networking](networking.md)).
+  so the order has to come from geometry. The order seats are filled in (`fillOrder` in the same file, per map) is *not* the turn order: it is only who
+  sits where as players join and the rank for host takeover ([Networking](networking.md), [Maps](maps.md), "Fill order").
 
 ### Players, NPCs, fake peers
 
@@ -206,7 +206,7 @@ Two shared tools make a reload or a host change survivable. Nothing asks or stor
 | --- | --- | --- |
 | `UNDO.depth` | 5 | Decisions kept per round for Zug zurück |
 | `UNDO.resumeMinS` | 10 | Least number of seconds a taken-back Sag's-anders turn resumes with |
-| `NET.seatOrder` | `[0, 2, 1, 3]` | Seat fill order and host-takeover rank (not the turn order, see "Rounds") |
+| `NET.seatOrder` | `[0, 2, 1, 3]` | Default seat fill order and host-takeover rank; the map's own order replaces it (not the turn order, see "Rounds") |
 | `NET.rejoinMs` | 30 min | How long a returner gets seat and place back |
 | `NET.dropWaitMs` | 30 s | How long a "weiterspielen" request waits for the host to see the player gone |
 | `SCHAFFNER.loudLevel / loudS / windowS / cooldownS / penalty / showS` | 0.97 / 2.5 / 5 / 30 / 1 / 7 | Shouting trigger and fine |

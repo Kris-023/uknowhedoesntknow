@@ -199,7 +199,11 @@ export const NET = {
   /** Namespace on the relays; the room code is the room inside it. */
   appId: 'uknowhedoesntknow',
   maxPlayers: 4,
-  /** Seat fill order: the first two sit face to face (0 and 2 are opposite each other), not side by side. */
+  /**
+   * Default seat fill order (the hypertrain's). Every map has its own, derived from where its seats
+   * really are (`game/tableOrder.ts:fillOrder`) and handed to the session by main.ts; this is what
+   * the session uses until then, and the seat set the per-map order must be a permutation of.
+   */
   seatOrder: [0, 2, 1, 3] as readonly number[],
   /** Room code length (without the dash). 31 symbols, 8 chars ≈ 40 bits: the code is the only secret. */
   codeLength: 8,

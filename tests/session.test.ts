@@ -39,6 +39,42 @@ describe('Session', () => {
     }
   });
 
+  it('a seat order set from the map decides who fills which seat, and the default stays', () => {
+    const fill = (order?: number[]) => {
+      const hub = new MemoryHub();
+      const t = { ms: 1_000_000 };
+      const ps = [peer(hub, 'a', true, 0, t), peer(hub, 'bb', false, 0, t), peer(hub, 'ccc', false, 0, t), peer(hub, 'dddd', false, 0, t)];
+      if (order) ps[0].s.setSeatOrder(order);
+      hub.flush();
+      return ps.map((p) => p.s.mySeat);
+    };
+    // Join messages are delivered on flush: the order is set before anyone is seated.
+    expect(fill()).toEqual([0, 2, 1, 3]);
+    expect(fill([0, 1, 2, 3])).toEqual([0, 1, 2, 3]);
+    expect(fill([0, 3, 2, 1])).toEqual([0, 3, 2, 1]);
+    // Not a permutation of the seats: ignored.
+    expect(fill([0, 1, 2])).toEqual([0, 2, 1, 3]);
+    expect(fill([0, 1, 1, 3])).toEqual([0, 2, 1, 3]);
+  });
+
+  it('the host-takeover rank follows the seat order, and a change reseats nobody', () => {
+    const hub = new MemoryHub();
+    const t = { ms: 1_000_000 };
+    const a = peer(hub, 'a', true, 0, t);
+    const b = peer(hub, 'b', false, 0, t);
+    const c = peer(hub, 'c', false, 0, t);
+    hub.flush();
+    // Default order [0,2,1,3]: b has seat 2, c seat 1 -> b ranks before c.
+    expect([b.s.mySeat, c.s.mySeat]).toEqual([2, 1]);
+    // The map (and so the order) changes mid-room: everyone keeps their seat, c now ranks before b.
+    for (const p of [a, b, c]) p.s.setSeatOrder([0, 1, 2, 3]);
+    expect([a.s.mySeat, b.s.mySeat, c.s.mySeat]).toEqual([0, 2, 1]);
+    a.s.leave();
+    hub.flush();
+    expect(c.s.role).toBe('host');
+    expect(b.s.hostId).toBe('c');
+  });
+
   it('clock sync removes the wall-clock skew of a client', () => {
     const hub = new MemoryHub();
     const t = { ms: 1_000_000 };

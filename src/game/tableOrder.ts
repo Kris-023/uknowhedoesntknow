@@ -21,6 +21,40 @@ export function tableOrder(seats: readonly Pos[]): number[] {
   return seats.map((_, i) => i).sort((a, b) => turn(seats[a]) - turn(seats[b]));
 }
 
+/**
+ * The order seats fill in as players join: seat 0, the seat across the table from it, then the seat
+ * next to seat 0 and the one across from that. So the first two players face each other on every
+ * map, and the second pair does too. "Across" comes from where the seats really are and which way
+ * they look (`yaw`, 0 faces +z): the seat in front of seat 0 that looks back at it, the least off to
+ * the side. Distance alone would pick the diagonal on a rectangular table. The maps number their
+ * seats differently (hypertrain: 0 faces 2; the laundromat and others: 0 faces 1; the diner booth:
+ * 0 faces 1 as well), so a fixed list of numbers cannot be right on all of them.
+ */
+export function fillOrder(seats: readonly (Pos & { yaw: number })[]): number[] {
+  if (seats.length < 2) return seats.map((_, i) => i);
+  const [first, ...others] = seats.map((s, i) => ({ s, i }));
+  const fx = Math.sin(first.s.yaw);
+  const fz = Math.cos(first.s.yaw);
+  const view = (o: { s: Pos & { yaw: number } }) => {
+    const dx = o.s.x - first.s.x;
+    const dz = o.s.z - first.s.z;
+    const along = dx * fx + dz * fz;
+    const side = Math.abs(dx * fz - dz * fx);
+    const facing = Math.sin(o.s.yaw) * fx + Math.cos(o.s.yaw) * fz < 0;
+    return { along, side, facing, dist: Math.hypot(dx, dz) };
+  };
+  // In front of seat 0 and looking back at it, least to the side; failing that, simply the farthest.
+  const across = [...others].sort((a, b) => {
+    const va = view(a);
+    const vb = view(b);
+    const ok = (v: ReturnType<typeof view>) => (v.facing && v.along > 0 ? 0 : 1);
+    return ok(va) - ok(vb) || (ok(va) === 0 ? va.side - vb.side : vb.dist - va.dist);
+  })[0];
+  // The rest: whoever sits nearer to seat 0 first, then its counterpart.
+  const rest = others.filter((o) => o !== across).sort((a, b) => view(a).dist - view(b).dist);
+  return [first, across, ...rest].map((o) => o.i);
+}
+
 // Until the world says otherwise: the hypertrain's seats, the default map.
 let order = tableOrder([
   { x: -1.17, z: -0.45 },

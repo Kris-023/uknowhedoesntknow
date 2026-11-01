@@ -80,7 +80,7 @@ Altbau living room at 2 a.m.: low tile table, worn sofa, armchair, bean bag (sea
 
 ### Diner (`src/maps/diner/index.ts`)
 
-"Brätlingshof", 4 a.m.: red vinyl booths along the window wall, a counter with stools, a kitchen behind a hatch, a street with a neon sign outside. Players sit in the middle booth, seats 0 and 2 on one bench, 1 and 3 across it, so the "Sag's anders" teams sit side by side. A waitress (`src/maps/diner/events.ts:waitressPose`) and a cook (`events.ts:cookPose`, the bell rings once per 19 s loop) run on loops (`src/maps/diner/figures.ts`). Events: the deep-fryer flare (`events.ts:fryerFlare`, 64 s window, chance 0.75, with smoke-detector beeps) and a dying letter in the sign (`events.ts:signLetters`). `forceFlare` on the diner's map object lets the debug panel trigger the flare. The flames ignore the fuse: the kitchen light is added on top of the dimmed supply. The jukebox plays 16-bar songs in a seed-chosen key on the `music` channel. Blackouts use the `FUSE` window defined at the top of `src/maps/diner/index.ts`.
+"Brätlingshof", 4 a.m.: red vinyl booths along the window wall, a counter with stools, a kitchen behind a hatch, a street with a neon sign outside. Players sit in the middle booth, seats 0 and 2 on one bench, 1 and 3 across it, so the "Sag's anders" teams sit side by side. The first two players to join take 0 and 1, across the table (see "Fill order" below). A waitress (`src/maps/diner/events.ts:waitressPose`) and a cook (`events.ts:cookPose`, the bell rings once per 19 s loop) run on loops (`src/maps/diner/figures.ts`). Events: the deep-fryer flare (`events.ts:fryerFlare`, 64 s window, chance 0.75, with smoke-detector beeps) and a dying letter in the sign (`events.ts:signLetters`). `forceFlare` on the diner's map object lets the debug panel trigger the flare. The flames ignore the fuse: the kitchen light is added on top of the dimmed supply. The jukebox plays 16-bar songs in a seed-chosen key on the `music` channel. Blackouts use the `FUSE` window defined at the top of `src/maps/diner/index.ts`.
 
 ## Seat layouts and turn order
 
@@ -91,7 +91,19 @@ Seen from above (x to the right, z towards the bottom of the picture), the maps 
 | `hypertrain`, `diner` | top left | bottom left | top right | bottom right |
 | `waschsalon`, `buergeramt`, `spaeti`, `wg` | top left | top right | bottom left | bottom right |
 
-Turn order in every game (and the roster in the menu) is counter-clockwise around the table seen from above, starting top right: top right, top left, bottom left, bottom right. It is computed from the real seat positions by `src/game/tableOrder.ts:tableOrder`, so it is right on every layout; the `World` constructor calls `setTableSeats(map.seats)`, which also covers a map swap. *Why:* the seat numbers are not geometry, and a fixed table of seat numbers would be wrong on half the maps. `NET.seatOrder` is a separate thing, only the order seats are filled and the host-takeover rank ([Networking](networking.md)). Details of the helper: [Minigame framework](minigame-framework.md), "Rounds".
+Turn order in every game (and the roster in the menu) is counter-clockwise around the table seen from above, starting top right: top right, top left, bottom left, bottom right. It is computed from the real seat positions by `src/game/tableOrder.ts:tableOrder`, so it is right on every layout; the `World` constructor calls `setTableSeats(map.seats)`, which also covers a map swap. *Why:* the seat numbers are not geometry, and a fixed table of seat numbers would be wrong on half the maps. The order seats are *filled* in is a separate thing, see below. Details of the helper: [Minigame framework](minigame-framework.md), "Rounds".
+
+### Fill order (who sits where as players join)
+
+Seats fill so that the first two players face each other, and so do the next two: seat 0, the seat across from it, the seat next to seat 0, the seat across from that. It is derived per map from the real seats by `src/game/tableOrder.ts:fillOrder`: "across" is the seat in front of seat 0 (along its `yaw`) that looks back at it, the least off to the side; the nearer of the other two comes next. Distance alone would pick the diagonal. Results:
+
+| Map | Fill order | Why |
+| --- | --- | --- |
+| `hypertrain` | `[0, 2, 1, 3]` | 0 and 2 face each other along the coach; 1 and 3 are the second pair |
+| `waschsalon`, `buergeramt`, `spaeti`, `wg` | `[0, 1, 2, 3]` | 0 and 1 face each other across the table, 2 and 3 likewise |
+| `diner` | `[0, 1, 2, 3]` | 0 and 1 sit on opposite benches of the booth (0 and 2 share a bench) |
+
+`main.ts` hands the result to the session (`Session.setSeatOrder`) when it builds the world and on every map swap. *Why:* the old fixed `NET.seatOrder = [0, 2, 1, 3]` only put the first two across from each other on the hypertrain (on the other four maps 0 and 2 sit side by side, and on the diner 0 and 2 share a bench); the user wants the first two players face to face on every map. The turn order above is unchanged: still counter-clockwise from top right, whoever sits where. A map swap reseats nobody; it only changes who fills the free seats next and the takeover rank ([Networking](networking.md)).
 
 ## How to add a map
 

@@ -24,6 +24,7 @@ import { NameTags } from './ui/nametags';
 import { UndoButton } from './ui/undoButton';
 import { LocalGameRoom, sessionNet, type GameNet, type GameUi, type Minigame, type PlayableGame } from './game/minigame';
 import { LoudTracker, SchaffnerFigure } from './game/schaffner';
+import { fillOrder } from './game/tableOrder';
 import { WhoamiBots } from './game/whoami/bots';
 import { CardsView } from './game/whoami/cardsView';
 import { WhoamiGame } from './game/whoami/game';
@@ -162,6 +163,8 @@ function launch(clock: SharedClock, session: Session | null, startCam: 'wagon' |
   // Rebuilt on a map change (swapMap); everything below reads these at call time, never a copy.
   let world = new World(clock, mapId);
   let players = world.players;
+  // Seats fill (and a host is picked) in the order of the room's map; every peer shows the room's map, so all agree.
+  session?.setSeatOrder(fillOrder(world.map.seats));
 
   let pipeline: Pipeline | null = null;
   try {
@@ -784,6 +787,7 @@ function launch(clock: SharedClock, session: Session | null, startCam: 'wagon' |
     next.adopt(prev);
     world = next;
     players = next.players;
+    session?.setSeatOrder(fillOrder(next.map.seats));
     if (panel.state.sight) {
       // Originals back first, so the old map frees its own materials and not the shared wireframes.
       setSightMode(prev.scene, false);
