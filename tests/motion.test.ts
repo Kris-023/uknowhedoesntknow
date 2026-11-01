@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { SharedClock } from '../src/core/clock';
 import { BLACKOUT } from '../src/config';
 import { coachPower, flick, haltCountdown, shake } from '../src/core/motion';
+import { REDUCED_STREAK_SPEED, streakSpeed } from '../src/scene/streakSpeed';
 import { hash01, mulberry32 } from '../src/core/rng';
 
 describe('shared-clock determinism', () => {
@@ -166,5 +167,14 @@ describe('comfort settings (visual only, never the events)', async () => {
     expect(shakeAmplitude(false, 5, 0.12)).toBeCloseTo(0.0006);
     expect(shakeAmplitude(true, 5, 1)).toBe(0);
     expect(shake(12.3, shakeAmplitude(true, 5, 1))).toEqual({ x: 0, y: 0, roll: 0 });
+  });
+});
+
+describe('Weniger Bewegung: tunnel lines', () => {
+  it('runs at full speed normally and slower when reduced', () => {
+    expect(streakSpeed(false)).toBe(1);
+    expect(streakSpeed(true)).toBe(REDUCED_STREAK_SPEED);
+    expect(REDUCED_STREAK_SPEED).toBeGreaterThan(0);
+    expect(REDUCED_STREAK_SPEED).toBeLessThan(1);
   });
 });

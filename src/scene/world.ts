@@ -9,6 +9,7 @@ import type { MapDef, MapId, MapScene } from '../maps/types';
 import { trainDistance, type Train } from '../net/protocol';
 import { setTableSeats } from '../game/tableOrder';
 import { collectResources, disposeExcept } from './dispose';
+import { streakSpeed } from './streakSpeed';
 
 /** Overview of the map, or first person from the head of the local player. */
 export type CamMode = 'wagon' | 'pov';
@@ -95,12 +96,12 @@ export class World {
     const sf = kmh / SPEED.maxKmh;
     this.distance = trainDistance(this.train, t) * SPEED.visualScale;
     const amp = shakeAmplitude(p.reduceMotion, SHAKE.defaultMm, this.map.shake);
-    this.map.update({ t, dt, kmh, distance: this.distance, blackouts: this.blackouts, forcedBlackoutAt: this.forcedBlackoutAt, comfort: comfortOf(p), camera: this.camera });
+    this.map.update({ t, dt, kmh, distance: this.distance * streakSpeed(p.reduceMotion), blackouts: this.blackouts, forcedBlackoutAt: this.forcedBlackoutAt, comfort: comfortOf(p), camera: this.camera });
     this.players.update(t, dt, this.cam === 'pov');
     this.npcs.update(t, dt, amp);
     this.zoomK += ((this.cam === 'pov' ? this.zoom : 0) - this.zoomK) * (1 - Math.exp(-dt * CAMERA.zoomRate));
     // Only moving maps widen the view with speed.
-    this.updateCamera(t, amp, sf * (this.map.speedFov ?? 0));
+    this.updateCamera(t, amp, sf * streakSpeed(p.reduceMotion) * (this.map.speedFov ?? 0));
   }
 
   /** Current POV field-of-view factor (1 = normal); mouse sensitivity scales with it. */
