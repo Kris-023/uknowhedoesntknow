@@ -46,7 +46,7 @@ export interface FrameCtx {
 export interface MapScene {
   /** Parent of everything the world adds (people sit in this space). */
   readonly root: THREE.Object3D;
-  /** The four player seats, in seat-index order (0 and 1 face each other). */
+  /** The four player seats, in seat-index order. Layout differs per map; turn order comes from game/tableOrder.ts, not from the index. */
   readonly seats: readonly Spot[];
   readonly npcs: readonly NpcSpot[];
   /** Where the Schaffner (or the map's equivalent) stands to tell seat `i` off; feet on the floor. */

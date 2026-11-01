@@ -7,6 +7,7 @@ import { Players } from '../game/players';
 import { mapDef } from '../maps';
 import type { MapDef, MapId, MapScene } from '../maps/types';
 import { trainDistance, type Train } from '../net/protocol';
+import { setTableSeats } from '../game/tableOrder';
 import { collectResources, disposeExcept } from './dispose';
 
 /** Overview of the map, or first person from the head of the local player. */
@@ -52,6 +53,7 @@ export class World {
     this.map = this.def.build(this.scene, clock.seed);
     // People come after the map: baked copies (the hypertrain's neighbour coaches) must not contain them.
     this.players = new Players(this.map.root, clock.seed, this.map.seats);
+    setTableSeats(this.map.seats);
     this.npcs = new Npcs(this.map.root, clock.seed, this.map.npcs);
     this.update(0, 0, { shakeMm: 0, shakeOn: false });
   }
