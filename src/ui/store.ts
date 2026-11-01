@@ -64,7 +64,6 @@ export interface Settings {
   /** Read the mouse from pointerrawupdate instead of mousemove (device events, not one per frame). */
   mouseRaw: boolean;
   /** Size of the "Wer bin ich?" cards over the heads, relative to WHOAMI.cardSizeM. */
-  cardScale: number;
   /** Room settings for the next room you create (the dialog next to "Raum erstellen"). */
   room: RoomOpts;
   /** Use the microphone in rooms (asked for when joining). */
@@ -111,7 +110,6 @@ function defaults(): Settings {
     mouseSens: 1,
     invertY: false,
     mouseRaw: true,
-    cardScale: 1,
     room: parseOpts(undefined),
     micOn: true,
     micDevice: '',
@@ -134,7 +132,7 @@ function defaults(): Settings {
 // append ONE step to UPGRADES (UPGRADES[n] turns an n save into an n+1 save), add a test in tests/settings.test.ts.
 // On load an old save runs every step in order, then is saved again at the current version.
 // The per-field checks in `parseSettings` stay as the safety net for broken values.
-export const SETTINGS_VERSION = 2;
+export const SETTINGS_VERSION = 3;
 
 const UPGRADES: Array<(o: Stored) => Stored> = [
   // 0 -> 1 (phase B): toggles become sliders/levels; shake and light preset are fixed (dropped).
@@ -155,6 +153,11 @@ const UPGRADES: Array<(o: Stored) => Stored> = [
   // 1 -> 2: "Nachschärfen" and "Bildhelligkeit" were removed. (Renderhelligkeit widened to 0.5..2; old values still fit.)
   (o) => {
     const { sharpen, imageBrightness, ...rest } = o;
+    return rest;
+  },
+  // 2 -> 3: "Kartengröße" was removed; the default card size is fixed.
+  (o) => {
+    const { cardScale, ...rest } = o;
     return rest;
   },
 ];
@@ -187,7 +190,6 @@ export function parseSettings(o: Stored): Settings {
     mouseSens: num(o.mouseSens, 0.2, 3, d.mouseSens),
     invertY: bool(o.invertY, d.invertY),
     mouseRaw: bool(o.mouseRaw, d.mouseRaw),
-    cardScale: num(o.cardScale, 0.5, 2, d.cardScale),
     room: parseOpts(o.room),
     micOn: bool(o.micOn, d.micOn),
     micDevice: typeof o.micDevice === 'string' && o.micDevice.length < 300 ? o.micDevice : d.micDevice,

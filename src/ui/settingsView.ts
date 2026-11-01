@@ -14,7 +14,7 @@ const SECTIONS: readonly { id: Section; label: string }[] = [
 /** The last sub-tab you looked at, for the next time the settings open (this page load only). */
 let lastSection: Section = 'voice';
 
-type SliderKey = 'renderScale' | 'renderBrightness' | 'cardScale' | 'ambientVolume' | 'musicVolume' | 'announceVolume' | 'voiceVolume' | 'micGain' | 'vadLevel' | 'mouseSens';
+type SliderKey = 'renderScale' | 'renderBrightness' | 'ambientVolume' | 'musicVolume' | 'announceVolume' | 'voiceVolume' | 'micGain' | 'vadLevel' | 'mouseSens';
 type ToggleKey = 'vignette' | 'uiBlur' | 'reduceMotion' | 'reduceFlicker' | 'fadeBlackouts' | 'quietAmbience' | 'echoCancel' | 'autoGain' | 'invertY' | 'mouseRaw';
 
 /** A hint under a control: fixed text, text that follows the settings, or ready-made markup. */
@@ -143,7 +143,6 @@ export class SettingsView {
         'Darstellung',
         this.slider('Auflösung', 'renderScale', 0.5, 1, 0.05, pct, { hint: 'Weniger rechnet schneller, vor allem auf 4K.' }),
         this.slider('Renderhelligkeit', 'renderBrightness', 0.5, 2, 0.05, pct, { hint: 'Macht die Szene heller oder dunkler.' }),
-        this.slider('Kartengröße', 'cardScale', 0.5, 2, 0.05, pct, { hint: 'Größe der „Wer bin ich?“-Karten über den Köpfen.' }),
       ),
       group(
         'Effekte',

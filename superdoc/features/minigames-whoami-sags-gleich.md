@@ -48,7 +48,7 @@ host-change recovery uses the shared helpers `tabStore` and `Recovery` described
 - **Head cards** are HTML overlays (`src/game/whoami/cardsView.ts:CardsView`), anchored at the card's bottom edge just above
   the head via `Players.cardPos`; scale from `WHOAMI.cardSizeM`, `WHOAMI.cardY`. A card is culled when `v.z > 1 || !cardOnScreen(ax, ay, px, cardHeight(px, aspect, font), w, h)`: behind the camera, or
   its whole rectangle outside the stage (`w` x `h` from `trackSize`). The rectangle is bottom-centre anchored, its width
-  is `px` (scaled by `settings.cardScale`), and its height is estimated from the `.card-tag` CSS (picture at the card's
+  is `px` (fixed, no setting), and its height is estimated from the `.card-tag` CSS (picture at the card's
   aspect plus name strip plus borders), so there is no layout read per frame. *Why:* a card grows up and sideways from
   its anchor, so a head just outside the edge can still show half a card. The name tag's step-aside follows the cull.
   Test: `tests/cardsCull.test.ts`.

@@ -2,7 +2,6 @@ import * as THREE from 'three';
 import { COLORS, WHOAMI } from '../../config';
 import { el } from '../../ui/dom';
 import { Placer, trackSize, type Size } from '../../ui/stageSize';
-import { settings } from '../../ui/store';
 import type { Players } from '../players';
 
 /** Very wide or tall pictures are clamped, so a card never turns into a strip. */
@@ -106,7 +105,7 @@ export class CardsView {
       // A hidden card ('?') is square; its stored aspect is reset below.
       const aspect = card === '?' ? 1 : t.aspect;
       // Same area for every aspect ratio, so no card looks more important than another.
-      const px = Math.max(28, (WHOAMI.cardSizeM * settings.cardScale * focal) / dist) * Math.sqrt(aspect);
+      const px = Math.max(28, (WHOAMI.cardSizeM * focal) / dist) * Math.sqrt(aspect);
       const font = Math.round(Math.max(9, Math.min(16, px / 9)) * 2) / 2;
       // The anchor is the card's bottom edge, just above the head.
       const ax = ((this.v.x + 1) / 2) * w;

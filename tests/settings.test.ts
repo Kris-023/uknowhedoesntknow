@@ -54,9 +54,9 @@ describe('upgrade 0 -> 1', () => {
   });
 
   it('keeps everything else and lands on the current version', () => {
-    const s = load({ mouseSens: 1.7, cardScale: 1.4, voiceMode: 'ptt', micDevice: 'abc' });
+    const s = load({ mouseSens: 1.7, renderScale: 0.8, voiceMode: 'ptt', micDevice: 'abc' });
     expect(s.mouseSens).toBe(1.7);
-    expect(s.cardScale).toBe(1.4);
+    expect(s.renderScale).toBe(0.8);
     expect(s.voiceMode).toBe('ptt');
     expect(s.micDevice).toBe('abc');
     expect(upgradeSettings({ mouseSens: 1.7 }).version).toBe(SETTINGS_VERSION);
@@ -73,7 +73,7 @@ describe('upgrade 1 -> 2', () => {
     const up = upgradeSettings({ version: 1, sharpen: true, imageBrightness: 1.3, renderBrightness: 1.2, vignette: true });
     expect(up).not.toHaveProperty('sharpen');
     expect(up).not.toHaveProperty('imageBrightness');
-    expect(up.version).toBe(2);
+    expect(up.version).toBe(SETTINGS_VERSION);
     const s = parseSettings(up);
     expect(s.renderBrightness).toBe(1.2);
     expect(s.vignette).toBe(true);
@@ -82,7 +82,7 @@ describe('upgrade 1 -> 2', () => {
   it('an unversioned save runs 0 -> 1 -> 2 in order', () => {
     const up = upgradeSettings({ musicOn: false, bloom: false, sharpen: true, imageBrightness: 0.8, renderBrightness: 1.4 });
     for (const k of ['musicOn', 'bloom', 'sharpen', 'imageBrightness']) expect(up).not.toHaveProperty(k);
-    expect(up.version).toBe(2);
+    expect(up.version).toBe(SETTINGS_VERSION);
     const s = parseSettings(up);
     expect(s.musicVolume).toBe(0);
     expect(s.glow).toBe('aus');
@@ -133,3 +133,21 @@ describe('safety net', () => {
 });
 
 afterEach(() => vi.unstubAllGlobals());
+
+describe('upgrade 2 -> 3', () => {
+  it('drops cardScale and keeps the other values', () => {
+    const up = upgradeSettings({ version: 2, cardScale: 1.4, mouseSens: 1.7 });
+    expect(up).not.toHaveProperty('cardScale');
+    expect(up.version).toBe(3);
+    expect(parseSettings(up).mouseSens).toBe(1.7);
+    expect(parseSettings(up)).not.toHaveProperty('cardScale');
+  });
+
+  it('an unversioned save runs 0 -> 1 -> 2 -> 3', () => {
+    const up = upgradeSettings({ cardScale: 1.4, sharpen: true, musicOn: false });
+    expect(up).not.toHaveProperty('cardScale');
+    expect(up).not.toHaveProperty('sharpen');
+    expect(up).not.toHaveProperty('musicOn');
+    expect(up.version).toBe(3);
+  });
+});
