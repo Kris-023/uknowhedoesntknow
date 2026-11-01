@@ -16,7 +16,7 @@ A map is the room around the table: geometry, light, background people, ambient 
   - `power`: supply 0..1 after the last `update`. Drives the relay clunk (`src/audio/ambience.ts:Ambience`), the frame tracer's "Stromausfall" and display states.
   - `events()`: German labels of what is happening this frame, shown by the stutter recorder (`src/main.ts` pushes them into the tags). Examples: `Gegenzug`, `Unwucht`, `Nachbar klopft`.
   - `shake`: camera shake factor (see the table). `speedFov`: optional extra fov degrees at full train speed; only Hypertrain sets it (6).
-  - `update(f: FrameCtx)`: per frame; `FrameCtx` carries `t`, `dt`, `kmh`, `distance`, `blackouts`, `forcedBlackoutAt`, `camera`.
+  - `update(f: FrameCtx)`: per frame; `FrameCtx` carries `t`, `dt`, `kmh`, `distance`, `blackouts`, `forcedBlackoutAt`, `comfort`, `camera`.
 - `SoundKit` is what a map's sound code gets (implemented by `src/audio/ambience.ts:Ambience`): `ctx`, `out` (one-off noises, follows the "Umgebung" volume), `bed` (steady layers, "Ruhige Umgebung" turns it down), `music` (own volume and switch), `noise` (2 s of white noise), `burst(at, dur)`, `announce(text, important?)` (ceiling-speaker chime, then browser speech) and `clunk(gain)`. `MapSound.update(t, power, kmh)` runs each frame while the room is open.
   *Why:* three channels (`out`, `bed`, `music`) so a player can quiet the constant hiss without losing the bell, the knock or the fuse, and mute the jukebox without losing either.
 
@@ -32,8 +32,13 @@ A map is the room around the table: geometry, light, background people, ambient 
 - The room option `blackouts` ("Stromausfälle") reaches maps as `FrameCtx.blackouts`. Off means the map swaps its window for one with `chance: -1`; a forced outage still works. A map change carries the setting and the forced time over (`src/scene/world.ts:World.adopt`).
 - Each map writes the result to `MapScene.power` and dims by it: tubes, point lights, glowing materials, screens. `Ambience.update` clunks the relay when power drops below 0.5 and again once it has stayed above for 0.8 s. *Why:* the restore also stutters, so a single threshold would clunk repeatedly.
 - Flicker sources: neon `src/core/motion.ts:flick` (Hypertrain, Späti, Waschsalon, Bürgeramt); `src/core/motion.ts:windowFlash` and the oncoming-train strobe (`src/core/motion.ts:oncoming`), Hypertrain; the Diner's dying sign letter (`src/maps/diner/events.ts:signLetters`); the WG fairy lights on a loose contact (`src/maps/wg/events.ts:fairyContact`, tested in `tests/map-wg.test.ts`); the Bürgeramt number display blinking `0001`; the Waschsalon sign buzz.
-- Camera shake: `src/core/motion.ts:shake` scaled by `MapScene.shake`; `World.update` multiplies the user's shake setting by it. *Why:* a coach rattles, a laundromat or diner barely does; standing NPCs still sway a little with it.
-- Lights read the global `src/config.ts:LIGHTS` preset every frame (`nacht` or `hell`, from the "Licht" setting via `applyLight` in `src/main.ts`). Maps are tuned for `nacht` and follow the preset through `LIGHTS.neonTubeHdr`, `LIGHTS.neonBlue` and `LIGHTS.hemi`, so switching presets needs no plumbing.
+- **Comfort (`Weniger Flackern`, `Stromausfälle überblenden`).** `FrameCtx.comfort` is a `Comfort {steady, fade}` (`src/core/motion.ts:comfortOf`; `fade` is true only together with `steady`). It changes how light is *drawn*, never what *happens*:
+  - `steady` (`Weniger Flackern`): `flick(t, seed, steady)` returns a constant (`STEADY_NEON` 0.95) and `windowFlash(..., steady)` the mean of the strobe, so brightness stays the same on average. Each map steadies its own sites: neon tubes (Hypertrain, neighbour coaches, Späti, Bürgeramt, the Waschsalon's bad tube), the Hypertrain window strobes and the oncoming-train strobe, the Diner's dying letter and fryer glow, the WG fairy lights, candle and TV, the Späti shop neon and TV, the Bürgeramt flickering tube and `0001` blink, the Waschsalon sign buzz. Slow blinks (below about 3 Hz) are left alone.
+  - Blackouts: each map keeps a `LightPower` (`src/core/motion.ts`) and feeds `LightPower.step(power, dt, comfort)` to its lights. Without comfort it returns the raw power unchanged. With `steady` the stuttery start and restore collapse into one clean cut: dark from the first dip below 0.5, back once the supply has been at or above 0.5 for 0.25 s. With `fade` that cut is eased with an exponential, time constant 0.15 s.
+  - *Why* the raw value stays: `map.power` / `world.power` are still the real supply, because sounds (relay clunk), display states, labels and game timing read them. Comfort is local and visual only, so it cannot desync anyone. `LightPower` is per-frame local state, not derived from the clock; it is the one exception to the pure-function rule in [shared-clock-determinism.md](shared-clock-determinism.md), allowed because nothing but this player's lights reads it.
+  - Adding a flickering light: take `f.comfort` from `FrameCtx`, pass `steady` to `flick`/`windowFlash` or write an explicit steady branch, and dim by the `LightPower` result, not by `map.power`.
+- Camera shake: `src/core/motion.ts:shake` scaled by `MapScene.shake`; `World.update` computes `shakeAmplitude(reduceMotion, SHAKE.defaultMm, map.shake)`: a fixed 5 mm base times the map factor, 0 on every map when `Weniger Bewegung` is on. *Why:* a coach rattles, a laundromat or diner barely does; standing NPCs still sway a little with it.
+- Lights read the global `src/config.ts:LIGHTS` values (the night look, one frozen literal) every frame. Maps are tuned for exactly these and follow them through `LIGHTS.neonTubeHdr`, `LIGHTS.neonBlue` and `LIGHTS.hemi`. The player's brightness settings do not touch `LIGHTS`; see [rendering-scene.md](rendering-scene.md).
 
 ### Changing the map in a running room
 
@@ -106,8 +111,8 @@ Turn order in every game (and the roster in the menu) is counter-clockwise aroun
 | --- | --- | --- |
 | `RoomOpts.map` | `src/net/protocol.ts` | host's map for the room, default `hypertrain`; the host can change it live |
 | `RoomOpts.blackouts` ("Stromausfälle") | `src/net/protocol.ts` | random power failures on or off (forced ones still work) |
-| "Licht" (`nacht` / `hell`) | `src/ui/store.ts` settings | global light preset, per player |
-| "Umgebung", "Ruhige Umgebung", music volume and switch | `src/ui/store.ts` settings | per-player sound channels (`out`, `bed`, `music`) |
+| "Weniger Flackern", "Stromausfälle überblenden", "Weniger Bewegung" | `src/ui/store.ts` settings | per-player comfort, reaches maps as `FrameCtx.comfort` and the shake amplitude |
+| "Umgebung", "Ruhige Umgebung", "Musik" volume (0 = off) | `src/ui/store.ts` settings | per-player sound channels (`out`, `bed`, `music`) |
 
 ## Related links
 

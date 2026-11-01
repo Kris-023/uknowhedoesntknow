@@ -28,26 +28,44 @@ Everything the player touches outside the 3D scene: the main menu before a room,
 
 ### Settings store
 
-- `src/ui/store.ts:Settings` is the full interface; `settings` is the one live object. **Change it only via `updateSettings(patch)`**, which does `Object.assign`, writes to storage and calls every listener. `onSettings(f)` registers a listener and returns the unsubscribe function. Non-UI code (renderer, voice, audio, `main.ts:applyLight`) reads `settings.x` directly and re-reads on `onSettings`.
-- Storage keys: `ukhdk.settings.v1` (all of `Settings`, including the pending `room` options) and `ukhdk.profile.v1` (own character and name, `loadProfile`/`saveProfile`). Other `ukhdk.*` keys are written elsewhere: `ukhdk.lists.v1`, `ukhdk.deckkey.v1`, `ukhdk.player.v1`, `ukhdk.token.<code>` (see [custom-lists.md](custom-lists.md)), and the session key `ukhdk.inroom`.
-- **Per-field validation, no migrations.** `loadSettings` reads the JSON and validates every field on its own: numbers must be inside the field's `min..max` (`num`), booleans must be booleans (`bool`), enums must match a known value, `light` must be a key of `LIGHT_PRESETS`, `micDevice` a string under 300 characters, `room` goes through `parseOpts`. An invalid or missing field takes its default from `defaults()`; the others survive. Unknown keys are dropped at the next `updateSettings` write because the whole `settings` object is rewritten. *Why:* the `.v1` suffix is a last-resort escape hatch, not a migration scheme. Adding a field needs only a default and a validator line; old saves keep working, so there is no version bump and no migration code to maintain.
-- `defaults()` reads `prefers-reduced-motion`: with it set, `shakeOn` starts off.
+- `src/ui/store.ts:Settings` is the full interface; `settings` is the one live object. **Change it only via `updateSettings(patch)`**, which does `Object.assign`, writes to storage (with the version, `persistedSettings`) and calls every listener. `onSettings(f)` registers a listener and returns the unsubscribe function. Non-UI code (renderer, voice, audio, `main.ts:applyRender`) reads `settings.x` directly and re-reads on `onSettings`.
+- Storage keys: `ukhdk.settings.v1` (all of `Settings` plus `version`, including the pending `room` options) and `ukhdk.profile.v1` (own character and name, `loadProfile`/`saveProfile`). The `.v1` in the key is not the settings version: that lives inside the saved object. Other `ukhdk.*` keys are written elsewhere: `ukhdk.lists.v1`, `ukhdk.deckkey.v1`, `ukhdk.player.v1`, `ukhdk.token.<code>` (see [custom-lists.md](custom-lists.md)), and the session key `ukhdk.inroom`.
 - Storage can be missing or throw (private window, blocked site data): `read`/`write` swallow the error, everything works, nothing is remembered. A profile without a valid name counts as the first visit and starts onboarding.
-- To add a setting: field + comment in `Settings`, default in `defaults`, validator in `loadSettings`, a control in `SettingsView`; sliders also need the key in `SliderKey`, toggles in the key union of `toggle`.
+
+#### Settings version and upgrade chain
+
+- `SETTINGS_VERSION` (now 1) is stored in every save. `UPGRADES[n]` is one step that turns a version-n save into a version-n+1 save; a save without `version` counts as 0.
+- Load (`loadSettings`): `upgradeSettings` runs every step from the save's version up to the current one, in order, then `parseSettings` validates the result field by field (numbers inside `min..max`, booleans, enums, `micDevice` a short string, `room` through `parseOpts`; anything broken or missing takes its default from `defaults()`). If the save was older, it is written back at once, so the next load needs no steps and dropped fields are gone. A save with a *newer* version than the code knows (a rolled-back deploy) is only validated, never upgraded.
+- The per-field validation stays as the safety net for hand-edited or damaged values; it is not the migration mechanism.
+- **The rule.** When you change the settings *shape* (rename, remove or re-scale a field, change what a value means): bump `SETTINGS_VERSION` by one, append ONE step to `UPGRADES`, and add a test in `tests/settings.test.ts`. An old save then runs every step in order, so nothing the player set is lost. Adding a plain new field with a default needs none of this (the validator fills it in).
+  *Why:* "so we can properly migrate older configs … without losing any data" (the maintainer's requirement). A bare "invalid field -> default" rule silently resets a setting whose meaning changed; a step carries the old value over.
+- **How to add an upgrade step:**
+  1. Change `Settings`, `defaults()` and `parseSettings` to the new shape.
+  2. Raise `SETTINGS_VERSION` from n to n+1.
+  3. Append a function `(o) => ...` to `UPGRADES` (so it sits at index n). It receives the raw stored object and returns the n+1 shape: read the old keys, write the new ones, drop what is gone. Do not call `defaults()` or reuse live constants that may change later; a step describes one historical change and must not change when the code does. (Step 0 -> 1 reads `GLOW_LEVELS`, which is acceptable only because those levels are fixed.)
+  4. Test in `tests/settings.test.ts`: feed `upgradeSettings` a realistic old save and check the new fields, and check that an older save passes through every step to the current version.
+- Step 0 -> 1 (the settings rework): `musicOn: false` becomes `musicVolume` 0, `announcements: false` becomes `announceVolume` 0, `bloom: false` becomes `glow: 'aus'`, otherwise `bloomStrength` becomes the nearest `glow` level (1, 0.5, 0.15, 0; above 1 lands on `standard`). It drops `light`, `shakeOn`, `shakeMm`, `musicOn`, `announcements`, `bloom`, `bloomStrength`. *Why:* switches became levels and sliders, and the light preset and shake strength are fixed now (see [rendering-scene.md](rendering-scene.md), [maps.md](maps.md)).
+- `defaults()` reads `prefers-reduced-motion`: with it set, `reduceMotion` starts on.
+- To add a setting: field + comment in `Settings`, default in `defaults`, validator in `parseSettings`, a control in `SettingsView` (sliders need the key in `SliderKey`, toggles in `ToggleKey`). If it changes the shape of existing data, also add an upgrade step as above.
 
 ### Settings view
 
-- `src/ui/settingsView.ts:SettingsView` renders the settings and is embedded in three places: the main menu's settings tab, the Esc menu's settings tab (both through `MenuShell.show`) and the benchmark panel (`src/ui/benchPanel.ts:BenchPanel`, `new SettingsView(null, ['gfx', 'input'])`, so graphics and controls only). The constructor's second argument selects the sections.
-- Sub-tabs, in order: `Stimme` (voice, first because it has to work before anything else), `Ton`, `Grafik`, `Steuerung`. With fewer than three sections (the benchmark) the groups stay in one column instead of tabs. *Why:* the full list became too long for one column. All panes stay built and only one is shown, so the microphone test meter keeps running while another sub-tab is open.
-- The `extra` element (`MenuShell.settingsExtra`; the main menu returns the `Benchmark starten` group) is appended to the graphics pane. *Why:* that is where you go to tune the frame rate.
-- Helpers, all private methods that register a re-sync function in `syncs`, so every control follows `settings` whatever changed it (another view, the debug panel):
-  - `field(label, content, hint?, enabled?)`: label + control + hint row; `enabled` greys the row (`.off`) without disabling it.
+- `src/ui/settingsView.ts:SettingsView` renders the settings and is embedded in three places: the main menu's settings tab, the Esc menu's settings tab (both through `MenuShell.show`) and the benchmark panel (`src/ui/benchPanel.ts:BenchPanel`, `new SettingsView(null, ['gfx', 'input'])`, so graphics and controls only, untabbed, without the key list). The constructor's second argument selects the sections.
+- Sub-tabs, in order: `Stimme` (voice, first because it has to work before anything else), `Ton`, `Grafik`, `Steuerung`. With fewer than three sections the groups stay in one column instead of tabs. *Why:* the full list became too long for one column. All panes stay built and only one is shown, so the microphone test meter keeps running while another sub-tab is open. The last sub-tab is remembered in `lastSection` (this page load only); the sub-tab strip wraps.
+- Every control sits in a titled group (`fieldset.group`, heading always shown). Contents:
+  - **Stimme**: `Mikrofon` (on/off, `Gerät`, `Mikro-Pegel`, the `Test` meter); `Sprechen` (`Modus`: `Nur Mundbewegung` first, `Offen`, `Automatisch`, `Push-to-talk (V)`; `Schwelle` only for `Nur Mundbewegung` and `Automatisch`, because only those two have a gate); `Erweitert`, collapsed by default behind a disclosure button (`Rauschfilter`, `Echofilter`, `Auto-Pegel`). *Why* collapsed: rarely touched, and they made the page long.
+  - **Ton**: `Lautstärke` (`Umgebung`, `Musik`, `Durchsagen` with the hint `Der Schaffner spricht immer.`, `Stimmen` plus the `Testton` button); `Umgebung` (`Ruhige Umgebung`).
+  - **Grafik**: `Darstellung` (`Auflösung`, `Bildhelligkeit`, `Renderhelligkeit`, `Kartengröße`); `Effekte` (`Leuchten` as a segmented choice, `Nachschärfen`, `Vignette`, `Unschärfe hinter Fenstern`); `Komfort` (`Weniger Bewegung`, `Weniger Flackern`, `Stromausfälle überblenden`, shown only while `Weniger Flackern` is on; the value is stored independently and has no effect without it); then the benchmark group.
+  - **Steuerung**: `Maus` (`Empfindlichkeit` with the Gecko hint below, `Maus Y umkehren`, `Direkte Mauseingabe`, only offered when `'onpointerrawupdate' in window`, i.e. Chromium); `Tasten` (key list, only in the tabbed view).
+- The `extra` element (`MenuShell.settingsExtra`; the main menu returns the `Benchmark starten` group, the Esc menu none) is appended after the graphics groups. *Why:* that is where you go to tune the frame rate.
+- Helpers, all private methods that register a re-sync function in `syncs`, so every control follows `settings` whatever changed it (another view, the debug panel). Each builds a `field` row; `RowOpts` is `hint` (text, a function of the settings, or ready-made markup), `enabled()` (dims the row with `.off` and disables its controls), `visible()` (hides the row), `top` (label at the top, for tall content such as the mic test) and `control`:
+  - `field(label, content, opts)`: label + control + hint row.
   - `seg(label, opts, key, hint?)`: segmented buttons with `aria-pressed`.
-  - `toggle(label, key, hint?)`: an `An`/`Aus` button; `key` is limited to the boolean settings listed in its signature.
-  - `slider(label, key, min, max, step, show, enabled?, hint?)`: range input plus `<output>`; `key` is a `SliderKey`.
-- Controls under `Steuerung`: `Maus` sensitivity slider (0.2 to 3), `Direkte Mauseingabe` toggle (only offered when `'onpointerrawupdate' in window`, i.e. Chromium), `Maus Y umkehren`.
+  - `toggle(label, key, hint?, rowOpts?)`: an `An`/`Aus` button; `key` is a `ToggleKey`.
+  - `slider(label, key, min, max, step, show, opts?)`: range input plus `<output>`; `key` is a `SliderKey`; `opts.extra` appends an element (the test-tone button).
+- **`Unschärfe hinter Fenstern`** (`uiBlur`): `onSettings` in `settingsView.ts` toggles the class `ui-blur` on `body`; `src/style.css` then gives `.menu-frame`, `.panel`, `.bench`, `.hint-bar`, `.mic`, the "Wer bin ich?" boards and a few popups a translucent background plus `backdrop-filter: blur(12px)`. Name tags and cards are left out. *Why:* off by default, because a blur over the live canvas is redone every frame; name tags and cards are many and move every frame, so they stay sharp.
+- **Gecko hint**: `isGeckoLinux(ua)` is true for a `Gecko/<digits>` token without `like Gecko`, on Linux, not Android. Only then the `Empfindlichkeit` row shows the tip to start the browser with `MOZ_ENABLE_WAYLAND=0`. *Why:* in Gecko browsers on Linux/Wayland slow mouse moves barely register; running through XWayland helped in a test, so this is a likely but not certain cause. There is no input-code workaround; the README carries the same tip.
 - `dispose()` unsubscribes from `onSettings` and cancels the meter's `requestAnimationFrame`; call it whenever a view is removed.
-- The set of settings is going to be reworked (categories, new comfort options, removal of the `Licht` choice). This page describes the code as it is now.
 
 ### UI scale
 
@@ -92,13 +110,13 @@ This list is text only. The real handling lives with each game and with `VOICE.p
 2. Type a name (or skip; a random one is used). `Raum erstellen` makes a code and starts hosting; `Raum-Einstellungen` opens the dialog first. The map choice sits under the buttons.
 3. To join: paste the code or open an invite link and press `Beitreten`.
 4. In play, click into the picture to lock the mouse, move to look, hold the right button to zoom. Esc releases the mouse and opens the menu; `Zurück ins Spiel` locks it again.
-5. `Einstellungen` has the sub-tabs `Stimme`, `Ton`, `Grafik`, `Steuerung`; every change applies at once and is remembered in this browser.
+5. `Einstellungen` has the sub-tabs `Stimme`, `Ton`, `Grafik`, `Steuerung`, each split into titled groups; every change applies at once and is remembered in this browser.
 
 ## Options
 
 | Storage key | Content | Validation |
 | --- | --- | --- |
-| `ukhdk.settings.v1` | whole `Settings` object, incl. `room` | per field, bad value -> default |
+| `ukhdk.settings.v1` | whole `Settings` object, incl. `room`, plus `version` | upgrade chain, then per field, bad value -> default |
 | `ukhdk.profile.v1` | own `PersonState` | `parseState` and `parseName`, else first visit |
 
 Selected `Settings` fields touched by this page:
@@ -109,7 +127,13 @@ Selected `Settings` fields touched by this page:
 | `invertY` | false | boolean |
 | `mouseRaw` | true | boolean; only effective where `pointerrawupdate` exists |
 | `renderScale` | 1 | 0.5 to 1 |
-| `shakeOn` | `!prefers-reduced-motion` | boolean |
+| `reduceMotion` | `prefers-reduced-motion` | boolean, "Weniger Bewegung" |
+| `reduceFlicker` / `fadeBlackouts` | false / false | booleans, "Weniger Flackern" / "Stromausfälle überblenden" (the second only acts with the first) |
+| `glow` | `standard` | `standard` / `mittel` / `niedrig` / `aus` (`GLOW_LEVELS` 1 / 0.5 / 0.15 / 0) |
+| `imageBrightness` / `renderBrightness` | 1 / 1 | 0.5 to 1.5 |
+| `sharpen` / `vignette` / `uiBlur` | false | booleans |
+| `voiceMode` | `mouth` | `mouth` / `open` / `auto` / `ptt` |
+| `musicVolume` / `announceVolume` | 0.7 / 0.8 | 0 to 1.5; 0 means off (no on/off switches any more) |
 | `room` | `parseOpts(undefined)` | see `RoomOpts` |
 
 ## Related links

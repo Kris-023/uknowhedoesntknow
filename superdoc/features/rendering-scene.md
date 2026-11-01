@@ -1,19 +1,21 @@
 # Rendering and scene: the post-processed night-train look
 
-How a frame gets drawn: one HDR render target with MSAA, optional bloom, tone mapping at the end. It also covers the hypertrain coach scene that feeds it (lighting, tunnel, neighbour coaches, junk), the camera, and the quirks that are easy to break. Other maps build their own scenes but share the pipeline, the `LIGHTS` values and the camera in `world.ts`; see [maps.md](maps.md).
+How a frame gets drawn: one HDR render target with MSAA, optional bloom, tone mapping, then an optional sharpen/vignette pass. It also covers the hypertrain coach scene that feeds it (lighting, tunnel, neighbour coaches, junk), the camera, and the quirks that are easy to break. Other maps build their own scenes but share the pipeline, the `LIGHTS` values and the camera in `world.ts`; see [maps.md](maps.md).
 
 ## How it works
 
 ### Render pipeline
 
-- `src/render/pipeline.ts:Pipeline` owns the `WebGLRenderer` (`antialias: false`) and an `EffectComposer` with three passes: `RenderPass` -> `ScaledBloomPass` -> `OutputPass`.
+- `src/render/pipeline.ts:Pipeline` owns the `WebGLRenderer` (`antialias: false`) and an `EffectComposer` with four passes: `RenderPass` -> `ScaledBloomPass` -> `OutputPass` -> `FinishPass`.
 - The composer's target is a `HalfFloatType` render target with `RENDER.msaaSamples` (4, clamped to `capabilities.maxSamples`). *Why:* with post-processing only fullscreen quads reach the canvas, so canvas MSAA does nothing. Earlier versions had no antialiasing at all with bloom on, and bloom off fell back to the costly MSAA canvas. Now both paths are antialiased and tone-mapped identically; bloom off only skips one pass (`bloom.enabled`).
 - `src/render/pipeline.ts:ScaledBloomPass` is `UnrealBloomPass` working at `BLOOM.resolutionScale` (0.5) of the render size by overriding `setSize`. *Why:* glow is soft anyway and full-size bloom cost about 10 % GPU; `BLOOM.strength` (0.72) and `radius` (0.25) were retuned lower for the half-size mips, which spread more haze.
 - `OutputPass` applies ACES filmic tone mapping and sRGB conversion. Because of that, materials write linear HDR values and colours above 1 are meaningful (see the neon tubes below).
-- `Pipeline.render` re-reads `LIGHTS.exposure` and `LIGHTS.bloomThreshold` and sets `bloom.strength = BLOOM.strength * bloomStrength` every frame. *Why:* the active light preset is mutable global state, so no plumbing is needed to switch it.
+- `src/render/pipeline.ts:FinishPass` is a small custom `ShaderPass` that runs after `OutputPass`, in display space: a 3x3 sharpen (centre minus the four neighbours, strength `FINISH.sharpen` 0.5) and an edge-darkening vignette (`FINISH.vignette` 0.55). Each part is a uniform; with both off the pass is disabled outright (`finish.enabled = sharpen || vignette`), so it costs nothing. *Why:* it must come after tone mapping so the kernel works on what the player sees, not on HDR values.
+- `Pipeline.render` re-reads `LIGHTS.exposure` and `LIGHTS.bloomThreshold` every frame and sets `bloom.strength = BLOOM.strength * bloomStrength` and `renderer.toneMappingExposure = LIGHTS.exposure * renderBrightness`. Bloom is off at `glow: 'aus'` and in the "Meine Sicht" debug view.
+- Brightness has two separate sliders on purpose. `Renderhelligkeit` (`settings.renderBrightness`) is the exposure multiplier, so bright parts also glow more. `Bildhelligkeit` (`settings.imageBrightness`) is a CSS `filter: brightness()` on the canvas (`Pipeline.setImageBrightness`; no filter at exactly 1), i.e. it scales the whole finished picture, including what the browser upscales at a lower `Auflösung`. Both run 0.5 to 1.5.
 - `r.info.autoReset = false` plus a manual `info.reset()` per `render()`. *Why:* the composer runs several passes, and the stats readout should count the whole frame.
 - `Pipeline.setView(scene, camera)` swaps what the `RenderPass` draws on a map change, so renderer, canvas and passes survive.
-- `src/main.ts:applyBloom` (despite the name it applies all three settings) pushes `settings.bloom && !panel.state.sight`, `settings.bloomStrength` and `settings.renderScale` into the pipeline, on start and on every settings change. The "Meine Sicht" debug view forces bloom off.
+- `src/main.ts:applyRender` pushes `settings.glow !== 'aus' && !panel.state.sight`, `GLOW_LEVELS[settings.glow]` (1 / 0.5 / 0.15 / 0 for `Leuchten` Standard / Mittel / Niedrig / Aus), `renderBrightness`, `imageBrightness`, `sharpen`, `vignette` and `renderScale` into the pipeline, on start and on every settings change. The "Meine Sicht" debug view forces bloom off.
 
 ### Render scale
 
@@ -26,11 +28,10 @@ How a frame gets drawn: one HDR render target with MSAA, optional bloom, tone ma
 - Light units are the same story: r155+ uses physical units, r128 multiplied direct light by PI. `src/config.ts:LIGHT_SCALE` (= PI) restores the old numbers, and `POINT_LIGHT_SCALE` (0.9) is smaller because physical falloff explodes within 1 m while the neon lights hang 10 to 30 cm below the ceiling. Config values stay in "prototype units"; multiply at the point of use.
 - Do NOT turn `ColorManagement` back on or convert hex colours to "fix" something; retune the value instead, or every colour in every map shifts.
 
-### Lighting and presets
+### Lighting
 
-- `src/config.ts:LIGHT_PRESETS` has two looks, `nacht` (default; neon carries the room, everything else a faint fill, exposure 0.85, bloom threshold 0.28) and `hell` (the brighter first look, exposure 1.15, threshold 0.62, tubes lifted to HDR 3.2). A preset is a `LightPreset`: `hemi`, `ceilingWhite`, `neonBlue`, `window`, `neonTubeHdr`, `frameOpacity`, `exposure`, `bloomThreshold`.
-- `src/config.ts:LIGHTS` is the active preset, a mutable copy of `nacht`. `src/main.ts:applyLight` runs `Object.assign(LIGHTS, LIGHT_PRESETS[settings.light])` at start and on every settings change. Every consumer reads `LIGHTS` per frame instead of caching it. *Why:* switching is one `Object.assign`, no plumbing through scenes.
-- Maps are tuned for `nacht`. Other maps scale their own constants by ratios against the nacht numbers (for example `LIGHTS.neonBlue / 0.9` in `src/maps/waschsalon/index.ts`, `LIGHTS.bloomThreshold / 0.28` in `src/maps/spaeti/index.ts`), so they follow the preset without hard-coding it.
+- `src/config.ts:LIGHTS` is one frozen literal, the night look (`LightPreset`: `hemi`, `ceilingWhite`, `neonBlue`, `window`, `neonTubeHdr`, `frameOpacity`, `exposure` 0.85, `bloomThreshold` 0.28): the neon carries the room, everything else is a faint fill. Every consumer reads `LIGHTS` per frame. The former `Licht` choice (`nacht` / `hell`, `LIGHT_PRESETS`, `applyLight`) is gone. *Why:* `Licht` acted like one more bloom selector and was inconsistent with the other graphics settings; all maps are tuned for `nacht` only; the player's need ("too dark / too bright") is now served by the two brightness sliders, which act on the output and never on `LIGHTS`.
+- Other maps scale their own constants by ratios against the nacht numbers (for example `LIGHTS.neonBlue / 0.9` in `src/maps/waschsalon/index.ts`, `LIGHTS.bloomThreshold / 0.28` in `src/maps/spaeti/index.ts`); keep that ratio style so the maps stay tied to the one set of values.
 - *Why* `bloomThreshold` must sit above the brightest lit wall: only the neon tubes should glow. The tubes are pushed above the threshold with `neonTubeHdr` (colour multiplied above 1); the walls they light stay below it.
 - `src/scene/lighting.ts:buildLighting` (hypertrain): 20 neon segments (5 per row, ceiling and floor, both sides), each flickering with `core/motion.ts:flick` on its own seed. The lobby seed shifts every phase so two lobbies don't flicker in lockstep. A tube is a `MeshBasicMaterial` whose colour is the neon colour times `0.04 + 0.96 k` times `neonTubeHdr`; the halo is an additive plane with the `glow` texture (a cheap fake bloom that also covers bloom being off).
 - *Why* "lean" lights: every point light costs every lit pixel. The default set is 4 point lights (two window lights, one merged blue light per side) instead of 11 (about 24 % GPU), compensated by the `LEAN` gains (`hemiGain`, `blueGain`, `blueDistance`). `?lights=full` in a dev build brings back the full set for comparison (`leanLights`); production always uses lean.
@@ -76,7 +77,7 @@ All of it lives in `src/scene/world.ts:World`, mostly `updateCamera`.
 
 - Modes (`CamMode`): `'wagon'` is the overview camera from `MapScene.overview` (position, look-at, fov); `'pov'` is first person from the local player's head.
 - POV position follows the head's `rig.eye`, but the direction is computed from `players.look` (yaw and pitch from the mouse) plus the seat rotation, not from the head bone. *Why:* taking it from the head made the view trail behind the mouse; head smoothing, the lagging torso turn and its lean kept it drifting after the mouse stopped.
-- Shake: `amp = shakeOn ? shakeMm / 1000 * map.shake : 0`; `core/motion.ts:shake` gives x/y/roll noise seeded from the clock seed. POV applies 0.6 of it to position and look target plus a small roll. The same `amp` drives NPC sway (`Npcs.update`). `MapScene.shake` is the per-map factor: hypertrain 1, the other rooms small values (0.08 to 0.12, the laundromat varies with its imbalance), `placeholder` 0. `SHAKE.maxMm` is 30, default 5; players whose OS asks for reduced motion start with shake off.
+- Shake: `amp = shakeAmplitude(reduceMotion, SHAKE.defaultMm, map.shake)` (`core/motion.ts`): the fixed base `SHAKE.defaultMm` (5 mm) times the map factor, 0 on every map with `Weniger Bewegung`; `core/motion.ts:shake` gives x/y/roll noise seeded from the clock seed. POV applies 0.6 of it to position and look target plus a small roll. The same `amp` drives NPC sway (`Npcs.update`). `MapScene.shake` is the per-map factor: hypertrain 1, the other rooms small values (0.08 to 0.12, the laundromat varies with its imbalance), `placeholder` 0. *Why* no strength slider any more: one fixed strength is enough, the real need is a switch for people who get motion sick; players whose OS asks for reduced motion start with `reduceMotion` on.
 - FOV: POV base is `CAMERA.seatFov` (74); the overview uses the map's `overview.fov` plus a slow breathing term `1.5 * sin(0.4 t)`. Both add `speedFactor * MapScene.speedFov` (`sf = kmh / SPEED.maxKmh`); only the hypertrain sets `speedFov` (6 degrees at full speed), so only moving maps widen.
 - Zoom: right mouse in POV sets `world.zoom = 1`, release sets 0 (`src/main.ts`, `mousedown`/`mouseup`; `contextmenu` is suppressed on the stage). `World.update` smooths it into `zoomK` with rate `CAMERA.zoomRate` (10); `World.fovFactor` is `1 - (1 - CAMERA.zoomFovFactor) * zoomK` with `zoomFovFactor` 0.38. *Why:* to read the cards on other players' heads. `fovFactor` multiplies the POV FOV and also the mouse sensitivity (`src/main.ts:mouseK`), so turning speed on screen stays constant when zoomed. Outside POV the zoom target is forced to 0.
 - Projection: `PerspectiveCamera(CAMERA.wagonFov, 16/9, 0.05, 120)`, aspect updated on resize in `main.ts`; `updateProjectionMatrix` runs once per frame after the FOV changes.
@@ -85,11 +86,13 @@ All of it lives in `src/scene/world.ts:World`, mostly `updateCamera`.
 
 | Key | Default | Meaning |
 | --- | --- | --- |
-| `settings.light` | `nacht` | Light preset, `nacht` or `hell` (`src/ui/store.ts`) |
-| `settings.bloom` | on | Bloom pass on/off |
-| `settings.bloomStrength` | 1 | Multiplier on `BLOOM.strength`, 0..2 |
+| `settings.glow` | `standard` | "Leuchten": bloom strength level, `standard` / `mittel` / `niedrig` / `aus` = 1 / 0.5 / 0.15 / 0 times `BLOOM.strength` (`src/ui/store.ts:GLOW_LEVELS`) |
+| `settings.renderBrightness` | 1 | Exposure multiplier, 0.5..1.5 |
+| `settings.imageBrightness` | 1 | CSS brightness on the canvas, 0.5..1.5 |
+| `settings.sharpen` / `vignette` | off | Switch the `FinishPass` parts |
 | `settings.renderScale` | 1 | Render resolution factor, 0.5..1 |
-| `settings.shakeOn` / `shakeMm` | on (off with reduced motion) / 5 | Camera shake, 0..30 mm |
+| `settings.reduceMotion` | follows `prefers-reduced-motion` | "Weniger Bewegung": no camera shake |
+| `SHAKE.defaultMm` | 5 | Fixed shake base, times `MapScene.shake` |
 | `RENDER.maxPixelRatio` | 2 | Cap on device pixel ratio |
 | `RENDER.msaaSamples` | 4 | MSAA on the HDR target |
 | `BLOOM.resolutionScale` | 0.5 | Bloom works at this fraction of render size |

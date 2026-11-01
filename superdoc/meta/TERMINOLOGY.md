@@ -24,6 +24,17 @@ Project-specific vocabulary. When the user uses a term defined here, use the sam
 - **Durchsage** — a spoken announcement through the browser's speech synthesis (halts on the Hypertrain, calls in the Bürgeramt, and the Schaffner's scolding). Setting "Durchsagen" switches the ambient ones; the Schaffner's always play.
 - **Schaffner** — the conductor figure who scolds players who talk too loud (`src/game/schaffner.ts`). Three modes: off (`Schaffner aus`), `nur ermahnen` (warns only), `mit Punktabzug` (warns and costs a point). See [voice-audio](../features/voice-audio.md).
 - **Ruhige Umgebung** — setting `quietAmbience`: lowers the steady ambience bed (rumble, hum, rain), one-off noises like a bell or knock stay as they are.
+- **Nur Mundbewegung** — voice mode `voiceMode: 'mouth'`, the default: no audio is sent, only the player's mouth level (message `lvl`) while it is above the Schwelle, so mouths and the Schaffner work while the group talks over another voice app. The other modes are Offen, Automatisch, Push-to-talk. See [voice-audio](../features/voice-audio.md).
+- **Schwelle** — setting `vadLevel`: the level above which Automatisch opens the gate or Nur Mundbewegung moves the mouth.
+
+### Graphics and comfort
+
+- **Leuchten** — setting `glow`, the strength of the bloom around bright lights: Standard (100 %), Mittel (50 %), Niedrig (15 %), Aus (0 %); `src/ui/store.ts:GLOW_LEVELS`. See [rendering-scene](../features/rendering-scene.md).
+- **Bildhelligkeit / Renderhelligkeit** — two separate brightness sliders. *Bildhelligkeit* (`imageBrightness`) is a CSS brightness filter on the finished canvas picture; *Renderhelligkeit* (`renderBrightness`) is the renderer's exposure multiplier, so lit parts and glow change with it. Both 50 to 150 %. They replaced the old `Licht` (Nacht/Hell) choice, which no longer exists.
+- **Weniger Bewegung** — setting `reduceMotion`: no camera shake (shake itself is a fixed 5 mm times the map factor; the old `Wackeln` strength is gone).
+- **Weniger Flackern** — setting `reduceFlicker`: lights stay steady instead of flickering, and a blackout becomes one clean cut. Visual only; events, sounds and timing stay as they are.
+- **Stromausfälle überblenden** — setting `fadeBlackouts`: with Weniger Flackern, blackouts fade out and in softly instead of cutting. Has no effect (and is hidden) without Weniger Flackern. Not the same as the room option **Stromausfälle** (whether random blackouts happen at all).
+- **Nachschärfen / Vignette / Unschärfe hinter Fenstern** — optional picture effects: sharpen pass, darker corners, blur behind menus and HUD panels.
 
 ### Games and content
 
@@ -41,6 +52,8 @@ Project-specific vocabulary. When the user uses a term defined here, use the sam
 
 - **Meine Sicht** — debug view that swaps tagged meshes for role-coloured wireframes (`src/debug/sight.ts`). Cyan in the UI. See [debug-build](../features/debug-build.md).
 - **Bench / Benchmark** — a solo round against bots with live frame stats and recorders, started from the main menu (`Einstellungen` → `Grafik` → `Benchmark starten`; `src/ui/benchPanel.ts`).
+- **Mundbewegung testen** — toggle in the Bench panel: the own microphone level (with the Schwelle) moves the mouths of all bots, to check the mouth animation alone.
+- **Settings version / Upgrade chain (Upgrade-Kette)** — `SETTINGS_VERSION` in `src/ui/store.ts` and the list `UPGRADES` of one-step migrations; an old saved settings object runs through every step so no setting is lost. Rule and recipe: [menu-settings](../features/menu-settings.md), "Settings version and upgrade chain".
 - **Coach** — ambiguous, always say which one:
   - *the coach in `src/main.ts`* is the game driver: it wires the minigames to the net, UI and scene through the `Minigame`/`PlayableGame` interfaces.
   - *the coach in `src/scene/coach.ts`* is the train car (Wagen) geometry of the Hypertrain.

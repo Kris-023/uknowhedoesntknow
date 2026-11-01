@@ -62,8 +62,8 @@ Do NOT style a pressed state with a custom class; use `aria-pressed`, the CSS ke
 
 ## Settings forms
 
-- `.group` + `.group-title` — a titled section of a form.
-- `.field` — a row, a two-column grid: `.field-label` left, the control right, optional `.field-hint` below the control. `.field.off` dims a row that does not apply (opacity .45).
+- `.group` + `.group-title` — a titled section of a form (a `fieldset` with a `legend`; every group keeps its heading). A group can fold: put a `.disclosure` button (`aria-expanded`, `▸`/`▾` via `::before`) in the legend and the rows in a `.group-body` that gets `hidden` (the settings' `Erweitert`).
+- `.field` — a row, a two-column grid: `.field-label` left, the control right, optional `.field-hint` below the control (`.field-hint code` styles an inline command). The label column is 130px wide. `.field.off` dims a row that does not apply (opacity .45); `.field.top` aligns the label to the top for tall controls (the mic test); a row with `hidden` is not shown at all. Settings sub-tabs are `.tabs.sub` and wrap. `body.ui-blur` (setting `Unschärfe hinter Fenstern`) gives menu frames, panels and HUD boxes a translucent background with `backdrop-filter: blur(12px)`; add a new panel's selector to that rule, but not for things that are many or move every frame (name tags, cards), because a blur over the live canvas costs every frame.
 - Controls: `.text-input` (`.text-input.code` for the mono room code), `.select`, `.slider` (input plus `output`), `.swatches` (colour choices, buttons with `.swatch-btn`; `.seg button.swatch` is a segmented button with a small colour dot).
 
 ```ts

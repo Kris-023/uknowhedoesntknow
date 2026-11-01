@@ -118,7 +118,7 @@ the public methods. `roster` is mutable so tests can make someone leave and come
 - `src/game/schaffner.ts:LoudTracker` `feed(levels, dt, nowS)`: per player a leaky bucket; a level of at least
   `SCHAFFNER.loudLevel` fills it, quiet drains it, so "`loudS` of shouting within `windowS`" triggers; `cooldownS`
   per player. Returns the id to scold.
-- Only the host measures (per-frame loop in `launch()`: own mic level plus the received audio of each peer; skipped
+- Only the host measures (per-frame loop in `launch()`: own mic level plus each peer's level via `Voice.peerLevel`, i.e. their audio or, in "Nur Mundbewegung", the level they sent; skipped
   when the room's `schaffner` option is `'off'`), then broadcasts `sf:call {id}` and calls `callSchaffner` itself.
   Clients accept `sf:call` only from the host.
 - `src/game/schaffner.ts:SchaffnerFigure` is the 3D conductor shown beside the seat for `showS`.
