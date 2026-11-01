@@ -4,6 +4,7 @@ import type { PersonState } from '../src/characters/person';
 import { SharedClock } from '../src/core/clock';
 import { mulberry32 } from '../src/core/rng';
 import { parseOpts, parseState, parseWelcome, trainDistance } from '../src/net/protocol';
+import { Recovery, sessionNet } from '../src/game/minigame';
 import { Session } from '../src/net/session';
 import { MemoryHub } from '../src/net/transport';
 
@@ -375,5 +376,107 @@ describe('game messages around a rejoin', () => {
     hub.flush();
     expect(h.roster.has('p4')).toBe(true);
     expect(log).toEqual(expected);
+  });
+});
+
+describe('Recovery (ask for what I am missing)', () => {
+  function room() {
+    const hub = new MemoryHub();
+    const t = { ms: 1_000_000 };
+    const now = () => t.ms;
+    const mk = (id: string, host: boolean) => new Session(hub.connect(id), new SharedClock(1, now()), host, state(id.length), now, `tok-${id}`);
+    const h = mk('h', true);
+    const b = mk('b', false);
+    hub.flush();
+    return { hub, t, mk, h, b, hr: new Recovery(sessionNet(h)), br: new Recovery(sessionNet(b)) };
+  }
+
+  it('the host answers an ask, the reply reaches onReply once and ends the ask', () => {
+    const { hub, hr, br } = room();
+    hr.answer('x:cards', (q) => ({ you: q, cards: [1, 2] }));
+    const got: unknown[] = [];
+    br.ask('x:cards', 'me', { to: () => 'h', onReply: (d, from) => got.push([d, from]) });
+    hub.flush();
+    expect(got).toEqual([[{ you: 'me', cards: [1, 2] }, 'h']]);
+    expect(br.pending('x:cards')).toBe(false);
+  });
+
+  it('a peer that cannot answer yet stays silent and the ask is resent until it can', () => {
+    const { hub, hr, br } = room();
+    let ready = false;
+    hr.answer('x:q', () => (ready ? 'now' : undefined));
+    const got: unknown[] = [];
+    br.ask('x:q', null, { to: 'h', onReply: (d) => got.push(d) });
+    hub.flush();
+    br.tick(0);
+    br.tick(1_000);
+    hub.flush();
+    expect(got).toEqual([]);
+    ready = true;
+    br.tick(2_000);
+    hub.flush();
+    expect(got).toEqual(['now']);
+    br.tick(10_000);
+    hub.flush();
+    expect(got).toEqual(['now']);
+  });
+
+  it('gives up after maxTries sends', () => {
+    const { hub, hr, br } = room();
+    let asked = 0;
+    hr.answer('x:q', () => void asked++);
+    let gaveUp = 0;
+    br.ask('x:q', null, { to: 'h', onReply: () => {}, intervalMs: 100, maxTries: 3, onGiveUp: () => gaveUp++ });
+    for (let i = 0; i < 20; i++) {
+      br.tick(i * 100);
+      hub.flush();
+    }
+    expect(asked).toBe(3);
+    expect(gaveUp).toBe(1);
+    expect(br.pending('x:q')).toBe(false);
+  });
+
+  it('with done(), replies are taken until the game has everything; to-function follows the host', () => {
+    const { hub, h, hr, br } = room();
+    hr.answer('x:cards', () => 'part');
+    const got: unknown[] = [];
+    let have = 0;
+    br.ask('x:cards', null, { to: () => h.selfId, onReply: (d) => (got.push(d), have++), done: () => have >= 2, intervalMs: 100 });
+    hub.flush();
+    expect(br.pending('x:cards')).toBe(true);
+    br.tick(0);
+    br.tick(100);
+    hub.flush();
+    expect(got).toEqual(['part', 'part']);
+    expect(br.pending('x:cards')).toBe(false);
+  });
+
+  it('an ask from a just-rejoined player is answered even though the host has just learned of it', () => {
+    const { hub, mk, hr } = room();
+    hr.answer('x:q', () => 'hi');
+    hub.disconnect('b');
+    hub.flush();
+    const b2 = mk('b2', false);
+    const r2 = new Recovery(sessionNet(b2));
+    const got: unknown[] = [];
+    // Right at the start, before the welcome: sent to everyone (default).
+    r2.ask('x:q', null, { onReply: (d) => got.push(d) });
+    hub.flush();
+    expect(got).toEqual(['hi']);
+  });
+
+  it('asks for unknown topics are ignored and cancel stops an ask', () => {
+    const { hub, br, hr } = room();
+    let seen = 0;
+    hr.answer('x:q', () => ++seen);
+    br.ask('y:other', null, { to: 'h', onReply: () => {} });
+    br.cancel('y:other');
+    br.ask('x:q', null, { to: 'h', onReply: () => {} });
+    br.cancel('x:q');
+    br.tick(0);
+    br.tick(5_000);
+    hub.flush();
+    expect(br.pending('y:other')).toBe(false);
+    expect(seen).toBe(1); // only the immediate first send of x:q
   });
 });
