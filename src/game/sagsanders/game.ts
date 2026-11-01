@@ -2,9 +2,12 @@ import { NET, SAGS } from '../../config';
 import { parseCard } from '../../words/custom';
 import { drawCard, wordPool } from '../../words';
 import type { DeckId, WordCard } from '../../words/types';
-import type { GameNet, Minigame } from '../minigame';
+import { Recovery, type GameNet, type Minigame } from '../minigame';
 import { byTableOrder } from '../tableOrder';
 import { guessersOf, parseIntent, SagsHost, watchersOf, type Intent, type SagsState } from './logic';
+
+/** How long a missing card may take to arrive (pushed by the explainer) before I ask for it. */
+const CARD_GRACE_MS = 1500;
 
 /** Light shape check of the host's broadcast; the host is trusted for game decisions anyway. */
 function parseState(v: unknown): (SagsState & { sentAt: number }) | null {
@@ -45,12 +48,25 @@ export class SagsGame implements Minigame {
   /** Cards I drew this session, so a new round doesn't start with the same words. */
   private drawn = new Set<string>();
   private goneSince = new Map<string, number>();
+  /** Asks the explainer for the card I'm missing (after a reload, a lost message). */
+  private rec: Recovery;
+  /** Since when (tick time) a card I should see is missing, and the card number I last asked for. */
+  private missingSince: number | null = null;
+  private askedNo = -1;
 
   constructor(
     private net: GameNet,
     private room: SagsRoom,
   ) {
     net.onMessage((t, d, f) => this.onMessage(t, d, f));
+    this.rec = new Recovery(net);
+    // Only the explainer holds the card; only the people who watch for fouls may have it, never the guessers.
+    this.rec.answer('sa:card', (q, from) => {
+      const s = this.state;
+      const no = (q as { no?: unknown } | null)?.no;
+      if (!s || !this.hand || s.phase !== 'turn' || s.explainer !== this.selfId || this.hand.no !== s.cardNo || no !== this.hand.no) return undefined;
+      return watchersOf(s, this.selfId).includes(from) ? { no: this.hand.no, card: this.hand.card } : undefined;
+    });
   }
 
   get selfId(): string {
@@ -187,7 +203,47 @@ export class SagsGame implements Minigame {
     if (this.host.removePlayer(id)) this.publish();
   }
 
+  /** Watching for fouls, but the explainer's current card hasn't reached me. */
+  private needsCard(): boolean {
+    const s = this.state;
+    if (!s || s.phase !== 'turn' || !s.explainer || s.explainer === this.selfId) return false;
+    return watchersOf(s, s.explainer).includes(this.selfId) && this.seen?.no !== s.cardNo;
+  }
+
+  /**
+   * A card the explainer pushes arrives within a moment; if it doesn't (I reloaded, or it was lost),
+   * ask the explainer for it. Resent until it arrives, stops when the card changes or the turn ends.
+   */
+  private recoverCard(now: number): void {
+    this.rec.tick(now);
+    const s = this.state;
+    if (!s || !this.needsCard()) {
+      this.missingSince = null;
+      return;
+    }
+    this.missingSince ??= now;
+    if (now - this.missingSince < CARD_GRACE_MS || this.askedNo === s.cardNo) return;
+    this.askedNo = s.cardNo;
+    const no = s.cardNo;
+    this.rec.ask('sa:card', { no }, {
+      to: () => this.state?.explainer ?? null,
+      onReply: (d, from) => this.acceptCard(d, from),
+      done: () => !this.needsCard() || this.state?.cardNo !== no,
+    });
+  }
+
+  /** The explainer's card, pushed or answered: kept only from the explainer, for the current card number, if I'm meant to see it. */
+  private acceptCard(data: unknown, from: string): void {
+    const s = this.state;
+    const d = data as { no?: unknown; card?: unknown } | null;
+    const card = parseCard(d?.card);
+    if (!s || !card || typeof d?.no !== 'number' || from !== s.explainer || !watchersOf(s, from).includes(this.selfId)) return;
+    this.seen = { no: d.no, card };
+    this.emit();
+  }
+
   tick(now: number): void {
+    this.recoverCard(now);
     if (this.host && !this.isHost) this.host = null;
     if (!this.host && this.isHost && this.state && this.state.phase !== 'done') {
       // A new host (the old one left) takes over a running round from its public state.
@@ -240,13 +296,7 @@ export class SagsGame implements Minigame {
       const i = parseIntent(data);
       if (i && this.host) this.applyIntent(from, i);
     } else if (type === 'sa:card') {
-      // Only from the explainer, and only kept if I'm one of the people meant to see it.
-      const s = this.state;
-      const d = data as { no?: unknown; card?: unknown };
-      const card = parseCard(d?.card);
-      if (!s || !card || typeof d.no !== 'number' || from !== s.explainer || !watchersOf(s, from).includes(this.selfId)) return;
-      this.seen = { no: d.no, card };
-      this.emit();
+      this.acceptCard(data, from);
     }
   }
 
