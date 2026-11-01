@@ -219,6 +219,12 @@ export const NET = {
   dropWaitMs: 30_000,
   /** Joiner repeats its hello until a host answers (host may still be connecting). */
   helloRetryMs: 2000,
+  /**
+   * A client that has heard nothing from its host this long (no pong, roster, train ...) takes the
+   * host for gone and elects a new one. The last resort that keeps a room from staying host-less
+   * after any race; pings go every `pingSlowMs`, so a working host is heard well within this.
+   */
+  hostSilentMs: 6000,
   /** The host who hands the role over stays host this long if the new host never confirms (it left, or never heard). */
   handoverWaitMs: 5000,
   /** Quick pings right after joining for a good clock offset, then occasional ones. */

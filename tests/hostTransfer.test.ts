@@ -19,6 +19,7 @@ function room(ids: string[]) {
   const now = (id: string) => () => t.ms + (SKEW[id] ?? 0);
   const s: Record<string, Session> = {};
   const clocks: Record<string, SharedClock> = {};
+  const left = new Set<string>();
   const status: Record<string, string[]> = {};
   ids.forEach((id, i) => {
     clocks[id] = new SharedClock(i === 0 ? 42 : 7, now(id)());
@@ -31,12 +32,11 @@ function room(ids: string[]) {
   const run = (ms = 3000) => {
     for (let i = 0; i < ms / 300; i++) {
       t.ms += 300;
-      for (const x of Object.values(s)) x.tick();
+      for (const [id, x] of Object.entries(s)) if (!left.has(id)) x.tick();
       hub.flush();
     }
   };
   /** Who thinks it is host, and whom everyone follows. */
-  const left = new Set<string>();
   /** `deliverPending`: what the leaver already sent still arrives first (a closing tab, not a pulled plug). */
   const leave = (id: string, deliverPending = false) => {
     left.add(id);
@@ -45,7 +45,7 @@ function room(ids: string[]) {
   };
   const hosts = () => Object.entries(s).filter(([id, x]) => !left.has(id) && x.role === 'host').map(([id]) => id);
   const follows = () => Object.entries(s).filter(([id]) => !left.has(id)).map(([, x]) => x.hostId);
-  return { hub, t, s, clocks, status, run, hosts, follows, now, leave };
+  return { hub, t, s, clocks, status, run, hosts, follows, now, leave, left };
 }
 
 /** A client's raw transport, to send messages a well-behaved session never would. */
@@ -305,6 +305,205 @@ describe('Host übergeben: the old host leaves, or the confirmation is late', ()
     run(300);
     expect(hosts()).toEqual(['b']);
     expect(follows()).toEqual(['b', 'b', 'b']);
+  });
+});
+
+describe('Host übergeben: findings of the second review', () => {
+  type Priv = { peers: Set<string>; roster: Map<string, unknown>; onJoin(id: string): void; takeOver(): void; myState: PersonState; hostId: string | null };
+  const priv = (x: Session) => x as unknown as Priv;
+  const queueOf = (hub: MemoryHub) => (hub as unknown as { queue: { to: string; from: string; type: string }[] }).queue;
+
+  it('N1: hosts that see different parts of the mesh still settle on one host and go quiet', () => {
+    // x is host, c is connected to x only; b sees only x and elects itself, with a smaller roster than x's.
+    const { hub, s, run, hosts } = room(['x', 'b', 'c']);
+    run();
+    const b = priv(s.b);
+    b.peers.delete('c');
+    b.roster.delete('c');
+    b.takeOver();
+    hub.flush();
+    expect(hosts()).toEqual(['b']);
+    // Nothing keeps bouncing between them.
+    hub.flush(50);
+    expect(queueOf(hub).length).toBe(0);
+    run(3000);
+    expect(hosts()).toEqual(['b']);
+    expect(queueOf(hub).length).toBe(0);
+  });
+
+  it('N2: a handover that never reached the target leaves no stale successor behind', () => {
+    const { hub, t, s, run, hosts, follows, leave } = room(['a', 'b', 'c', 'd']);
+    run();
+    s.a.handOver('d');
+    // The others got the note, the target did not.
+    const q = hub as unknown as { queue: { to: string; type: string }[] };
+    q.queue = q.queue.filter((p) => !(p.to === 'd' && p.type === 'handover'));
+    hub.flush();
+    t.ms += NET.handoverWaitMs + 100;
+    run(600);
+    expect(hosts()).toEqual(['a']);
+    leave('a');
+    run(6000);
+    expect(hosts().length).toBe(1);
+    expect(new Set(follows())).toEqual(new Set(hosts()));
+  });
+
+  it('N3: a welcome from a stranger, or one that does not list us, does not make the host give way', () => {
+    const { hub, s, run, hosts, follows } = room(['m', 'b', 'c']);
+    run();
+    const stranger = hub.connect('a');
+    const w = s.m.welcomeMsg();
+    stranger.send('welcome', w);
+    hub.flush();
+    // A known client, but its welcome does not list the host.
+    rawSend(s.b, 'welcome', { ...w, roster: w.roster.filter((e) => e.id !== 'm') }, 'm');
+    hub.flush();
+    run(3000);
+    expect(hosts()).toEqual(['m']);
+    expect(follows()).toEqual(['m', 'm', 'm']);
+  });
+
+  it('N4: once the handover is forgotten, a stale handover does not let a lone peer beat the room', () => {
+    const { hub, s, run, hosts, follows } = room(['a', 'b', 'c']);
+    run();
+    s.a.handOver('b');
+    const q = hub as unknown as { queue: { to: string; type: string }[] };
+    q.queue = q.queue.filter((p) => !(p.to === 'b' && p.type === 'handover'));
+    hub.flush();
+    // The handover timed out long ago ...
+    run(20_000);
+    expect(hosts()).toEqual(['a']);
+    // ... when b, cut off for a while, made itself host and now sees the others again.
+    const b = priv(s.b);
+    b.roster.clear();
+    b.roster.set('b', { id: 'b', seat: 2, state: b.myState, keys: [] });
+    b.takeOver();
+    b.onJoin('a');
+    b.onJoin('c');
+    hub.flush();
+    run(6000);
+    expect(hosts()).toEqual(['a']);
+    expect(follows()).toEqual(['a', 'a', 'a']);
+    expect(queueOf(hub).length).toBe(0);
+  });
+});
+
+describe('Host übergeben: both the old host and the target leave', () => {
+  type Hub = { queue: { to: string; from: string; type: string; data: unknown }[]; nodes: Map<string, { emitLeave(id: string): void; deliver(t: string, d: unknown, f: string): void }> };
+  /** Two peers leave; `opposite`: every second remaining peer sees the leaves in the other order. */
+  function leaveTwo(hub: MemoryHub, ids: string[], first: string, second: string, deliverPending: boolean, opposite: boolean): void {
+    const h = hub as unknown as Hub;
+    for (const id of [first, second]) {
+      if (deliverPending) {
+        const mine = h.queue.filter((p) => p.from === id);
+        h.queue = h.queue.filter((p) => p.from !== id);
+        for (const p of mine) h.nodes.get(p.to)?.deliver(p.type, p.data, p.from);
+      }
+      h.nodes.delete(id);
+      h.queue = h.queue.filter((p) => p.to !== id && p.from !== id);
+    }
+    ids
+      .filter((id) => id !== first && id !== second)
+      .forEach((id, i) => {
+        for (const x of opposite && i % 2 === 1 ? [second, first] : [first, second]) h.nodes.get(id)?.emitLeave(x);
+      });
+  }
+
+  for (const n of [3, 4]) {
+    it(`${n} players: old host and target leave together, at any step, in any order and visibility: one host, everyone follows it`, () => {
+      const ids = ['a', 'b', 'c', 'd'].slice(0, n);
+      let cases = 0;
+      for (const target of ids.slice(1)) {
+        for (let step = 0; step <= 4; step++) {
+          for (const order of ['host first', 'target first'] as const) {
+            for (const deliverPending of [false, true]) {
+              for (const opposite of [false, true]) {
+                const { hub, s, run, left } = room(ids);
+                run();
+                expect(s.a.handOver(target)).toBe(true);
+                hub.flush(step);
+                const [first, second] = order === 'host first' ? ['a', target] : [target, 'a'];
+                left.add('a');
+                left.add(target);
+                leaveTwo(hub, ids, first, second, deliverPending, opposite);
+                hub.flush();
+                run(NET.hostSilentMs + 4000);
+                const label = `target ${target}, step ${step}, ${order}, pending ${deliverPending}, opposite ${opposite}`;
+                // Only the peers that are still there count.
+                const remaining = Object.entries(s).filter(([id]) => !left.has(id));
+                const hs = remaining.filter(([, x]) => x.role === 'host').map(([id]) => id);
+                expect(hs.length, `${label}: hosts ${hs}`).toBe(1);
+                expect(new Set(remaining.map(([, x]) => x.hostId)), `${label}: follows ${remaining.map(([id, x]) => `${id}>${x.hostId}`)}`).toEqual(new Set(hs));
+                cases++;
+              }
+            }
+          }
+        }
+      }
+      expect(cases).toBe((n - 1) * 5 * 2 * 2 * 2);
+    });
+  }
+});
+
+describe('Host-Wächter: a room never stays without a host', () => {
+  type Priv = { hostSeenAt: number; role: string; hostId: string | null };
+  it('the host-less end state (everyone follows a peer that is no host) ends with one host everyone follows', () => {
+    const { s, t, run, leave, hosts, follows } = room(['a', 'b', 'c', 'd']);
+    run();
+    leave('a');
+    run(1500);
+    // The state two earlier races left behind: b follows d, d follows b, c follows d, nobody is host.
+    const set = (x: Session, host: string) => {
+      const p = x as unknown as Priv;
+      p.role = 'client';
+      p.hostId = host;
+      p.hostSeenAt = t.ms;
+    };
+    set(s.b, 'd');
+    set(s.c, 'd');
+    set(s.d, 'b');
+    expect(hosts()).toEqual([]);
+    run(NET.hostSilentMs + 4000);
+    expect(hosts().length).toBe(1);
+    expect(new Set(follows())).toEqual(new Set(hosts()));
+    // And the room works.
+    s[hosts()[0]].setSpeed(250, 9);
+    run(600);
+    for (const id of ['b', 'c', 'd']) expect(s[id].train.kmh).toBe(250);
+  });
+
+  it('a working host is never replaced, even if its answers come late', () => {
+    const { hub, t, s, hosts, follows } = room(['a', 'b', 'c']);
+    hub.flush();
+    // Ticks every 300 ms, but the network only delivers every 3.6 s: well inside the 6 s window.
+    for (let i = 1; i <= 140; i++) {
+      t.ms += 300;
+      for (const x of Object.values(s)) x.tick();
+      if (i % 12 === 0) hub.flush();
+    }
+    hub.flush();
+    expect(hosts()).toEqual(['a']);
+    expect(follows()).toEqual(['a', 'a', 'a']);
+  });
+
+  it('a client whose host went silent for good takes over with the best rank, the others follow', () => {
+    const { hub, t, s, run, follows } = room(['a', 'b', 'c']);
+    run();
+    // a stops answering but the connection stays up (a frozen tab).
+    (s.a as unknown as { net: { send(): void } }).net.send = () => {};
+    s.a.tick = () => {};
+    const q = hub as unknown as { queue: { from: string }[] };
+    for (let i = 0; i < 40; i++) {
+      t.ms += 300;
+      s.b.tick();
+      s.c.tick();
+      q.queue = q.queue.filter((p) => p.from !== 'a');
+      hub.flush();
+    }
+    expect(s.b.role === 'host' || s.c.role === 'host').toBe(true);
+    const hs = ['b', 'c'].filter((id) => s[id].role === 'host');
+    expect(hs.length).toBe(1);
+    expect(follows().slice(1)).toEqual([hs[0], hs[0]]);
   });
 });
 

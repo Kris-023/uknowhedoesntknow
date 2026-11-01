@@ -23,8 +23,14 @@ export type Role = 'host' | 'client';
 /** Game messages from peers not yet in the roster wait this long (ms) and at most this many (oldest dropped first). */
 const PENDING_GAME_MS = 10_000;
 const PENDING_GAME_MAX = 100;
-/** How long a handover is remembered for settling a clash and for electing its target when the old host leaves. */
-const HANDOVER_MEMORY_MS = 60_000;
+/**
+ * How long a handover is remembered for settling a clash and for electing its target when the old
+ * host leaves. Long enough for a late welcome (the wait is `NET.handoverWaitMs`), short enough that a
+ * handover that never happened stops mattering quickly.
+ */
+const HANDOVER_MEMORY_MS = 15_000;
+/** A host that has answered a clash as the winner does not answer the same host again within this time. */
+const CLASH_ANSWER_MS = 3_000;
 
 export interface SessionEvents {
   /** First welcome from a host: seed and clock are known now, the world can be built. */
@@ -74,6 +80,10 @@ export class Session {
   private handedFrom: { id: string; at: number } | null = null;
   /** Every other peer's hint of the same handover: if the host leaves now, this player takes over. */
   private successor: { id: string; at: number } | null = null;
+  /** When the host last showed a sign of life (any message of its we accepted, or since we started following it). */
+  private hostSeenAt = 0;
+  /** When we last answered a clash against this host as the winner (loop breaker). */
+  private clashAnswered = new Map<string, number>();
   private nextPing = 0;
   private pingsSent = 0;
   private ev: Partial<SessionEvents> = {};
@@ -113,21 +123,25 @@ export class Session {
     });
     net.on('pong', (d, from) => {
       if (from !== this.hostId || !Array.isArray(d) || typeof d[0] !== 'number' || typeof d[1] !== 'number') return;
+      this.heard();
       this.clock.addSample(d[0], d[1], this.now());
     });
     net.on('train', (d, from) => {
       const t = from === this.hostId ? parseTrain(d) : null;
       if (!t) return;
+      this.heard();
       this.train = t;
       this.ev.train?.(t);
     });
     net.on('blackout', (d, from) => {
       if (from !== this.hostId || typeof d !== 'number' || !Number.isFinite(d)) return;
+      this.heard();
       this.blackoutAt = d;
       this.ev.blackout?.(d);
     });
     net.on('opts', (d, from) => {
       if (from !== this.hostId) return;
+      this.heard();
       this.opts = parseOpts(d);
       this.ev.opts?.(this.opts);
     });
@@ -214,10 +228,16 @@ export class Session {
       // Nobody confirmed the handover in time (the target left or never heard): carry on as host.
       if (this.handing && now > this.handing.until) {
         this.handing = null;
+        // Tell the others it is off, so none of them keeps the target as its successor. The old host
+        // keeps `handedTo` on purpose: the target may have become host after all, and then it wins.
+        this.net.send('handover', this.net.selfId);
         this.broadcastRoster();
       }
       return;
     }
+    // Last resort, whatever went wrong before (a lost message, two handovers, a host that is itself
+    // a client): a host we have not heard from for too long is treated as gone.
+    if (this.welcomed && this.hostId && now - this.hostSeenAt > NET.hostSilentMs) this.hostSilent(now);
     // Not (or no longer) in the host's roster: a connection drop the host noticed, or we gave way to
     // another host. Same hello as at the start; the host recognises the token.
     if (!this.welcomed || (this.hostId && !this.roster.has(this.net.selfId))) {
@@ -354,7 +374,10 @@ export class Session {
     this.peers.delete(id);
     this.poses.delete(id);
     const wasHost = id === this.hostId;
-    if (this.handing?.to === id) this.handing = null;
+    if (this.handing?.to === id) {
+      this.handing = null;
+      this.handedTo = null;
+    }
     const left = this.roster.get(id);
     if (left) this.remember(left);
     if (!this.roster.delete(id)) return;
@@ -366,23 +389,67 @@ export class Session {
       this.ev.roster?.();
       return;
     }
-    // Host gone: the player it just handed over to, if we were told and they are still here;
-    // otherwise whoever got the earliest seat in fill order (= in the room longest) takes over.
+    this.followElected(this.elect(false));
+  }
+
+  /**
+   * Who takes over from a host that is gone: the player it just handed over to, if we were told and
+   * they are still here; otherwise whoever got the earliest seat in fill order (= in the room
+   * longest). Everyone holds the same roster, so all peers reach the same pick without a message.
+   * `connectedOnly`: skip players we do not currently see (the watchdog, where the roster may still
+   * list the dead).
+   */
+  private elect(connectedOnly: boolean, skip?: string): RosterEntry | undefined {
     const rank = (e: RosterEntry) => NET.seatOrder.indexOf(e.seat);
+    const ok = (e: RosterEntry) => e.id !== skip && (!connectedOnly || e.id === this.net.selfId || this.peers.has(e.id));
     const hinted = this.successor && this.now() - this.successor.at <= HANDOVER_MEMORY_MS ? this.roster.get(this.successor.id) : undefined;
-    const next = hinted ?? [...this.roster.values()].sort((a, b) => rank(a) - rank(b))[0];
     this.successor = null;
-    if (!next || next.id === this.net.selfId) this.becomeHost();
-    else {
-      this.hostId = next.id;
-      this.clock.resetSamples();
-      this.pingsSent = 0;
-      this.nextPing = 0;
-      this.ev.roster?.();
+    if (hinted && ok(hinted)) return hinted;
+    return [...this.roster.values()].filter(ok).sort((a, b) => rank(a) - rank(b))[0];
+  }
+
+  /** Become host if elected, otherwise follow whoever was. */
+  private followElected(next: RosterEntry | undefined, announce = false): void {
+    if (!next || next.id === this.net.selfId) {
+      this.becomeHost(announce);
+      return;
+    }
+    this.setHost(next.id);
+    this.clock.resetSamples();
+    this.pingsSent = 0;
+    this.nextPing = 0;
+    this.ev.roster?.();
+  }
+
+  private heard(): void {
+    this.hostSeenAt = this.now();
+  }
+
+  /** Follow `id` from now on; its silence is counted from here. */
+  private setHost(id: string): void {
+    this.hostId = id;
+    this.heard();
+  }
+
+  /**
+   * The watchdog fired: we have heard nothing from the host for `NET.hostSilentMs`. Run the same
+   * election as for a host that left, without the silent one, among the peers we really see. A
+   * duplicate host that comes out of it is settled by `hostClash`. The new pick gets a hello right
+   * away, so it knows us even if it never had us in its roster.
+   */
+  private hostSilent(now: number): void {
+    const lost = this.hostId;
+    this.hostSeenAt = now;
+    const next = this.elect(true, lost ?? undefined);
+    // Announce by welcome: the others may be following somebody else and take our roster only after it.
+    this.followElected(next, true);
+    if (this.role === 'client') {
+      this.lastHello = now;
+      this.net.send('hello', this.helloMsg(), this.hostId ?? undefined);
     }
   }
 
-  private becomeHost(handover = false): void {
+  private becomeHost(announce = false): void {
     this.role = 'host';
     this.handing = null;
     this.successor = null;
@@ -396,9 +463,10 @@ export class Session {
     const first = !this.welcomed;
     this.welcomed = true;
     this.ev.status?.('host');
-    // After a handover everyone still counts the old host as host and only takes the roster from it:
-    // the welcome comes first (peers accept it from anyone and switch), then roster and train follow.
-    if (handover) this.net.send('welcome', this.welcomeMsg());
+    // After a handover (or a watchdog election) the others may still count another peer as host and
+    // only take the roster from it: the welcome comes first (peers in the room switch on it), then
+    // roster and train follow.
+    if (announce) this.net.send('welcome', this.welcomeMsg());
     this.broadcastRoster();
     this.net.send('train', this.train);
     if (first) this.ev.welcome?.(this.welcomeMsg());
@@ -455,11 +523,15 @@ export class Session {
     const w = parseWelcome(d);
     if (!w) return;
     if (this.role === 'host') {
-      // Another host announces itself: a handover target, or the winner of a clash. We either give way or stay.
+      // Another host announces itself: a handover target, or the winner of a clash. Only believed from
+      // a peer we know and if the welcome lists us, like a client would require.
+      if (!w.roster.some((e) => e.id === this.net.selfId) || !this.roster.has(from) || !this.peers.has(from)) return;
       this.hostClash(w.roster, from);
       if (this.role === 'host') return;
     }
     if (!w.roster.some((e) => e.id === this.net.selfId)) return;
+    // Once in a room, a welcome counts only from someone our roster knows (not from a stranger).
+    if (this.welcomed && !this.roster.has(from)) return;
     const first = !this.welcomed;
     // Another host than the one we followed (a handover): measure the clock against the new one.
     if (this.welcomed && this.hostId !== from) {
@@ -468,7 +540,7 @@ export class Session {
       this.nextPing = 0;
     }
     if (this.hostId !== from) this.successor = null;
-    this.hostId = from;
+    this.setHost(from);
     this.welcomed = true;
     this.applyRoster(w.roster);
     this.train = w.train;
@@ -488,9 +560,14 @@ export class Session {
    */
   private onHandover(d: unknown, from: string): void {
     if (this.role !== 'client' || !this.welcomed || from !== this.hostId || typeof d !== 'string') return;
+    // The host naming itself calls it off.
+    if (d === from) {
+      this.successor = null;
+      return;
+    }
     if (!this.roster.has(from) || !this.roster.has(d)) return;
     if (d !== this.net.selfId) {
-      if (d !== from) this.successor = { id: d, at: this.now() };
+      this.successor = { id: d, at: this.now() };
       return;
     }
     this.handedFrom = { id: from, at: this.now() };
@@ -501,7 +578,7 @@ export class Session {
   /** Give up the host role to `to` (it won a clash, or took over at our request). */
   private stepDown(to: string): void {
     this.role = 'client';
-    this.hostId = to;
+    this.setHost(to);
     this.handing = null;
     this.successor = null;
     this.clock.resetSamples();
@@ -518,28 +595,36 @@ export class Session {
     }
     if (from !== this.hostId) return;
     const r = parseRoster(d);
-    if (r) this.applyRoster(r);
+    if (r) {
+      this.heard();
+      this.applyRoster(r);
+    }
   }
 
   /**
    * Two hosts at once: the old one was cut off and came back, or a handover's confirmation was late
    * or lost. Who stays:
-   * 1. a handover target against the host that handed over (for `HANDOVER_MEMORY_MS`): the target;
-   * 2. otherwise the bigger room, a tie goes to the smaller id. Rosters are counted by the players
-   *    *we* still see connected: a roster sent before someone left would otherwise count them, and
-   *    both sides, each seeing the other's older and bigger roster, would give way (nobody host).
-   * Both sides evaluate the same rule on the same players, so they decide alike. The loser joins the
-   * winner like a returning player and keeps its place through the rejoin; the winner tells
-   * *everyone* by welcome, so the loser's followers switch too (`onWelcome`).
+   * 1. a handover target against the host that handed over to it (for `HANDOVER_MEMORY_MS`): the target;
+   * 2. otherwise the smaller id.
+   * Nothing else enters the decision: roster sizes differ between peers that see different parts of
+   * the mesh (and between moments), and a rule on them let both sides win or both give way. Each side
+   * evaluates the same rule on ids and on the handover it took part in, so they decide alike. The
+   * loser joins the winner like a returning player and keeps its place through the rejoin; the winner
+   * tells *everyone* by welcome, so the loser's followers switch too (`onWelcome`), at most once per
+   * `CLASH_ANSWER_MS` per other host.
    */
   private hostClash(r: RosterEntry[] | null, from: string): void {
     if (!r || !r.some((e) => e.id === from)) return;
     const now = this.now();
     const fresh = (h: { id: string; at: number } | null) => h?.id === from && now - h.at <= HANDOVER_MEMORY_MS;
-    const here = (e: RosterEntry) => e.id === this.net.selfId || this.peers.has(e.id);
-    const theirs = r.filter(here).length;
-    const theyWin = fresh(this.handedTo) || (!fresh(this.handedFrom) && (theirs > this.roster.size || (theirs === this.roster.size && from < this.net.selfId)));
+    const theyWin = fresh(this.handedTo) || (!fresh(this.handedFrom) && from < this.net.selfId);
     if (!theyWin) {
+      const last = this.clashAnswered.get(from);
+      if (last !== undefined && now - last < CLASH_ANSWER_MS) return;
+      this.clashAnswered.set(from, now);
+      // The loser hears it by roster (it may not know us yet, so a welcome alone would not convince it)
+      // and everyone else by welcome.
+      this.net.send('roster', [...this.roster.values()], from);
       this.net.send('welcome', this.welcomeMsg());
       return;
     }

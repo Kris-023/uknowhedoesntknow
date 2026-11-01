@@ -279,14 +279,15 @@ describe('rejoin', () => {
     expect(host.roster.has('z')).toBe(true);
   });
 
-  it('two hosts after a split: the smaller room gives way and joins the bigger one', () => {
+  it('two hosts after a split: the one with the smaller id stays, the other joins it like a returning player', () => {
     const hub = new MemoryHub();
     const t = { ms: 1_000_000 };
     const now = () => t.ms;
     const big = new Session(hub.connect('m'), new SharedClock(1, now()), true, state(1), now, 'tok-m');
     new Session(hub.connect('n'), new SharedClock(2, now()), false, state(2), now, 'tok-n');
     hub.flush();
-    const lone = new Session(hub.connect('a'), new SharedClock(3, now()), true, state(3), now, 'tok-a');
+    // Only ids decide, not room sizes (roster sizes differ between peers and moments); 'z' is the larger id.
+    const lone = new Session(hub.connect('z'), new SharedClock(3, now()), true, state(3), now, 'tok-z');
     const status: string[] = [];
     lone.listen({ status: (s) => status.push(s) });
     hub.flush();
@@ -297,7 +298,7 @@ describe('rejoin', () => {
     expect(lone.role).toBe('client');
     expect(lone.hostId).toBe('m');
     expect(big.role).toBe('host');
-    expect(big.roster.has('a')).toBe(true);
+    expect(big.roster.has('z')).toBe(true);
     expect(lone.mySeat).toBeGreaterThanOrEqual(0);
   });
 });
