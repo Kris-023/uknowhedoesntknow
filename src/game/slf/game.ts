@@ -8,24 +8,47 @@ import { tabStore, type TabStore } from '../tabStore';
 import { stepKey } from '../undo';
 import { parseCardData } from '../whoami/cardImage';
 import {
+  applyEdit,
+  categoryGroups,
   categoryPool,
   cleanAnswer,
   cleanCaption,
-  drawCategories,
+  defaultCategories,
   drawLetter,
   imageCommit,
+  parseEdit,
   parseIntent,
+  pickBounds,
   SlfHost,
   textCommit,
   verifyImage,
   verifyText,
   type Intent,
+  type PickEdit,
+  type PickHow,
+  type PoolGroup,
+  type PresetName,
+  type Proposal,
   type SlfMode,
   type SlfState,
 } from './logic';
 
 const isRecord = (v: unknown): v is Record<string, unknown> => typeof v === 'object' && v !== null && !Array.isArray(v);
 const isStrings = (v: unknown, max = 8, len = 64): v is string[] => Array.isArray(v) && v.length <= max && v.every((x) => typeof x === 'string' && x.length <= len);
+/** Most categories a round can have (text rounds allow more than picture rounds). */
+const MAX_CATS = Math.max(SLF.pick.max.text, SLF.pick.max.bild);
+
+/** Pending proposals from the host's state: broken ones are left out rather than throwing the state away. */
+function parseProposals(v: unknown): Proposal[] {
+  if (!Array.isArray(v)) return [];
+  const out: Proposal[] = [];
+  for (const p of v.slice(0, 64)) {
+    if (!isRecord(p) || !Number.isInteger(p.id) || typeof p.by !== 'string' || !p.by || p.by.length > 64) continue;
+    const edit = parseEdit(p.edit);
+    if (edit) out.push({ id: p.id as number, by: p.by, edit });
+  }
+  return out;
+}
 
 /** Answers are the only free text in the state: anything that isn't a clean answer becomes "nothing". */
 function parseAnswers(v: unknown, n: number): Record<string, (string | null)[]> | null {
@@ -41,13 +64,16 @@ function parseAnswers(v: unknown, n: number): Record<string, (string | null)[]> 
 /** Shape check of the host's broadcast; the host is trusted for game decisions anyway. */
 export function parseState(v: unknown): (SlfState & { sentAt: number }) | null {
   if (!isRecord(v)) return null;
-  if (!['write', 'lock', 'reveal', 'rate', 'done'].includes(v.phase as string) || !['text', 'bild'].includes(v.mode as string)) return null;
-  if (!isStrings(v.players) || !isStrings(v.ready) || !isStrings(v.judged) || !isStrings(v.categories, 8, 80) || !v.categories.length) return null;
-  if (typeof v.letter !== 'string' || v.letter.length !== 1 || !isRecord(v.commits) || !isRecord(v.scores) || !Array.isArray(v.flags) || !Array.isArray(v.results)) return null;
+  if (!['pick', 'write', 'lock', 'reveal', 'rate', 'done'].includes(v.phase as string) || !['text', 'bild'].includes(v.mode as string)) return null;
+  if (!isStrings(v.players) || !isStrings(v.ready) || !isStrings(v.judged) || !isStrings(v.categories, MAX_CATS, 80) || !v.categories.length) return null;
+  // No letter while the categories are picked.
+  if (typeof v.letter !== 'string' || v.letter.length !== (v.phase === 'pick' ? 0 : 1)) return null;
+  if (!isRecord(v.commits) || !isRecord(v.scores) || !Array.isArray(v.flags) || !Array.isArray(v.results)) return null;
   if (typeof v.round !== 'number' || typeof v.cat !== 'number' || typeof v.sentAt !== 'number' || typeof v.voteNo !== 'number') return null;
   const answers = v.answers === null ? null : parseAnswers(v.answers, v.categories.length);
   if (v.answers !== null && !answers) return null;
-  return { ...(v as unknown as SlfState), answers, sentAt: v.sentAt };
+  const seq = Number.isInteger(v.seq) ? (v.seq as number) : 0;
+  return { ...(v as unknown as SlfState), answers, proposals: parseProposals(v.proposals), seq, keep: v.keep === true, sentAt: v.sentAt };
 }
 
 /** Room settings the game reads when it starts a round. */
@@ -79,7 +105,7 @@ interface Proof {
 }
 
 const isSalt = (v: unknown): v is string => typeof v === 'string' && v.length > 0 && v.length <= 128;
-const isTexts = (v: unknown): v is string[] => isStrings(v, 8, SLF.maxAnswerLen * 4);
+const isTexts = (v: unknown): v is string[] => isStrings(v, MAX_CATS, SLF.maxAnswerLen * 4);
 const isPic = (v: unknown): v is Pic => isRecord(v) && typeof v.img === 'string' && typeof v.cap === 'string' && v.cap.length <= SLF.maxCaptionLen * 4 && (v.img === '' || parseCardData(v.img) === v.img);
 
 type RawReveal = { round: number; cat: number; answers?: unknown; img?: unknown; cap?: unknown; salt: unknown };
@@ -262,7 +288,8 @@ export class SlfGame implements Minigame {
   /** The draft belongs to the running round; a new round starts empty. */
   private syncDraft(): void {
     const s = this.state;
-    if (!s || this.draft.round === s.round) return;
+    // While the categories are picked the list still changes: the sheet starts with the writing.
+    if (!s || s.phase === 'pick' || this.draft.round === s.round) return;
     this.dropRound(this.draft.round >= 0 ? this.draft.round : s.round - 1);
     this.draft.round = s.round;
     this.draft.texts = s.categories.map(() => '');
@@ -312,21 +339,111 @@ export class SlfGame implements Minigame {
     return p && p.img ? p : null;
   }
 
+  private order(ids?: readonly string[]): string[] {
+    const seat = new Map(this.net.members().map((m) => [m.id, m.seat]));
+    const all = ids ?? [...seat.keys()];
+    return [...all].sort((a, b) => byTableOrder(seat.get(a) ?? -1, seat.get(b) ?? -1));
+  }
+
+  /** The host object draws rerolls and "Zufall" from this room's pool. */
+  private wire(h: SlfHost): SlfHost {
+    h.pool = () => categoryPool(h.state.mode, this.room.decks(), this.room.custom?.() ?? []);
+    h.rng = mulberry32((Date.now() ^ (Math.random() * 2 ** 31)) | 0);
+    h.present = this.hereSet();
+    return h;
+  }
+
+  /**
+   * Host: a new round, starting with the step "Kategorien". The list is the last round's if the host
+   * kept it (same mode and still within bounds), else the default (`defaultCategories`).
+   */
   start(): void {
     if (!this.isHost) return;
-    const order = [...this.net.members()].sort((a, b) => byTableOrder(a.seat, b.seat)).map((m) => m.id);
+    const order = this.order();
     if (order.length < 2) return;
+    const prev = this.host?.state ?? this.state;
     if (this.host) this.scores = { ...this.host.state.scores };
     const mode = this.room.mode();
     const rng = mulberry32((Date.now() ^ (Math.random() * 2 ** 31)) | 0);
-    if (this.letters.size >= SLF.letters.length - 3) this.letters.clear();
-    const letter = drawLetter(rng, this.letters);
-    this.letters.add(letter);
-    const { fixed, pool } = categoryPool(mode, this.room.decks(), this.room.custom?.() ?? []);
-    const categories = drawCategories(fixed, pool, SLF.count[mode], rng);
-    this.host = new SlfHost(order, mode, letter, categories, this.scores, (this.host?.state.round ?? 0) + 1, Date.now());
-    this.host.present = this.hereSet();
+    const { min, max } = pickBounds(mode);
+    const kept = prev?.keep && prev.mode === mode && prev.categories.length >= min && prev.categories.length <= max ? prev.categories : null;
+    const categories = kept ?? defaultCategories(mode, this.room.decks(), this.room.custom?.() ?? [], rng);
+    this.host = this.wire(SlfHost.picking(order, mode, categories, this.scores, (prev?.round ?? 0) + 1, !!prev?.keep));
     this.publish();
+  }
+
+  /** The categories a player may pick from right now, grouped (built-in by the room's decks, the room's own lists). */
+  poolGroups(): PoolGroup[] {
+    const s = this.state;
+    return s ? categoryGroups(s.mode, this.room.decks(), this.room.custom?.() ?? []) : [];
+  }
+
+  /** Host: the list is set; the letter is drawn now and the writing starts. Whoever joined meanwhile plays along. */
+  go(): boolean {
+    const h = this.host;
+    if (!this.isHost || !h || h.state.phase !== 'pick') return false;
+    const players = this.order([...h.state.players, ...this.net.members().map((m) => m.id).filter((id) => !h.state.players.includes(id))]);
+    if (this.letters.size >= SLF.letters.length - 3) this.letters.clear();
+    const letter = drawLetter(h.rng, this.letters);
+    h.present = this.hereSet();
+    if (!h.begin(letter, Date.now(), players)) return false;
+    this.letters.add(letter);
+    this.publish();
+    return true;
+  }
+
+  /** A change to the list: direct for the host, a proposal for everybody else. */
+  edit(e: PickEdit): void {
+    if (this.state?.phase === 'pick') this.toHost({ a: 'pick', e });
+  }
+
+  roll(at: string): void {
+    this.edit({ op: 'roll', at });
+  }
+
+  replaceCat(at: string, text: string, how: Exclude<PickHow, 'roll'>): void {
+    this.edit({ op: 'set', at, text, how });
+  }
+
+  /** `null`: a random one from the pool. */
+  addCat(text: string | null, how: PickHow = 'free'): void {
+    this.edit({ op: 'add', text, how: text === null ? 'roll' : how });
+  }
+
+  removeCat(at: string): void {
+    this.edit({ op: 'remove', at });
+  }
+
+  preset(name: PresetName): void {
+    this.edit({ op: 'preset', name });
+  }
+
+  accept(id: number): void {
+    this.toHost({ a: 'accept', id });
+  }
+
+  reject(id: number): void {
+    this.toHost({ a: 'reject', id });
+  }
+
+  withdraw(id: number): void {
+    this.toHost({ a: 'withdraw', id });
+  }
+
+  /** Host: the next round starts with this round's list. */
+  setKeep(on: boolean): void {
+    if (this.isHost) this.toHost({ a: 'keep', on });
+  }
+
+  /** My proposals still waiting for the host. */
+  get myProposals(): number {
+    return this.state?.proposals.filter((p) => p.by === this.selfId).length ?? 0;
+  }
+
+  /** A proposal could be accepted as the list stands (not merely out of bounds for now). */
+  applies(p: Proposal): boolean {
+    const s = this.state;
+    return !!s && !!applyEdit(s.categories, p.edit, s.mode);
   }
 
   end(): void {
@@ -471,7 +588,7 @@ export class SlfGame implements Minigame {
     if (this.host && !this.isHost) this.host = null;
     // A new host (the old one left) takes over a running round from its public state.
     if (!this.host && this.isHost && this.state) {
-      this.host = SlfHost.fromState(this.state);
+      this.host = this.wire(SlfHost.fromState(this.state));
       this.scores = { ...this.state.scores };
       this.host.present = this.hereSet();
       this.feedHost();

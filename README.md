@@ -93,12 +93,24 @@ Alle kennen das Wort, nur einer nicht. Ab drei Spielern.
 
 ### Stadt, Land, Fluss
 
-Ein Buchstabe, sechs Kategorien. Oder: Bilder suchen statt schreiben. Ab zwei Spielern; den Modus wählt der Host in der
+Ein Buchstabe, ein paar Kategorien. Oder: Bilder suchen statt schreiben. Ab zwei Spielern; den Modus wählt der Host in der
 Leiste vor dem Start (Schreiben/Bilder) oder in den Raum-Einstellungen.
 
-- Der Host zieht einen Buchstaben (ohne Q, X, Y), alle sehen ihn. Kategorien: Stadt, Land, Fluss sind immer dabei, dazu
-  drei aus Name, Tier, Beruf, mit dem NSFW-Stapel derbe Extra-Kategorien und mit „Eigene“ eure Kategorien-Listen.
-- **Schreiben:** jeder füllt alle sechs Felder (<kbd>Enter</kbd> springt weiter). Wer alles hat, ruft **Stopp!**: die anderen
+- **Kategorien** (vor jeder Runde, ohne Zeitlimit): alle sehen die Liste. Pro Kategorie **Würfeln** (eine zufällige aus dem
+  Pool), **Ersetzen** (aus dem Pool auswählen oder frei eintippen) und **✕** (entfernen); dazu **+ Hinzufügen** und
+  **+ Zufällige**. Schreiben: 4 bis 10 Kategorien, Bilder: 2 bis 5. Der Pool sind die eingebauten Kategorien (mit dem
+  NSFW-Stapel auch die derben) und mit „Eigene“ eure Kategorien-Listen.
+  - Der Host ändert direkt. Alle anderen machen **Vorschläge**: die sieht jeder, der Host nimmt sie an oder lehnt sie ab
+    (höchstens drei offene pro Person, doppelte fallen weg, eigene lassen sich zurückziehen).
+  - **Klassisch** = Stadt, Land, Fluss, aufgefüllt mit Name, Tier, Beruf. Das ist der Start, solange die Stapel gesperrt
+    sind. Freigeschaltet startet die Runde mit einer zufälligen Auswahl aus dem ganzen Pool (Stadt, Land, Fluss sind nicht
+    mehr Pflicht); **Zufall** zieht neu.
+  - Eingetippte Kategorien kannst du dabei gleich **in eine eigene Liste übernehmen** (Feld unter dem Eingabefeld).
+  - **Für nächste Runden behalten** (Host): die nächste Runde beginnt mit derselben Liste, wieder änderbar.
+  - Erst mit **Los geht’s** (Host) zieht der Host den Buchstaben (ohne Q, X, Y), alle sehen ihn. Wer inzwischen dazukam,
+    spielt mit. **Zug zurück** nimmt beim Wählen die letzte Änderung oder Entscheidung zurück, führt aber nach dem Start nie
+    zurück zur Kategorienwahl (der Buchstabe ist dann schon bekannt).
+- **Schreiben:** jeder füllt alle Felder (<kbd>Enter</kbd> springt weiter). Wer alles hat, ruft **Stopp!**: die anderen
   haben dann noch 10 Sekunden, sonst ist nach 3 Minuten Schluss. Bis dahin verlässt keine Antwort deinen Rechner, nur ein
   Fingerabdruck (Commit/Reveal wie bei „Gleich gedacht“); abschreiben geht also nicht, auch nicht für den Host.
 - **Auswerten:** Kategorie für Kategorie stehen die Antworten über den Köpfen und unten in der Leiste. Automatisch: leer oder
@@ -107,8 +119,8 @@ Leiste vor dem Start (Schreiben/Bilder) oder in den Raum-Einstellungen.
   anderen kurz ab (<kbd>1</kbd> Ja, <kbd>2</kbd> Nein, 15 Sekunden), Gleichstand heißt nein; zu zweit stimmen beide ab.
   <kbd>Enter</kbd> = Weiter.
 - Punkte: 10 für eine eigene Antwort, 5 wenn jemand dasselbe hat, 20 wenn nur du in der Kategorie etwas Gültiges hast.
-- **Bilder:** drei Kategorien, zu jeder ein Bild, das mit dem Buchstaben anfängt (Feld anklicken, dann reinziehen,
-  <kbd>Strg</kbd>+<kbd>V</kbd>, Link oder Datei), dazu optional eine Unterschrift („Bär“). 90 Sekunden für alle drei, damit
+- **Bilder:** anfangs drei Kategorien, zu jeder ein Bild, das mit dem Buchstaben anfängt (Feld anklicken, dann reinziehen,
+  <kbd>Strg</kbd>+<kbd>V</kbd>, Link oder Datei), dazu optional eine Unterschrift („Bär“). 90 Sekunden für alle, damit
   jeder in seiner Reihenfolge sucht; Stopp lässt den anderen 20 Sekunden. Die Bilder gehen erst nach dem Ende direkt an die
   anderen. Dann pro Kategorie: Bilder über den Köpfen, jeder sagt zu den anderen „zählt / zählt nicht“ (Mehrheit,
   Gleichstand zählt) und wählt das beste Bild (nicht das eigene). 10 pro Bild, das zählt, 5 extra fürs beste.
@@ -129,6 +141,7 @@ Im Menü-Tab **Eigene Listen** legst du mehrere benannte Listen an (bis zu 40) (
   Raum an alle, wenn der Host den Stapel **Eigene** an hat (Raum-Einstellungen → Stapel). Dann mischen die Spiele eure
   Einträge zu den eingebauten; ist nur „Eigene“ an und gibt es genug davon, kommen nur eure.
 - Eigene Wörter sieht vorher niemand, und wer ein Wort eingereicht hat, bekommt es nicht zum Raten, solange andere übrig sind.
+  Ausnahme Kategorien: die stehen in „Stadt, Land, Fluss“ bei der Kategorienwahl für alle sichtbar im Pool.
 - Teilen: „Liste kopieren“ oder „Als Datei speichern“; Freunde fügen den Text unter „Liste laden“ ein (oder laden die
   Datei). Dort geht auch einfach eine pro Zeile, Wörter als `Wort: verboten, verboten`. Die alte Wortliste wurde beim
   ersten Start zu „Meine Wörter“.

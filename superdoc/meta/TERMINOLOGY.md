@@ -41,6 +41,7 @@ Project-specific vocabulary. When the user uses a term defined here, use the sam
 ### Games and content
 
 - **Minigame** — one of the six games a room can play: "Wer bin ich?", "Sag's anders", "Gleich gedacht", "Zeig drauf", "Ahnungslos", "Stadt, Land, Fluss" (`src/game/lobby.ts`). See [minigame-framework](../features/minigame-framework.md).
+- **Kategorienwahl / Vorschlag** — the step "Kategorien" before every "Stadt, Land, Fluss" round (phase `pick`): the host changes the category list directly, everyone else makes a *Vorschlag* (proposal) the host accepts or rejects. **Klassisch** is the preset Stadt, Land, Fluss plus the classic fallback categories. See [minigames-zeig-ahnungslos-slf](../features/minigames-zeig-ahnungslos-slf.md).
 - **Ahnungslos** — both a minigame and a role in it: everyone knows the word except one player, "der Ahnungslose" (the clueless one), who only learns "Du bist ahnungslos". See [minigames-zeig-ahnungslos-slf](../features/minigames-zeig-ahnungslos-slf.md).
 - **Stapel / Wortstapel** — a content deck that words, questions and categories are drawn from. Three can be switched on per room: Normal, NSFW, Eigene. See [content-decks](../features/content-decks.md).
 - **Eigene Listen** — a player's own named lists, stored in their browser. Kinds: `words`, `zeig`, `fragen`, `kategorien` (`src/words/lists.ts:LIST_KINDS`). Lists switched on join the Stapel "Eigene" in a room. See [custom-lists](../features/custom-lists.md).

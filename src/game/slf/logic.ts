@@ -1,6 +1,8 @@
 import { SLF } from '../../config';
 import type { Rand } from '../../core/rng';
 import type { SlfMode } from '../../net/protocol';
+import { normWord } from '../../words/custom';
+import { FALLBACK } from '../../words/fallback';
 import { uniqueTexts } from '../../words/lists';
 import { content } from '../../words/content';
 import type { Content, DeckId } from '../../words/types';
@@ -15,6 +17,10 @@ import { parseCardData } from '../whoami/cardImage';
 // Anti-copying works like "Gleich gedacht": while writing nothing leaves a client but commitments
 // (SHA-256 of salt and content). The answers are revealed to everyone only after the writing is
 // over, and the commitments in the public state prove nobody changed theirs after seeing others'.
+//
+// Before the writing comes the step "Kategorien" (phase 'pick'): the list is public and editable,
+// the host's changes apply at once, everybody else's become proposals the host accepts or rejects.
+// No letter and no timer yet: the host says when the list is done.
 
 export type { SlfMode } from '../../net/protocol';
 
@@ -44,14 +50,49 @@ export interface CatResult {
   tally?: Record<string, [number, number, number]>;
 }
 
+/** How a new category was found: typed, picked from the pool, or drawn at random ("neu würfeln"). */
+export type PickHow = 'free' | 'pool' | 'roll';
+export type PresetName = 'klassisch' | 'zufall';
+
+/** A change to the category list as the host applies it: anything random is already drawn. */
+export type Edit =
+  | { op: 'set'; at: string; text: string; how: PickHow }
+  | { op: 'add'; text: string; how: PickHow }
+  | { op: 'remove'; at: string }
+  | { op: 'preset'; name: PresetName; list: string[] };
+
+/** A change as a player asks for it; the host draws what is random ("roll", `add` without text, "Zufall"). */
+export type PickEdit =
+  | { op: 'roll'; at: string }
+  | { op: 'set'; at: string; text: string; how: 'free' | 'pool' }
+  | { op: 'add'; text: string | null; how: PickHow }
+  | { op: 'remove'; at: string }
+  | { op: 'preset'; name: PresetName };
+
+/** Someone other than the host wants to change the list; the host accepts or rejects it. */
+export interface Proposal {
+  id: number;
+  by: string;
+  edit: Edit;
+}
+
 export interface SlfState {
-  /** `lock`: writing is over, the last commitments come in; `reveal`: collecting the revealed answers. */
-  phase: 'write' | 'lock' | 'reveal' | 'rate' | 'done';
+  /**
+   * `pick`: the table settles the categories (no letter, no timer); `lock`: writing is over, the last
+   * commitments come in; `reveal`: collecting the revealed answers.
+   */
+  phase: 'pick' | 'write' | 'lock' | 'reveal' | 'rate' | 'done';
   mode: SlfMode;
   round: number;
-  /** Public: everyone writes to the same letter. */
+  /** Public: everyone writes to the same letter. '' while picking: drawn when the writing starts, so nobody thinks ahead. */
   letter: string;
   categories: string[];
+  /** Pick step: proposals waiting for the host, oldest first. Public, so a new host keeps them. */
+  proposals: Proposal[];
+  /** Last proposal id handed out (ids stay unique across a host change). */
+  seq: number;
+  /** Host's "Für nächste Runden behalten": the next round starts with this round's list. */
+  keep: boolean;
   /** Seat order. */
   players: string[];
   /** Commitments: text rounds one for all answers, picture rounds one per category. Present = locked. */
@@ -105,7 +146,12 @@ export type Intent =
   | { a: 'vote'; v: boolean }
   | { a: 'judge'; cat: number; ok: Record<string, boolean>; best: string | null }
   | { a: 'ready' }
-  | { a: 'end' };
+  | { a: 'end' }
+  | { a: 'pick'; e: PickEdit }
+  | { a: 'accept'; id: number }
+  | { a: 'reject'; id: number }
+  | { a: 'withdraw'; id: number }
+  | { a: 'keep'; on: boolean };
 
 const HEX64 = /^[0-9a-f]{64}$/;
 const SALT = /^[0-9a-f]{16,64}$/;
@@ -136,8 +182,127 @@ export function parseIntent(v: unknown): Intent | null {
     case 'ready':
     case 'end':
       return { a: v.a };
+    case 'pick': {
+      const e = parsePickEdit(v.e);
+      return e ? { a: 'pick', e } : null;
+    }
+    case 'accept':
+    case 'reject':
+    case 'withdraw':
+      return isSeq(v.id) ? { a: v.a, id: v.id } : null;
+    case 'keep':
+      return typeof v.on === 'boolean' ? { a: 'keep', on: v.on } : null;
     default:
       return null;
+  }
+}
+
+const isSeq = (v: unknown): v is number => Number.isInteger(v) && (v as number) > 0 && (v as number) < 1e9;
+const isHow = (v: unknown): v is PickHow => v === 'free' || v === 'pool' || v === 'roll';
+const isPreset = (v: unknown): v is PresetName => v === 'klassisch' || v === 'zufall';
+
+/**
+ * A category from the network or the keyboard: control characters out, blanks collapsed, at most
+ * `max` characters (longer is refused, not cut: a cut category means something else). Null if empty.
+ */
+export function cleanCategory(raw: unknown, max: number = SLF.pick.maxLen): string | null {
+  if (typeof raw !== 'string') return null;
+  const t = raw.replace(/\p{Cc}/gu, ' ').replace(/\s+/g, ' ').trim();
+  return t && [...t].length <= max ? t : null;
+}
+
+function parsePickEdit(v: unknown): PickEdit | null {
+  if (!isRecord(v)) return null;
+  const at = cleanCategory(v.at);
+  const text = cleanCategory(v.text);
+  switch (v.op) {
+    case 'roll':
+      return at ? { op: 'roll', at } : null;
+    case 'set':
+      return at && text && (v.how === 'free' || v.how === 'pool') ? { op: 'set', at, text, how: v.how } : null;
+    case 'add':
+      if (v.text === null) return { op: 'add', text: null, how: 'roll' };
+      return text && (v.how === 'free' || v.how === 'pool') ? { op: 'add', text, how: v.how } : null;
+    case 'remove':
+      return at ? { op: 'remove', at } : null;
+    case 'preset':
+      return isPreset(v.name) ? { op: 'preset', name: v.name } : null;
+    default:
+      return null;
+  }
+}
+
+/** A resolved change in the host's state (shape check on the clients). */
+export function parseEdit(v: unknown): Edit | null {
+  if (!isRecord(v)) return null;
+  const at = cleanCategory(v.at);
+  const text = cleanCategory(v.text);
+  switch (v.op) {
+    case 'set':
+      return at && text && isHow(v.how) ? { op: 'set', at, text, how: v.how } : null;
+    case 'add':
+      return text && isHow(v.how) ? { op: 'add', text, how: v.how } : null;
+    case 'remove':
+      return at ? { op: 'remove', at } : null;
+    case 'preset': {
+      if (!isPreset(v.name) || !Array.isArray(v.list) || v.list.length < 1 || v.list.length > SLF.pick.max.text) return null;
+      const list = v.list.map((x) => cleanCategory(x));
+      return list.every((x): x is string => !!x) ? { op: 'preset', name: v.name, list } : null;
+    }
+    default:
+      return null;
+  }
+}
+
+// ---------- the step "Kategorien" ----------
+
+/** How short and how long the list may be in this mode. */
+export const pickBounds = (mode: SlfMode) => ({ min: SLF.pick.min[mode], max: SLF.pick.max[mode] });
+
+const indexIn = (list: readonly string[], text: string) => list.findIndex((c) => normWord(c) === normWord(text));
+const sameList = (a: readonly string[], b: readonly string[]) => a.length === b.length && a.every((c, k) => c === b[k]);
+
+/** The list after `e`, or null if it doesn't apply (the category is gone, the new one is there already, out of bounds). */
+export function applyEdit(list: readonly string[], e: Edit, mode: SlfMode): string[] | null {
+  const { min, max } = pickBounds(mode);
+  switch (e.op) {
+    case 'set': {
+      const i = indexIn(list, e.at);
+      if (i < 0 || indexIn(list, e.text) >= 0) return null;
+      return list.map((c, k) => (k === i ? e.text : c));
+    }
+    case 'add':
+      return list.length < max && indexIn(list, e.text) < 0 ? [...list, e.text] : null;
+    case 'remove': {
+      const i = indexIn(list, e.at);
+      return i >= 0 && list.length > min ? list.filter((_, k) => k !== i) : null;
+    }
+    case 'preset':
+      return !sameList(list, e.list) && e.list.length >= min && e.list.length <= max ? [...e.list] : null;
+  }
+}
+
+/**
+ * Can never apply again: the category it is about is gone, or the new one is in the list already.
+ * Merely out of bounds is not stale: after a removal an "add" fits again.
+ */
+export function staleEdit(list: readonly string[], e: Edit): boolean {
+  if ((e.op === 'set' || e.op === 'remove') && indexIn(list, e.at) < 0) return true;
+  if ((e.op === 'set' || e.op === 'add') && indexIn(list, e.text) >= 0) return true;
+  return e.op === 'preset' && sameList(list, e.list);
+}
+
+/** Two proposals asking for the same thing: one is enough. A roll means "this one, anything else", whatever it drew. */
+export function editKey(e: Edit): string {
+  switch (e.op) {
+    case 'set':
+      return e.how === 'roll' ? `roll|${normWord(e.at)}` : `set|${normWord(e.at)}|${normWord(e.text)}`;
+    case 'add':
+      return `add|${normWord(e.text)}`;
+    case 'remove':
+      return `remove|${normWord(e.at)}`;
+    case 'preset':
+      return `preset|${e.name}`;
   }
 }
 
@@ -206,27 +371,72 @@ export function drawLetter(rng: Rand, avoid: ReadonlySet<string> = new Set()): s
   return from[Math.floor(rng() * from.length)];
 }
 
-/**
- * Where a round's categories come from. Text rounds always keep Stadt, Land, Fluss; the rest is
- * drawn from the other built-in ones, the NSFW extras (with that deck, once unlocked) and the room's
- * own lists (with "Eigene"). A room with only "Eigene" plays only its own if there are enough.
- */
-export function categoryPool(mode: SlfMode, decks: readonly DeckId[], custom: readonly string[], from: Content = content()): { fixed: string[]; pool: string[] } {
-  const n = SLF.count[mode];
-  const own = decks.includes('custom') ? uniqueTexts(custom) : [];
-  if (!decks.includes('normal') && !decks.includes('nsfw') && own.length >= n) return { fixed: [], pool: own };
-  const base: readonly string[] = mode === 'text' ? from.slf.text : from.slf.image;
-  const fixed: string[] = mode === 'text' ? [...SLF.fixed] : [];
-  const rest = uniqueTexts([...base, ...(decks.includes('nsfw') ? from.slf.nsfw : []), ...own], fixed);
-  return { fixed, pool: rest };
+/** The decks are locked: the games draw from the public fallback. */
+export const isLocked = (from: Content = content()): boolean => from === FALLBACK;
+
+/** A room that plays only "Eigene" and has enough own categories plays only those. */
+export function ownOnly(mode: SlfMode, decks: readonly DeckId[], custom: readonly string[]): boolean {
+  return !decks.includes('normal') && !decks.includes('nsfw') && decks.includes('custom') && uniqueTexts(custom).length >= SLF.count[mode];
 }
 
-/** The fixed ones first, then random ones from the pool, none twice. */
-export function drawCategories(fixed: readonly string[], pool: readonly string[], n: number, rng: Rand): string[] {
-  const out = fixed.slice(0, n);
-  const left = pool.filter((c) => !out.includes(c));
+export interface PoolGroup {
+  /** "Normal" (the sealed deck), "Ersatzstapel" (locked: the public fallback), "NSFW", "Eigene". */
+  label: string;
+  items: string[];
+}
+
+/**
+ * Where categories come from, grouped for the picker: the built-in ones of the mode (sealed once
+ * unlocked, else the public fallback), the NSFW extras with that deck, the room's own lists with
+ * "Eigene". A room with only "Eigene" and enough of them has only its own. No entry twice.
+ */
+export function categoryGroups(mode: SlfMode, decks: readonly DeckId[], custom: readonly string[], from: Content = content()): PoolGroup[] {
+  const ok = (list: readonly string[]) => list.filter((c) => cleanCategory(c) === c);
+  const own = decks.includes('custom') ? uniqueTexts(ok(custom)) : [];
+  if (ownOnly(mode, decks, custom)) return [{ label: 'Eigene', items: own }];
+  const seen: string[] = [];
+  const groups: PoolGroup[] = [];
+  const add = (label: string, list: readonly string[]) => {
+    const items = uniqueTexts(ok(list), seen);
+    seen.push(...items);
+    if (items.length) groups.push({ label, items });
+  };
+  add(isLocked(from) ? 'Ersatzstapel' : 'Normal', mode === 'text' ? from.slf.text : from.slf.image);
+  if (decks.includes('nsfw')) add('NSFW', from.slf.nsfw);
+  add('Eigene', own);
+  return groups;
+}
+
+/** Every category of the pool, once. */
+export function categoryPool(mode: SlfMode, decks: readonly DeckId[], custom: readonly string[], from: Content = content()): string[] {
+  return categoryGroups(mode, decks, custom, from).flatMap((g) => g.items);
+}
+
+/** Up to `n` random ones from the pool, none twice and none of `avoid`. */
+export function drawCategories(pool: readonly string[], n: number, rng: Rand, avoid: readonly string[] = []): string[] {
+  const out: string[] = [];
+  const left = pool.filter((c) => indexIn(avoid, c) < 0);
   while (out.length < n && left.length) out.push(left.splice(Math.floor(rng() * left.length), 1)[0]);
   return out;
+}
+
+/**
+ * The preset "Klassisch": Stadt, Land, Fluss, filled up from the public fallback of the mode. Always
+ * on offer, locked or not. *Why the fallback:* it is the same at every table and needs no password.
+ */
+export function classicCategories(mode: SlfMode): string[] {
+  return uniqueTexts([...SLF.fixed, ...(mode === 'text' ? FALLBACK.slf.text : FALLBACK.slf.image)]).slice(0, SLF.count[mode]);
+}
+
+/**
+ * The list a round starts with (unless the host kept the last one). Locked decks: "Klassisch",
+ * because the fallback pool is so small that a draw would be the same few anyway. Unlocked: a random
+ * draw from the whole pool, Stadt, Land, Fluss not forced. Only "Eigene" with enough: a draw of those.
+ */
+export function defaultCategories(mode: SlfMode, decks: readonly DeckId[], custom: readonly string[], rng: Rand, from: Content = content()): string[] {
+  if (isLocked(from) && !ownOnly(mode, decks, custom)) return classicCategories(mode);
+  const drawn = drawCategories(categoryPool(mode, decks, custom, from), SLF.count[mode], rng);
+  return drawn.length >= SLF.pick.min[mode] ? drawn : classicCategories(mode);
 }
 
 // ---------- points ----------
@@ -336,6 +546,21 @@ export class SlfHost {
   private history = new UndoStack<Snap>();
   /** The state right before the running flag was raised, saved when it closes. */
   private beforeVote: Snap | null = null;
+  /** Pick step: where "neu würfeln", a random addition and "Zufall" draw from. The game sets it (room decks, own lists). */
+  pool: () => readonly string[] = () => [];
+  rng: Rand = Math.random;
+
+  /**
+   * A round that starts with the step "Kategorien": no letter and no timer yet; `begin` starts the
+   * writing once the host is happy with the list.
+   */
+  static picking(players: string[], mode: SlfMode, categories: string[], scores: Record<string, number> = {}, round = 1, keep = false): SlfHost {
+    const h = new SlfHost(players, mode, '', categories, scores, round);
+    h.state.phase = 'pick';
+    h.state.deadline = null;
+    h.state.keep = keep;
+    return h;
+  }
 
   constructor(players: string[], mode: SlfMode, letter: string, categories: string[], scores: Record<string, number> = {}, round = 1, now = Date.now()) {
     this.state = {
@@ -344,6 +569,9 @@ export class SlfHost {
       round,
       letter,
       categories: [...categories],
+      proposals: [],
+      seq: 0,
+      keep: false,
       players: [...players],
       commits: {},
       stopBy: null,
@@ -377,6 +605,14 @@ export class SlfHost {
     if (!r) return false;
     const s = r.snap.state;
     s.undo = this.state.undo + 1;
+    // The toggle is a setting, not a move.
+    s.keep = this.state.keep;
+    if (s.phase === 'pick') {
+      // A taken-back accept or reject brings that proposal back; ones that came in since stay.
+      const known = new Set(s.proposals.map((p) => p.id));
+      s.proposals = [...s.proposals, ...this.state.proposals.filter((p) => !known.has(p.id))].sort((a, b) => a.id - b.id);
+      s.seq = Math.max(s.seq, this.state.seq);
+    }
     // Votes and "Weiter" of the step were part of the decision: they come again.
     s.vote = null;
     s.ready = [];
@@ -417,6 +653,10 @@ export class SlfHost {
     const h = new SlfHost(state.players, state.mode, state.letter, state.categories, state.scores, state.round, now);
     const s = structuredClone(state);
     s.undo ??= 0;
+    s.proposals ??= [];
+    s.seq ??= 0;
+    s.keep ??= false;
+    // Pick step: the list and the proposals are public, so they simply carry on.
     h.state = s;
     if (s.vote) {
       // The flag can simply be raised again.
@@ -445,6 +685,12 @@ export class SlfHost {
   /** Apply an intent from `from`. Returns whether the public state changed. */
   intent(from: string, i: Intent, now: number, isHost: boolean): boolean {
     const s = this.state;
+    if (i.a === 'keep') {
+      if (!isHost || s.keep === i.on) return false;
+      s.keep = i.on;
+      return true;
+    }
+    if (i.a === 'pick' || i.a === 'accept' || i.a === 'reject' || i.a === 'withdraw') return this.pick(from, i, now, isHost);
     if (i.a === 'end') {
       if (!isHost || s.phase === 'done') return false;
       this.history.push(s.vote ? (this.beforeVote ?? this.snap()) : this.snap(), now);
@@ -494,6 +740,93 @@ export class SlfHost {
         this.step(now);
         return true;
     }
+  }
+
+  /** Pick step: the host changes the list directly; anybody else's change waits as a proposal. */
+  private pick(from: string, i: Extract<Intent, { a: 'pick' | 'accept' | 'reject' | 'withdraw' }>, now: number, isHost: boolean): boolean {
+    const s = this.state;
+    if (s.phase !== 'pick') return false;
+    if (i.a === 'pick') {
+      // Spectators may propose too: they join the round when the writing starts.
+      if (!isHost && !s.players.includes(from) && !this.present?.has(from)) return false;
+      const e = this.resolve(i.e);
+      if (!e || !applyEdit(s.categories, e, s.mode)) return false;
+      if (isHost) return this.change(e, now);
+      if (s.proposals.filter((p) => p.by === from).length >= SLF.pick.maxProposals) return false;
+      const key = editKey(e);
+      if (s.proposals.some((p) => editKey(p.edit) === key)) return false;
+      s.proposals.push({ id: ++s.seq, by: from, edit: e });
+      return true;
+    }
+    const k = s.proposals.findIndex((p) => p.id === i.id);
+    const p = s.proposals[k];
+    if (!p) return false;
+    if (i.a === 'withdraw') {
+      if (p.by !== from) return false;
+      s.proposals.splice(k, 1);
+      return true;
+    }
+    if (!isHost) return false;
+    if (i.a === 'accept') {
+      if (!applyEdit(s.categories, p.edit, s.mode)) return false;
+      // Snapshot with the proposal still open: taking the accept back brings it back pending.
+      const before = this.snap();
+      s.proposals.splice(k, 1);
+      return this.change(p.edit, now, before);
+    }
+    this.history.push(this.snap(), now);
+    s.proposals.splice(k, 1);
+    return true;
+  }
+
+  /** Draw what a pick edit leaves to chance, from the pool and without what the list has already. */
+  private resolve(e: PickEdit): Edit | null {
+    const s = this.state;
+    const one = () => drawCategories(this.pool(), 1, this.rng, s.categories)[0] ?? null;
+    switch (e.op) {
+      case 'roll': {
+        const text = one();
+        return text ? { op: 'set', at: e.at, text, how: 'roll' } : null;
+      }
+      case 'add': {
+        const text = e.text ?? one();
+        return text ? { op: 'add', text, how: e.text === null ? 'roll' : e.how } : null;
+      }
+      case 'preset':
+        return { op: 'preset', name: e.name, list: e.name === 'klassisch' ? classicCategories(s.mode) : drawCategories(this.pool(), SLF.count[s.mode], this.rng) };
+      default:
+        return { ...e };
+    }
+  }
+
+  /** Apply a change to the list (a decision for Zug zurück); proposals it made pointless go. */
+  private change(e: Edit, now: number, before: Snap = this.snap()): boolean {
+    const s = this.state;
+    const next = applyEdit(s.categories, e, s.mode);
+    if (!next) return false;
+    this.history.push(before, now);
+    s.categories = next;
+    s.proposals = s.proposals.filter((p) => !staleEdit(next, p.edit));
+    return true;
+  }
+
+  /**
+   * The host is happy with the list: the writing starts with `letter`. `players` may bring in who
+   * joined meanwhile. Open proposals are dropped, and the history ends: Zug zurück never leads back
+   * into the pick step, since the letter is out and answers are being typed against the list.
+   */
+  begin(letter: string, now: number, players: readonly string[] = this.state.players): boolean {
+    const s = this.state;
+    const { min, max } = pickBounds(s.mode);
+    if (s.phase !== 'pick' || s.categories.length < min || s.categories.length > max || players.length < 2 || letter.length !== 1) return false;
+    s.phase = 'write';
+    s.letter = letter;
+    s.players = [...players];
+    for (const p of s.players) s.scores[p] ??= 0;
+    s.proposals = [];
+    s.deadline = now + (s.mode === 'text' ? SLF.writeS : SLF.imageS) * 1000;
+    this.history.clear();
+    return true;
   }
 
   private flag(from: string, i: Extract<Intent, { a: 'flag' }>, now: number): boolean {
@@ -714,6 +1047,7 @@ export class SlfHost {
       }
     };
     s.players = s.players.map(r);
+    for (const p of s.proposals) p.by = r(p.by);
     s.ready = s.ready.map(r);
     s.judged = s.judged.map(r);
     if (s.stopBy === oldId) s.stopBy = newId;
@@ -761,6 +1095,7 @@ export class SlfHost {
     this.history.clear();
     this.beforeVote = null;
     s.players = s.players.filter(not);
+    s.proposals = s.proposals.filter((p) => p.by !== id);
     s.ready = s.ready.filter(not);
     s.judged = s.judged.filter(not);
     delete s.commits[id];

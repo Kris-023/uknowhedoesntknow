@@ -3,8 +3,17 @@ import { SLF } from '../src/config';
 import { mulberry32 } from '../src/core/rng';
 import { botAnswer, botWords } from '../src/game/slf/botWords';
 import {
+  applyEdit,
+  categoryGroups,
   categoryPool,
+  classicCategories,
+  cleanCategory,
+  defaultCategories,
   drawCategories,
+  editKey,
+  isLocked,
+  parseEdit,
+  type Edit,
   drawLetter,
   firstLetter,
   imageCommit,
@@ -21,13 +30,18 @@ import {
 } from '../src/game/slf/logic';
 import { newSalt } from '../src/game/gleich/logic';
 import { FALLBACK } from '../src/words/fallback';
-import { FIXTURE } from './fixtures/content';
+import { FIXTURE, useFixture } from './fixtures/content';
 
 const H = 'a'.repeat(64);
 const H2 = 'b'.repeat(64);
 const T0 = 1_000_000;
 /** A tiny JPEG-shaped data URL: the format check only looks at the header and alphabet. */
 const pic = (s: string) => `data:image/jpeg;base64,${btoa(s)}`;
+/** Host: start a round and take the categories as they come (the step "Kategorien" has its own tests). */
+const begin = (g: { start(): void; go(): boolean }) => {
+  g.start();
+  expect(g.go()).toBe(true);
+};
 
 describe('Stadt, Land, Fluss: letters', () => {
   it.each([
@@ -76,43 +90,65 @@ describe('Stadt, Land, Fluss: letters', () => {
 
 describe('Stadt, Land, Fluss: categories', () => {
   const rng = mulberry32(3);
-  it('text rounds keep Stadt, Land, Fluss first; with only the classics it is all six', () => {
-    const { fixed, pool } = categoryPool('text', ['normal'], ['Kollege']);
-    expect(fixed).toEqual(['Stadt', 'Land', 'Fluss']);
-    expect(pool).not.toContain('Kollege');
-    const cats = drawCategories(fixed, pool, SLF.count.text, rng);
-    expect(cats.slice(0, 3)).toEqual(['Stadt', 'Land', 'Fluss']);
-    expect([...cats].sort()).toEqual([...FALLBACK.slf.text].sort());
+  /** An unlocked deck with more text categories than a round needs (made up, not deck content). */
+  const BIG = { ...FIXTURE, slf: { ...FIXTURE.slf, text: ['Stadt', 'Land', 'Fluss', 'Name', 'Tier', 'Beruf', 'Farbe', 'Sport', 'Musikinstrument', 'Getränk'] } };
+
+  it('"Klassisch" is Stadt, Land, Fluss filled up from the public fallback', () => {
+    expect(classicCategories('text')).toEqual([...FALLBACK.slf.text].slice(0, SLF.count.text));
+    expect(classicCategories('text').slice(0, 3)).toEqual(['Stadt', 'Land', 'Fluss']);
+    expect(classicCategories('bild')).toEqual(['Stadt', 'Land', 'Fluss']);
   });
 
-  it('NSFW extras only with that deck (and unlocked), own categories only with "Eigene"', () => {
+  it('locked: the default is "Klassisch"; unlocked: a random draw, Stadt, Land, Fluss not forced', () => {
+    expect(isLocked()).toBe(true);
+    expect(isLocked(FIXTURE)).toBe(false);
+    for (let i = 0; i < 5; i++) expect(defaultCategories('text', ['normal', 'custom'], ['Kollege'], rng)).toEqual(classicCategories('text'));
+    expect(defaultCategories('bild', ['normal'], [], rng)).toEqual(classicCategories('bild'));
+    const lists = new Set<string>();
+    let withoutClassics = 0;
+    for (let i = 0; i < 40; i++) {
+      const cats = defaultCategories('text', ['normal'], [], rng, BIG);
+      expect(cats).toHaveLength(SLF.count.text);
+      expect(new Set(cats).size).toBe(SLF.count.text);
+      for (const c of cats) expect(BIG.slf.text).toContain(c);
+      lists.add([...cats].sort().join());
+      if (!['Stadt', 'Land', 'Fluss'].every((c) => cats.includes(c))) withoutClassics++;
+    }
+    expect(lists.size).toBeGreaterThan(5);
+    expect(withoutClassics).toBeGreaterThan(0);
+  });
+
+  it('the pool: built-ins by deck (locked: the fallback), NSFW only with that deck, own ones only with "Eigene"', () => {
     const extra = FIXTURE.slf.nsfw[0];
-    expect(categoryPool('text', ['normal'], [], FIXTURE).pool).not.toContain(extra);
-    expect(categoryPool('text', ['normal', 'nsfw'], [], FIXTURE).pool).toContain(extra);
-    expect(categoryPool('bild', ['normal', 'nsfw'], [], FIXTURE).pool).toContain(extra);
-    // Locked: the classics only.
-    expect(categoryPool('text', ['normal', 'nsfw'], []).pool.sort()).toEqual(['Beruf', 'Name', 'Tier']);
+    expect(categoryPool('text', ['normal'], [], FIXTURE)).not.toContain(extra);
+    expect(categoryPool('text', ['normal', 'nsfw'], [], FIXTURE)).toContain(extra);
+    expect(categoryPool('bild', ['normal', 'nsfw'], [], FIXTURE)).toContain(extra);
+    // Locked: the fallback, Stadt, Land, Fluss included now (they are no longer forced in).
+    expect(categoryPool('text', ['normal', 'nsfw'], []).sort()).toEqual([...FALLBACK.slf.text].sort());
+    expect(categoryPool('text', ['normal'], ['Kollege'])).not.toContain('Kollege');
     const mixed = categoryPool('text', ['normal', 'custom'], ['Kollege', 'Stadt']);
-    expect(mixed.pool).toContain('Kollege');
-    // No duplicate of a fixed one.
-    expect(mixed.pool.filter((c) => c === 'Stadt')).toHaveLength(0);
+    expect(mixed).toContain('Kollege');
+    expect(mixed.filter((c) => c === 'Stadt')).toHaveLength(1);
+    expect(categoryGroups('text', ['normal', 'nsfw', 'custom'], ['Kollege'], FIXTURE).map((g) => g.label)).toEqual(['Normal', 'NSFW', 'Eigene']);
+    expect(categoryGroups('text', ['normal', 'custom'], ['Kollege']).map((g) => g.label)).toEqual(['Ersatzstapel', 'Eigene']);
   });
 
-  it('only "Eigene": own categories alone if there are enough, else the classics fill in', () => {
+  it('only "Eigene": own categories alone if there are enough (the default draws from them, locked or not)', () => {
     const six = ['A1', 'A2', 'A3', 'A4', 'A5', 'A6'];
-    expect(categoryPool('text', ['custom'], six)).toEqual({ fixed: [], pool: six });
-    expect(categoryPool('text', ['custom'], ['A1']).fixed).toEqual(['Stadt', 'Land', 'Fluss']);
-    expect(categoryPool('bild', ['custom'], ['A1', 'A2', 'A3'])).toEqual({ fixed: [], pool: ['A1', 'A2', 'A3'] });
+    expect(categoryPool('text', ['custom'], six)).toEqual(six);
+    expect(categoryPool('text', ['custom'], ['A1'])).toContain('Stadt');
+    expect(categoryPool('bild', ['custom'], ['A1', 'A2', 'A3'])).toEqual(['A1', 'A2', 'A3']);
+    expect([...defaultCategories('text', ['custom'], six, rng)].sort()).toEqual(six);
   });
 
-  it('picture rounds draw three picturable categories, never twice', () => {
+  it('picture rounds draw picturable categories, never twice', () => {
     for (let i = 0; i < 30; i++) {
-      const { fixed, pool } = categoryPool('bild', ['normal'], []);
-      const cats = drawCategories(fixed, pool, SLF.count.bild, rng);
+      const cats = drawCategories(categoryPool('bild', ['normal'], []), SLF.count.bild, rng);
       expect(cats).toHaveLength(3);
       expect(new Set(cats).size).toBe(3);
       for (const c of cats) expect(FALLBACK.slf.image).toContain(c);
     }
+    expect(drawCategories(['A', 'B', 'C'], 5, rng, ['b'])).toHaveLength(2);
   });
 });
 
@@ -486,7 +522,7 @@ describe('Stadt, Land, Fluss over the network', async () => {
 
   it('text round: commit, nothing public while writing, reveal after the stop, points for all', async () => {
     const { room, g } = make();
-    g.a.start();
+    begin(g.a);
     room.pump();
     const s = g.b.state!;
     expect(s.phase).toBe('write');
@@ -540,7 +576,7 @@ describe('Stadt, Land, Fluss over the network', async () => {
 
   it('a changed answer after locking shows as nothing', async () => {
     const { room, g } = make();
-    g.a.start();
+    begin(g.a);
     room.pump();
     const L = g.a.state!.letter;
     for (const id of ids) for (let c = 0; c < 6; c++) g[id].setText(c, `${L}${id}${c}x`);
@@ -555,7 +591,7 @@ describe('Stadt, Land, Fluss over the network', async () => {
 
   it('picture round: pictures go straight to everyone after the writing, judged, best bonus', async () => {
     const { room, g } = make('bild');
-    g.a.start();
+    begin(g.a);
     room.pump();
     const s = g.a.state!;
     expect(s.categories).toHaveLength(3);
@@ -589,23 +625,29 @@ describe('Stadt, Land, Fluss over the network', async () => {
     const own = ['Kollege', 'Ausrede', 'Snack', 'Meeting', 'Faxgerät', 'Kantine'];
     for (let i = 0; i < 10; i++) {
       const { room, g } = make('text', own, ['custom']);
-      g.a.start();
+      begin(g.a);
       room.pump();
       expect([...g.b.state!.categories].sort()).toEqual([...own].sort());
     }
+    // Unlocked (locked rooms start with "Klassisch"), an own one is drawn now and then.
+    const undo = useFixture();
     let seen = 0;
-    for (let i = 0; i < 20; i++) {
-      const { room, g } = make('text', ['Kollege'], ['normal', 'custom']);
-      g.a.start();
-      room.pump();
-      if (g.b.state!.categories.includes('Kollege')) seen++;
+    try {
+      for (let i = 0; i < 20; i++) {
+        const { room, g } = make('text', ['Kollege'], ['normal', 'custom']);
+        begin(g.a);
+        room.pump();
+        if (g.b.state!.categories.includes('Kollege')) seen++;
+      }
+    } finally {
+      undo();
     }
     expect(seen).toBeGreaterThan(0);
   });
 
   it('absent() names who is gone; drop needs the host to see them gone too', async () => {
     const { room, g } = make();
-    g.a.start();
+    begin(g.a);
     room.pump();
     room.roster.pop();
     expect(g.b.absent()).toEqual(['c']);
@@ -625,7 +667,7 @@ describe('Stadt, Land, Fluss over the network', async () => {
     ]);
     const late = room.roster.pop()!;
     const gg = Object.fromEntries(['a', 'b', 'b2'].map((id) => [id, new SlfGame(room.net(id), { decks: () => ['normal'], mode: () => 'text' })]));
-    gg.a.start();
+    begin(gg.a);
     room.pump();
     const L = gg.a.state!.letter;
     for (let c = 0; c < 6; c++) gg.b.setText(c, `${L}b`);
@@ -653,7 +695,7 @@ describe('Stadt, Land, Fluss over the network', async () => {
     let host = 'a';
     const net = (id: string) => ({ ...room.net(id), isHost: () => host === id, hostId: () => host });
     const gg = Object.fromEntries(ids.map((id) => [id, new SlfGame(net(id), { decks: () => ['normal'], mode: () => 'bild' })]));
-    gg.a.start();
+    begin(gg.a);
     room.pump();
     for (const id of ids) for (let c = 0; c < 3; c++) gg[id].setPic(c, pic(`${id}${c}`));
     for (const id of ids) await gg[id].stop();
@@ -673,7 +715,7 @@ describe('Stadt, Land, Fluss over the network', async () => {
 
   it('ignores a state or a reveal from the wrong sender', async () => {
     const { room, g } = make();
-    g.a.start();
+    begin(g.a);
     room.pump();
     const before = JSON.stringify(g.c.state);
     room.net('b').send('sl:state', { ...g.a.state, letter: 'Q', sentAt: Date.now() }, 'c');
@@ -732,7 +774,7 @@ describe('Stadt, Land, Fluss over the network', async () => {
     it('typed answers survive a reload', () => {
       install(fakeStorage());
       const { room, gg, kill, reload } = withReload('text');
-      gg.a.start();
+      begin(gg.a);
       room.pump();
       gg.b.setText(0, 'Berlin');
       gg.b.setText(2, 'Elbe');
@@ -746,7 +788,7 @@ describe('Stadt, Land, Fluss over the network', async () => {
     it('a reload in the lock phase commits the restored draft, not an empty one', async () => {
       install(fakeStorage());
       const { room, gg, kill, reload } = withReload('text');
-      gg.a.start();
+      begin(gg.a);
       room.pump();
       const L = gg.a.state!.letter;
       const n = gg.a.state!.categories.length;
@@ -769,7 +811,7 @@ describe('Stadt, Land, Fluss over the network', async () => {
     it('a reload during the reveal brings back my commitment and pictures (tab store)', async () => {
       install(fakeStorage());
       const { room, gg, kill, reload } = withReload('bild');
-      gg.a.start();
+      begin(gg.a);
       room.pump();
       const L = gg.a.state!.letter;
       for (const id of ['a', 'b', 'c'])
@@ -792,7 +834,7 @@ describe('Stadt, Land, Fluss over the network', async () => {
     it('text: the commitment is back after a reload during the reveal', async () => {
       install(fakeStorage());
       const { room, gg, kill, reload } = withReload('text');
-      gg.a.start();
+      begin(gg.a);
       room.pump();
       const L = gg.a.state!.letter;
       const n = gg.a.state!.categories.length;
@@ -811,7 +853,7 @@ describe('Stadt, Land, Fluss over the network', async () => {
       const store = fakeStorage((k) => k.includes('.p.'));
       install(store);
       const { room, gg, kill, reload } = withReload('bild');
-      gg.a.start();
+      begin(gg.a);
       room.pump();
       const L = gg.a.state!.letter;
       for (const id of ['a', 'b', 'c'])
@@ -835,7 +877,7 @@ describe('Stadt, Land, Fluss over the network', async () => {
     it('a liar cannot hand me wrong answers: they must match my commitment', async () => {
       install(fakeStorage((k) => k.includes('salt.')));
       const { room, gg, kill, reload } = withReload('text');
-      gg.a.start();
+      begin(gg.a);
       room.pump();
       const L = gg.a.state!.letter;
       const n = gg.a.state!.categories.length;
@@ -859,7 +901,7 @@ describe('Stadt, Land, Fluss over the network', async () => {
       const store = fakeStorage();
       install(store);
       const { room, gg } = withReload('text');
-      gg.a.start();
+      begin(gg.a);
       room.pump();
       gg.b.setText(0, 'Berlin');
       expect(keys(store).length).toBeGreaterThan(0);
@@ -1075,7 +1117,7 @@ describe('Stadt, Land, Fluss: Zug zurück (over the network)', async () => {
       { id: 'c', seat: 1, name: 'C' },
     ]);
     const g = Object.fromEntries(ids.map((id) => [id, new SlfGame(room.net(id), { decks: () => ['normal'], mode: () => 'text' })]));
-    g.a.start();
+    begin(g.a);
     room.pump();
     const L = g.b.state!.letter;
     const n = g.b.state!.categories.length;
@@ -1118,5 +1160,389 @@ describe('Stadt, Land, Fluss: Zug zurück (over the network)', async () => {
     expect(g.a.iVoted).toBe(false);
     // The answers survived the round trip.
     expect(g.c.answersView()!.a[0]).toBe(`${L}x0`);
+  });
+});
+
+describe('Stadt, Land, Fluss: the step "Kategorien"', () => {
+  const P = ['a', 'b', 'c'];
+  const CATS = ['Stadt', 'Land', 'Fluss', 'Name', 'Tier', 'Beruf'];
+  const POOL = ['Stadt', 'Land', 'Fluss', 'Name', 'Tier', 'Beruf', 'Farbe', 'Sport'];
+  const picking = (cats = CATS, mode: 'text' | 'bild' = 'text') => {
+    const h = SlfHost.picking(P, mode, cats, { a: 2 }, 3);
+    h.pool = () => POOL;
+    h.rng = mulberry32(7);
+    return h;
+  };
+  const pick = (h: SlfHost, from: string, e: Parameters<typeof parseIntent>[0], host = from === 'a', now = T0) => {
+    const i = parseIntent({ a: 'pick', e });
+    expect(i).not.toBeNull();
+    return h.intent(from, i!, now, host);
+  };
+
+  it('starts without letter and timer; the host starts the writing with a letter, within the bounds', () => {
+    const h = picking();
+    expect(h.state).toMatchObject({ phase: 'pick', letter: '', deadline: null, proposals: [], keep: false, round: 3, scores: { a: 2, b: 0, c: 0 } });
+    expect(h.tick(T0 + 10 * 3600_000)).toBe(false);
+    expect(h.state.phase).toBe('pick');
+    expect(h.begin('', T0)).toBe(false);
+    expect(h.begin('B', T0, ['a'])).toBe(false);
+    // Someone who joined meanwhile plays along.
+    expect(h.begin('B', T0, ['a', 'b', 'c', 'd'])).toBe(true);
+    expect(h.state).toMatchObject({ phase: 'write', letter: 'B', players: ['a', 'b', 'c', 'd'], deadline: T0 + SLF.writeS * 1000 });
+    expect(h.state.scores.d).toBe(0);
+    expect(h.begin('C', T0)).toBe(false);
+    const short = picking(['Stadt', 'Land', 'Fluss']);
+    expect(short.begin('B', T0)).toBe(false);
+    const pics = picking(['Tier', 'Essen'], 'bild');
+    expect(pics.begin('B', T0)).toBe(true);
+    expect(pics.state.deadline).toBe(T0 + SLF.imageS * 1000);
+  });
+
+  it('host edits apply at once: replace, roll, add, remove, presets; bounds and duplicates hold', () => {
+    const h = picking();
+    expect(pick(h, 'a', { op: 'set', at: 'Tier', text: 'Farbe', how: 'pool' })).toBe(true);
+    expect(h.state.categories).toEqual(['Stadt', 'Land', 'Fluss', 'Name', 'Farbe', 'Beruf']);
+    // Already in the list (case and spaces aside), or not there to replace.
+    expect(pick(h, 'a', { op: 'set', at: 'Name', text: ' stadt ', how: 'free' })).toBe(false);
+    expect(pick(h, 'a', { op: 'set', at: 'Tier', text: 'Hobby', how: 'free' })).toBe(false);
+    expect(pick(h, 'a', { op: 'roll', at: 'Beruf' })).toBe(true);
+    const rolled = h.state.categories[5];
+    expect(['Tier', 'Sport']).toContain(rolled);
+    expect(pick(h, 'a', { op: 'add', text: 'Hobby', how: 'free' })).toBe(true);
+    expect(pick(h, 'a', { op: 'add', text: null })).toBe(true);
+    expect(h.state.categories).toHaveLength(8);
+    expect(pick(h, 'a', { op: 'add', text: 'Getränk', how: 'free' })).toBe(true);
+    expect(pick(h, 'a', { op: 'add', text: 'Gemüse', how: 'free' })).toBe(true);
+    expect(h.state.categories).toHaveLength(SLF.pick.max.text);
+    expect(pick(h, 'a', { op: 'add', text: 'Sportart', how: 'free' })).toBe(false);
+    for (const c of [...h.state.categories].slice(0, 6)) pick(h, 'a', { op: 'remove', at: c });
+    expect(h.state.categories).toHaveLength(SLF.pick.min.text);
+    expect(pick(h, 'a', { op: 'remove', at: h.state.categories[0] })).toBe(false);
+    expect(pick(h, 'a', { op: 'preset', name: 'klassisch' })).toBe(true);
+    expect(h.state.categories).toEqual(classicCategories('text'));
+    // The same list again changes nothing.
+    expect(pick(h, 'a', { op: 'preset', name: 'klassisch' })).toBe(false);
+    expect(pick(h, 'a', { op: 'preset', name: 'zufall' })).toBe(true);
+    expect(h.state.categories).toHaveLength(SLF.count.text);
+    for (const c of h.state.categories) expect(POOL).toContain(c);
+    // A pool that is used up: nothing left to roll.
+    const used = picking();
+    used.pool = () => CATS;
+    expect(pick(used, 'a', { op: 'add', text: null })).toBe(false);
+    expect(pick(used, 'a', { op: 'roll', at: 'Tier' })).toBe(false);
+    // Pictures have their own bounds.
+    const b = picking(['Tier', 'Essen', 'Beruf'], 'bild');
+    expect(pick(b, 'a', { op: 'remove', at: 'Tier' })).toBe(true);
+    expect(pick(b, 'a', { op: 'remove', at: 'Essen' })).toBe(false);
+  });
+
+  it('everybody else proposes; the host accepts or rejects, the author may withdraw', () => {
+    const h = picking();
+    expect(pick(h, 'b', { op: 'set', at: 'Tier', text: 'Hobby', how: 'free' })).toBe(true);
+    expect(pick(h, 'c', { op: 'roll', at: 'Name' })).toBe(true);
+    expect(h.state.categories).toEqual(CATS);
+    expect(h.state.proposals).toMatchObject([
+      { id: 1, by: 'b', edit: { op: 'set', at: 'Tier', text: 'Hobby', how: 'free' } },
+      { id: 2, by: 'c', edit: { op: 'set', at: 'Name', how: 'roll' } },
+    ]);
+    // The roll is drawn when it is proposed, so the host sees what it would be.
+    expect(['Farbe', 'Sport']).toContain((h.state.proposals[1].edit as Extract<Edit, { op: 'set' }>).text);
+    // Only the host decides; only the author withdraws.
+    expect(h.intent('b', { a: 'accept', id: 1 }, T0, false)).toBe(false);
+    expect(h.intent('c', { a: 'withdraw', id: 1 }, T0, false)).toBe(false);
+    expect(h.intent('a', { a: 'accept', id: 1 }, T0, true)).toBe(true);
+    expect(h.state.categories).toEqual(['Stadt', 'Land', 'Fluss', 'Name', 'Hobby', 'Beruf']);
+    expect(h.intent('a', { a: 'reject', id: 2 }, T0, true)).toBe(true);
+    expect(h.state.categories).toEqual(['Stadt', 'Land', 'Fluss', 'Name', 'Hobby', 'Beruf']);
+    expect(h.state.proposals).toEqual([]);
+    expect(h.intent('a', { a: 'accept', id: 2 }, T0, true)).toBe(false);
+    expect(pick(h, 'c', { op: 'remove', at: 'Beruf' })).toBe(true);
+    expect(h.intent('c', { a: 'withdraw', id: 3 }, T0, false)).toBe(true);
+    expect(h.state.proposals).toEqual([]);
+    // Strangers (not in the round, not in the room) cannot propose; someone in the room who joined late can.
+    expect(pick(h, 'x', { op: 'remove', at: 'Beruf' }, false)).toBe(false);
+    h.present = new Set([...P, 'x']);
+    expect(pick(h, 'x', { op: 'remove', at: 'Beruf' }, false)).toBe(true);
+  });
+
+  it('at most a few open proposals per player; duplicates and pointless ones are dropped', () => {
+    const h = picking();
+    expect(pick(h, 'b', { op: 'add', text: 'Hobby', how: 'free' })).toBe(true);
+    // Same thing again, from b or from c: one is enough. A roll of the same category too.
+    expect(pick(h, 'b', { op: 'add', text: 'hobby', how: 'free' })).toBe(false);
+    expect(pick(h, 'c', { op: 'add', text: 'Hobby', how: 'pool' })).toBe(false);
+    expect(pick(h, 'b', { op: 'roll', at: 'Tier' })).toBe(true);
+    expect(pick(h, 'c', { op: 'roll', at: 'Tier' })).toBe(false);
+    // Pointless: not in the list, already in it.
+    expect(pick(h, 'c', { op: 'remove', at: 'Hobby' })).toBe(false);
+    expect(pick(h, 'c', { op: 'add', text: 'Stadt', how: 'free' })).toBe(false);
+    expect(pick(h, 'b', { op: 'remove', at: 'Land' })).toBe(true);
+    expect(h.state.proposals.filter((p) => p.by === 'b')).toHaveLength(SLF.pick.maxProposals);
+    expect(pick(h, 'b', { op: 'remove', at: 'Fluss' })).toBe(false);
+    expect(pick(h, 'c', { op: 'remove', at: 'Fluss' })).toBe(true);
+    expect(editKey({ op: 'set', at: 'Tier', text: 'X', how: 'roll' })).toBe(editKey({ op: 'set', at: ' tier', text: 'Y', how: 'roll' }));
+  });
+
+  it('a host change makes proposals about it pointless: they go; merely out of bounds stays', () => {
+    const h = picking(['Stadt', 'Land', 'Fluss', 'Name', 'Tier', 'Beruf', 'Farbe', 'Sport', 'Hobby']);
+    pick(h, 'b', { op: 'set', at: 'Tier', text: 'Getränk', how: 'free' });
+    pick(h, 'c', { op: 'add', text: 'Gemüse', how: 'free' });
+    pick(h, 'c', { op: 'add', text: 'Band', how: 'free' });
+    expect(h.state.proposals).toHaveLength(3);
+    pick(h, 'a', { op: 'remove', at: 'Tier' });
+    pick(h, 'a', { op: 'add', text: 'Gemüse', how: 'free' });
+    pick(h, 'a', { op: 'add', text: 'Kleidung', how: 'free' });
+    expect(h.state.categories).toHaveLength(SLF.pick.max.text);
+    expect(h.state.proposals.map((p) => p.edit)).toEqual([{ op: 'add', text: 'Band', how: 'free' }]);
+    // Full: accepting fails and the proposal waits; after a removal it fits.
+    expect(h.intent('a', { a: 'accept', id: 3 }, T0, true)).toBe(false);
+    expect(h.state.proposals).toHaveLength(1);
+    pick(h, 'a', { op: 'remove', at: 'Kleidung' });
+    expect(h.intent('a', { a: 'accept', id: 3 }, T0, true)).toBe(true);
+    expect(h.state.categories.at(-1)).toBe('Band');
+  });
+
+  it('validates what comes from the network', () => {
+    expect(parseIntent({ a: 'pick', e: { op: 'set', at: 'Tier', text: '  Haus\ntier  ', how: 'free' } })).toEqual({ a: 'pick', e: { op: 'set', at: 'Tier', text: 'Haus tier', how: 'free' } });
+    expect(parseIntent({ a: 'pick', e: { op: 'set', at: 'Tier', text: 'x'.repeat(SLF.pick.maxLen + 1), how: 'free' } })).toBeNull();
+    expect(parseIntent({ a: 'pick', e: { op: 'set', at: 'Tier', text: 'Hobby', how: 'roll' } })).toBeNull();
+    expect(parseIntent({ a: 'pick', e: { op: 'set', at: '', text: 'Hobby', how: 'free' } })).toBeNull();
+    expect(parseIntent({ a: 'pick', e: { op: 'add', text: null, how: 'free' } })).toEqual({ a: 'pick', e: { op: 'add', text: null, how: 'roll' } });
+    expect(parseIntent({ a: 'pick', e: { op: 'add', text: 7, how: 'free' } })).toBeNull();
+    expect(parseIntent({ a: 'pick', e: { op: 'preset', name: 'alles' } })).toBeNull();
+    expect(parseIntent({ a: 'pick', e: { op: 'swap', at: 'Tier' } })).toBeNull();
+    expect(parseIntent({ a: 'pick', e: 'Tier' })).toBeNull();
+    expect(parseIntent({ a: 'accept', id: 0 })).toBeNull();
+    expect(parseIntent({ a: 'reject', id: 1.5 })).toBeNull();
+    expect(parseIntent({ a: 'withdraw', id: 3 })).toEqual({ a: 'withdraw', id: 3 });
+    expect(parseIntent({ a: 'keep', on: 'ja' })).toBeNull();
+    expect(cleanCategory('\u0007Tier\u0000')).toBe('Tier');
+    expect(cleanCategory('   ')).toBeNull();
+    expect(cleanCategory('x'.repeat(30), SLF.pick.maxTyped)).toBeNull();
+    expect(parseEdit({ op: 'preset', name: 'zufall', list: ['A', 'B', 'C', 'D'] })).toEqual({ op: 'preset', name: 'zufall', list: ['A', 'B', 'C', 'D'] });
+    expect(parseEdit({ op: 'preset', name: 'zufall', list: Array(SLF.pick.max.text + 1).fill('A') })).toBeNull();
+    expect(parseEdit({ op: 'preset', name: 'zufall', list: ['A', ''] })).toBeNull();
+    expect(applyEdit(['A', 'B', 'C', 'D'], { op: 'remove', at: 'a' }, 'text')).toBeNull();
+    expect(applyEdit(['A', 'B', 'C'], { op: 'remove', at: 'a' }, 'bild')).toEqual(['B', 'C']);
+  });
+
+  it('only the host keeps the list for the next rounds; the toggle is no move', () => {
+    const h = picking();
+    expect(h.intent('b', { a: 'keep', on: true }, T0, false)).toBe(false);
+    expect(h.intent('a', { a: 'keep', on: true }, T0, true)).toBe(true);
+    expect(h.state.keep).toBe(true);
+    expect(h.canUndo).toBe(false);
+  });
+
+  it('Zug zurück while picking: a change, an accept or a reject goes back; later proposals stay', () => {
+    const h = picking();
+    pick(h, 'a', { op: 'remove', at: 'Beruf' });
+    expect(h.canUndo).toBe(true);
+    pick(h, 'b', { op: 'set', at: 'Tier', text: 'Hobby', how: 'free' });
+    h.intent('a', { a: 'accept', id: 1 }, T0, true);
+    pick(h, 'c', { op: 'add', text: 'Farbe', how: 'pool' });
+    h.intent('a', { a: 'keep', on: true }, T0, true);
+    expect(h.undo(T0)).toBe(true);
+    // The accept is undone: Tier is back, b's proposal waits again, c's (newer) is still there.
+    expect(h.state).toMatchObject({ phase: 'pick', undo: 1, deadline: null, keep: true, seq: 2 });
+    expect(h.state.categories).toEqual(['Stadt', 'Land', 'Fluss', 'Name', 'Tier']);
+    expect(h.state.proposals.map((p) => p.id)).toEqual([1, 2]);
+    h.intent('a', { a: 'reject', id: 2 }, T0, true);
+    expect(h.undo(T0)).toBe(true);
+    expect(h.state.proposals.map((p) => p.id)).toEqual([1, 2]);
+    expect(h.undo(T0)).toBe(true);
+    expect(h.state.categories).toEqual(CATS);
+    expect(h.canUndo).toBe(false);
+  });
+
+  it('Zug zurück never leads from the writing back into the pick step; "end" while picking does', () => {
+    const h = picking();
+    pick(h, 'a', { op: 'remove', at: 'Beruf' });
+    expect(h.begin('B', T0)).toBe(true);
+    expect(h.canUndo).toBe(false);
+    expect(h.undo(T0)).toBe(false);
+    const e = picking();
+    expect(e.intent('a', { a: 'end' }, T0, true)).toBe(true);
+    expect(e.state.phase).toBe('done');
+    expect(e.undo(T0)).toBe(true);
+    expect(e.state).toMatchObject({ phase: 'pick', deadline: null, letter: '' });
+  });
+
+  it('a new host carries on from the public state, proposals and all; rejoin and leaving follow', () => {
+    const h = picking();
+    pick(h, 'b', { op: 'set', at: 'Tier', text: 'Hobby', how: 'free' });
+    pick(h, 'c', { op: 'remove', at: 'Name' });
+    const n = SlfHost.fromState(structuredClone(h.state));
+    n.pool = () => POOL;
+    expect(n.state).toMatchObject({ phase: 'pick', deadline: null, seq: 2 });
+    expect(n.state.proposals).toHaveLength(2);
+    expect(n.intent('b', { a: 'accept', id: 2 }, T0, true)).toBe(true);
+    expect(n.state.categories).not.toContain('Name');
+    pick(n, 'c', { op: 'add', text: 'Farbe', how: 'pool' }, false);
+    expect(n.state.proposals.map((p) => p.id)).toEqual([1, 3]);
+    // b reloads: the proposal follows the new id.
+    n.replace('b', 'b2');
+    expect(n.state.proposals[0].by).toBe('b2');
+    expect(n.intent('b2', { a: 'withdraw', id: 1 }, T0, false)).toBe(true);
+    pick(n, 'b2', { op: 'add', text: 'Sport', how: 'pool' }, false);
+    // c leaves for good: c's proposals go with them.
+    n.removePlayer('c', T0);
+    expect(n.state.proposals.map((p) => p.by)).toEqual(['b2']);
+    expect(n.state.phase).toBe('pick');
+    n.removePlayer('b2', T0);
+    expect(n.state.phase).toBe('done');
+  });
+});
+
+describe('Stadt, Land, Fluss: the step "Kategorien" over the network', async () => {
+  const { LocalGameRoom } = await import('../src/game/minigame');
+  const { SlfGame, parseState } = await import('../src/game/slf/game');
+  const ids = ['a', 'b', 'c'];
+  const make = (mode: () => 'text' | 'bild' = () => 'text') => {
+    const room = new LocalGameRoom([
+      { id: 'a', seat: 2, name: 'A' },
+      { id: 'b', seat: 0, name: 'B' },
+      { id: 'c', seat: 1, name: 'C' },
+    ]);
+    const g = Object.fromEntries(ids.map((id) => [id, new SlfGame(room.net(id), { decks: () => ['normal', 'custom'], mode, custom: () => ['Kollege', 'Ausrede'] })]));
+    return { room, g };
+  };
+
+  it('locked: the round starts with "Klassisch"; proposals travel, the host decides, everyone sees the same list', () => {
+    const { room, g } = make();
+    g.a.start();
+    room.pump();
+    for (const id of ids) expect(g[id].state).toMatchObject({ phase: 'pick', letter: '', categories: classicCategories('text') });
+    // Everyone sees the pool: the fallback and the room's own lists.
+    expect(g.c.poolGroups().map((x) => x.label)).toEqual(['Ersatzstapel', 'Eigene']);
+    g.b.replaceCat('Tier', 'Haustier', 'free');
+    g.c.roll('Beruf');
+    room.pump();
+    expect(g.a.state!.proposals.map((p) => p.by)).toEqual(['b', 'c']);
+    for (const id of ids) expect(g[id].state!.proposals).toHaveLength(2);
+    expect(g.b.myProposals).toBe(1);
+    const [p1, p2] = g.a.state!.proposals;
+    // Non-hosts cannot decide.
+    g.c.accept(p1.id);
+    room.pump();
+    expect(g.a.state!.proposals).toHaveLength(2);
+    g.a.accept(p1.id);
+    g.a.reject(p2.id);
+    room.pump();
+    for (const id of ids) {
+      expect(g[id].state!.categories).toEqual(['Stadt', 'Land', 'Fluss', 'Name', 'Haustier', 'Beruf']);
+      expect(g[id].state!.proposals).toEqual([]);
+    }
+    // The host's own change applies at once.
+    g.a.addCat(null);
+    room.pump();
+    expect(g.c.state!.categories).toHaveLength(7);
+    expect(['Kollege', 'Ausrede', 'Tier']).toContain(g.c.state!.categories[6]);
+    expect(g.b.go()).toBe(false);
+    expect(g.a.go()).toBe(true);
+    room.pump();
+    for (const id of ids) expect(g[id].state).toMatchObject({ phase: 'write', categories: g.a.state!.categories });
+    expect(g.b.state!.letter).toMatch(/^[A-Z]$/);
+  });
+
+  it('"Behalten": the next round starts with the same list, still editable; a new mode draws anew', () => {
+    let mode: 'text' | 'bild' = 'text';
+    const { room, g } = make(() => mode);
+    g.a.start();
+    g.a.preset('zufall');
+    g.a.removeCat(g.a.state!.categories[0]);
+    g.a.setKeep(true);
+    g.b.setKeep(false);
+    room.pump();
+    const list = [...g.a.state!.categories];
+    expect(g.c.state!.keep).toBe(true);
+    expect(g.a.go()).toBe(true);
+    g.a.end();
+    room.pump();
+    g.a.start();
+    room.pump();
+    expect(g.b.state).toMatchObject({ phase: 'pick', round: 2, keep: true, categories: list });
+    g.a.removeCat(list[0]);
+    room.pump();
+    expect(g.b.state!.categories).toEqual(list.slice(1));
+    g.a.go();
+    g.a.end();
+    g.a.start();
+    room.pump();
+    expect(g.b.state!.categories).toEqual(list.slice(1));
+    // Off again: the default.
+    g.a.setKeep(false);
+    g.a.go();
+    g.a.end();
+    g.a.start();
+    room.pump();
+    expect(g.b.state).toMatchObject({ keep: false, categories: classicCategories('text') });
+    // Kept, but now pictures: a picture round gets its own list.
+    g.a.setKeep(true);
+    g.a.go();
+    g.a.end();
+    mode = 'bild';
+    g.a.start();
+    room.pump();
+    expect(g.b.state).toMatchObject({ mode: 'bild', keep: true, categories: classicCategories('bild') });
+  });
+
+  it('a new host mid-pick keeps list and proposals; a reload brings the pick view back', () => {
+    const room = new LocalGameRoom([
+      { id: 'a', seat: 2, name: 'A' },
+      { id: 'b', seat: 0, name: 'B' },
+      { id: 'c', seat: 1, name: 'C' },
+      { id: 'c2', seat: 1, name: 'C' },
+    ]);
+    // c2 is c after a reload: known to the hub, not in the room yet.
+    const late = room.roster.pop()!;
+    let host = 'a';
+    const opts = { decks: () => ['normal', 'custom'] as ('normal' | 'custom')[], mode: () => 'text' as const, custom: () => ['Kollege'] };
+    const game = (id: string) => new SlfGame({ ...room.net(id), isHost: () => host === id, hostId: () => host }, opts);
+    const g: Record<string, InstanceType<typeof SlfGame>> = Object.fromEntries(ids.map((id) => [id, game(id)]));
+    g.a.start();
+    room.pump();
+    g.b.removeCat('Tier');
+    g.c.addCat('Kollege', 'pool');
+    room.pump();
+    expect(g.c.state!.proposals).toHaveLength(2);
+    // a leaves, b takes over from the public state.
+    room.roster.shift();
+    host = 'b';
+    g.b.tick(performance.now());
+    room.pump();
+    expect(g.c.state).toMatchObject({ phase: 'pick', categories: classicCategories('text') });
+    expect(g.c.state!.proposals).toHaveLength(2);
+    const p = g.b.state!.proposals.find((x) => x.edit.op === 'add')!;
+    g.b.accept(p.id);
+    room.pump();
+    expect(g.c.state!.categories).toContain('Kollege');
+    expect(g.c.state!.proposals.map((x) => x.by)).toEqual(['b']);
+    // c reloads: a fresh instance under a new id gets the pick back from the host.
+    room.roster.splice(1, 1, late);
+    const back = game('c2');
+    g.b.rejoin('c', 'c2');
+    room.pump();
+    expect(back.state).toMatchObject({ phase: 'pick' });
+    expect(back.state!.categories).toContain('Kollege');
+    back.removeCat('Stadt');
+    room.pump();
+    expect(g.b.state!.proposals.map((x) => x.by)).toEqual(['b', 'c2']);
+    expect(g.b.go()).toBe(true);
+    room.pump();
+    expect(back.state!.phase).toBe('write');
+    expect(back.state!.proposals).toEqual([]);
+    expect(back.playing).toBe(true);
+  });
+
+  it('a state with a letter while picking, or proposals that make no sense, are not taken as they are', () => {
+    const base = { phase: 'pick', mode: 'text', round: 1, letter: '', categories: ['A', 'B', 'C', 'D'], players: ['a', 'b'], commits: {}, stopBy: null, deadline: null, answers: null, shown: null, cat: 0, step: 'show', flags: [], vote: null, judged: [], voteNo: 0, ready: [], results: [], scores: {}, undo: 0, sentAt: 1 };
+    expect(parseState(base)).toMatchObject({ phase: 'pick', proposals: [], seq: 0, keep: false });
+    expect(parseState({ ...base, letter: 'B' })).toBeNull();
+    expect(parseState({ ...base, phase: 'write' })).toBeNull();
+    expect(parseState({ ...base, categories: Array(SLF.pick.max.text + 1).fill('A') })).toBeNull();
+    const s = parseState({ ...base, seq: 2, keep: true, proposals: [{ id: 1, by: 'b', edit: { op: 'remove', at: 'A' } }, { id: 2, by: 'b', edit: { op: 'nuke' } }, 'x'] });
+    expect(s!.proposals).toEqual([{ id: 1, by: 'b', edit: { op: 'remove', at: 'A' } }]);
+    expect(s!.keep).toBe(true);
   });
 });

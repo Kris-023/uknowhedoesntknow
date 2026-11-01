@@ -561,6 +561,28 @@ body.wi-dialog .hint-bar { display: none; }
 .slf-dock-head { display: flex; align-items: center; justify-content: center; gap: 12px; flex-wrap: wrap; }
 .slf-dock-head .gg-question { font-size: 1.45rem; }
 .slf-dock-head .sa-timer { font-size: 1.3rem; }
+/* The step "Kategorien" before a round: the list in two columns, editor and pool below, proposals with the proposer's colour. */
+.wi-maker.slf-pick { width: min(680px, calc((100vw - 32px) / var(--ui))); gap: 10px; }
+.slf-cats { list-style: none; margin: 0; padding: 0; display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 6px 10px; }
+.slf-cats li { display: flex; align-items: center; gap: 4px; min-width: 0; padding: 4px 4px 4px 8px; background: #0b1019; border: 1px solid var(--line); }
+.slf-cats li.editing { border-color: var(--amber); }
+.slf-cats li b { flex: 1; min-width: 0; font: 700 15px/1.2 var(--font-body); overflow-wrap: anywhere; }
+.slf-cat-n { font: 500 11px/1 var(--font-mono); color: var(--muted); min-width: 1.4em; }
+.slf-edit { display: flex; flex-direction: column; gap: 8px; padding: 10px; border: 1px solid var(--amber); background: #0b1019; }
+.slf-edit[hidden] { display: none; }
+.slf-edit .text-input { flex: 1 1 12em; }
+.slf-edit .err { margin: 0; }
+.slf-save { gap: 8px; }
+.slf-pool { display: flex; flex-wrap: wrap; align-items: center; gap: 4px; max-height: calc(150px / var(--ui)); overflow-y: auto; }
+.slf-pool .eyebrow { flex-basis: 100%; margin-top: 4px; }
+.slf-pick-msg:empty { display: none; }
+.slf-props { display: flex; flex-direction: column; gap: 6px; }
+.slf-props:empty { display: none; }
+.slf-prop { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 8px; padding: 6px 8px; background: #0b1019; border: 1px solid var(--line); border-left: 3px solid var(--c); }
+.slf-prop i { font: 500 10px/1 var(--font-mono); letter-spacing: .1em; text-transform: uppercase; color: var(--c); font-style: normal; }
+.slf-prop-what { flex: 1 1 14em; font-weight: 600; overflow-wrap: anywhere; }
+.slf-pick-foot { justify-content: flex-end; }
+.slf-pick-foot .btn.big { margin-left: auto; }
 /* "Zug zurück" (host only): out of the way in the corner, above the end screens so a wrong last move can still be fixed there. */
 .undo-host { position: fixed; right: 16px; bottom: 16px; z-index: 9; zoom: var(--ui); display: flex; flex-direction: column; align-items: flex-end; gap: 8px; }
 .undo-host[hidden], .undo-host [hidden] { display: none; }

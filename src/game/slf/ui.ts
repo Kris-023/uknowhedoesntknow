@@ -1,12 +1,14 @@
 import { COLORS, SLF } from '../../config';
 import { el, releaseMouse } from '../../ui/dom';
+import { normWord } from '../../words/custom';
+import { myLists } from '../../words/lists';
 import { noteBoard, wordBoard, type BoardTone } from '../gleich/boardImage';
 import type { GleichUiInfo } from '../gleich/ui';
 import type { GameUi, Member } from '../minigame';
 import { stepKey } from '../undo';
 import { cardFromBlob, cardFromUrl } from '../whoami/cardImage';
 import type { SlfGame } from './game';
-import { liveText, type CatResult, type Flag, type SlfState } from './logic';
+import { cleanCategory, liveText, pickBounds, type CatResult, type Edit, type Flag, type SlfState } from './logic';
 
 /** Keys once the answers are out, so the mouse look can stay. */
 const KEYS = { yes: 'Digit1', no: 'Digit2', next: 'Enter' } as const;
@@ -17,10 +19,14 @@ const plus = (n: number) => (n > 0 ? `+${n}` : n < 0 ? `−${-n}` : '0');
 const list = (names: string[]) => (names.length <= 1 ? names.join('') : `${names.slice(0, -1).join(', ')} und ${names.at(-1)}`);
 const typing = (e: KeyboardEvent) => e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement || e.target instanceof HTMLSelectElement;
 
+/** Where "in eigene Liste übernehmen" puts a typed category if the player has no list of that kind yet. */
+const NEW_LIST = 'Meine Kategorien';
+const HOW: Record<string, string> = { free: ' (eingetippt)', roll: ' (gewürfelt)', pool: '' };
+
 /**
- * Screens of "Stadt, Land, Fluss": the sheet to write on (or to collect pictures in), the bar with
- * letter and category, the dock to rate a category (flags and votes, or judging pictures), the
- * scoreboard and the table at the end.
+ * Screens of "Stadt, Land, Fluss": the step "Kategorien" before a round, the sheet to write on (or
+ * to collect pictures in), the bar with letter and category, the dock to rate a category (flags and
+ * votes, or judging pictures), the scoreboard and the table at the end.
  */
 export class SlfUi implements GameUi {
   private bar = el('div', 'wi-bar gg-bar slf-bar');
@@ -32,6 +38,31 @@ export class SlfUi implements GameUi {
   private dock = el('div', 'wi-bar zd-dock slf-dock');
   private board = el('aside', 'wi-board');
   private done = el('section', 'wi-done slf-done');
+  /** The step "Kategorien": list, editor, proposals, host controls. Only the parts that change are rebuilt. */
+  private pick = el('section', 'wi-maker slf-pick');
+  private pickHead = el('header', 'slf-sheet-head');
+  private pickCount = el('span', 'tag');
+  private pickRole = el('p', 'note');
+  private pickList = el('ol', 'slf-cats');
+  private pickAdd = el('div', 'row');
+  private pickMsg = el('p', 'note slf-pick-msg');
+  private pickProps = el('div', 'slf-props');
+  private pickFoot = el('div', 'row slf-pick-foot');
+  private pickView = '';
+  /** The editor stays across rebuilds, so typing is never interrupted by someone else's change. */
+  private ed = {
+    box: el('form', 'slf-edit'),
+    title: el('span', 'field-label'),
+    input: el('input', 'text-input'),
+    submit: el('button', 'btn small', 'Übernehmen'),
+    save: el('select', 'select'),
+    err: el('p', 'err'),
+    pool: el('div', 'slf-pool'),
+  };
+  /** Category being replaced; null = a new one; undefined = editor closed. */
+  private editing: string | null | undefined = undefined;
+  /** Last list chosen for "in eigene Liste übernehmen" ('' = don't save). */
+  private saveTo = '';
   private visible = true;
   private closedRound = '';
   /** Round the sheet was built for. */
@@ -62,10 +93,11 @@ export class SlfUi implements GameUi {
   ) {
     this.head.append(this.eyebrow, this.timer);
     this.bar.append(this.head, this.body);
-    for (const e of [this.bar, this.sheet, this.dock, this.board, this.done]) {
+    for (const e of [this.bar, this.sheet, this.pick, this.dock, this.board, this.done]) {
       e.hidden = true;
       host.append(e);
     }
+    this.buildPick();
     this.bar.setAttribute('role', 'status');
     this.sheet.setAttribute('aria-label', 'Stadt, Land, Fluss');
     game.onChange(() => this.render());
@@ -143,13 +175,14 @@ export class SlfUi implements GameUi {
   private render(): void {
     const s = this.game.state;
     if (!this.visible || !s) {
-      for (const e of [this.bar, this.sheet, this.dock, this.board, this.done]) e.hidden = true;
+      for (const e of [this.bar, this.sheet, this.pick, this.dock, this.board, this.done]) e.hidden = true;
       this.syncDialog();
       return;
     }
     for (const id of s.players) if (this.members().some((m) => m.id === id)) this.known.set(id, this.game.nameOf(id));
     this.board.hidden = false;
     this.echo(s);
+    this.renderPick(s);
     this.renderSheet(s);
     this.renderBar(s);
     this.renderDock(s);
@@ -160,7 +193,7 @@ export class SlfUi implements GameUi {
 
   /** Writing needs the mouse and the whole attention: the bottom hint steps aside, a click doesn't grab the mouse back. */
   private syncDialog(): void {
-    document.body.classList.toggle('wi-dialog', this.visible && (!this.sheet.hidden || !this.done.hidden));
+    document.body.classList.toggle('wi-dialog', this.visible && (!this.sheet.hidden || !this.pick.hidden || !this.done.hidden));
   }
 
   /** One-off echoes: a stop, the outcome of a vote. The best picture shows in the dock (an echo would cover it). */
@@ -190,6 +223,245 @@ export class SlfUi implements GameUi {
   private flagOutcome(f: Flag): string {
     if (f.kind === 'bad') return f.result === 'yes' ? 'Ungültig' : 'Zählt doch';
     return f.result === 'yes' ? 'Gleich' : 'Nicht gleich';
+  }
+
+  // ---------- the step "Kategorien" ----------
+
+  private buildPick(): void {
+    const p = this.pick;
+    p.setAttribute('aria-label', 'Kategorien wählen');
+    const title = el('div');
+    title.append(el('span', 'eyebrow'), el('h2', '', 'Kategorien'));
+    this.pickHead.append(title, this.pickCount);
+    const ed = this.ed;
+    Object.assign(ed.input, { type: 'text', maxLength: SLF.pick.maxTyped, autocomplete: 'off', spellcheck: false, placeholder: 'Eintippen oder unten auswählen' });
+    ed.input.setAttribute('aria-label', 'Kategorie');
+    ed.submit.type = 'submit';
+    const cancel = this.btn('Abbrechen', () => this.closeEditor(), 'ghost small');
+    const line = el('div', 'row');
+    line.append(ed.input, ed.submit, cancel);
+    const save = el('label', 'row slf-save');
+    save.append(el('span', 'note', 'Eingetipptes in eigene Liste:'), ed.save);
+    ed.box.append(ed.title, line, save, ed.err, ed.pool);
+    ed.box.hidden = true;
+    ed.box.addEventListener('submit', (e) => {
+      e.preventDefault();
+      this.submitTyped();
+    });
+    ed.input.addEventListener('input', () => {
+      ed.err.textContent = '';
+      this.fillPool();
+    });
+    ed.input.addEventListener('keydown', (e) => {
+      if (e.key !== 'Escape') return;
+      e.preventDefault();
+      e.stopPropagation();
+      this.closeEditor();
+    });
+    ed.save.addEventListener('change', () => (this.saveTo = ed.save.value));
+    p.append(this.pickHead, this.pickRole, this.pickList, this.pickAdd, ed.box, this.pickMsg, this.pickProps, this.pickFoot);
+  }
+
+  private renderPick(s: SlfState): void {
+    if (s.phase !== 'pick') {
+      this.pick.hidden = true;
+      this.editing = undefined;
+      this.pickView = '';
+      return;
+    }
+    const wasHidden = this.pick.hidden;
+    this.pick.hidden = false;
+    if (wasHidden) {
+      releaseMouse();
+      this.pickMsg.textContent = '';
+    }
+    const g = this.game;
+    const names = [...s.proposals.map((p) => this.name(p.by)), this.info.hostName(), g.myProposals];
+    // Rebuild only when something shown changed: the heartbeat must not swap a button under the cursor.
+    const view = JSON.stringify([stepKey(s), s.mode, s.categories, s.proposals, s.keep, g.isHost, names, this.editing, g.poolGroups()]);
+    if (view === this.pickView) return;
+    this.pickView = view;
+    if (this.editing && !s.categories.includes(this.editing)) this.closeEditor(false);
+    const host = g.isHost;
+    const { min, max } = pickBounds(s.mode);
+    const n = s.categories.length;
+    const full = !host && g.myProposals >= SLF.pick.maxProposals;
+    // Nothing left in the pool: rolling would do nothing (the host draws from its own pool, which is the same here).
+    const inList = new Set(s.categories.map(normWord));
+    const dry = !g.poolGroups().some((x) => x.items.some((c) => !inList.has(normWord(c))));
+    const dryTip = 'Der Pool ist ausgeschöpft: eintippen oder Stapel freischalten';
+    (this.pickHead.querySelector('.eyebrow') as HTMLElement).textContent = `Stadt, Land, Fluss · Runde ${s.round} · ${s.mode === 'text' ? 'Schreiben' : 'Bilder'}`;
+    this.pickCount.textContent = `${n} · erlaubt ${min}–${max}`;
+    this.pickRole.textContent = host
+      ? 'Ändere die Liste, nimm Vorschläge an oder lehne sie ab. Der Buchstabe kommt erst mit „Los geht’s“.'
+      : full
+        ? `Du hast ${SLF.pick.maxProposals} offene Vorschläge. Warte, bis ${this.info.hostName()} sie annimmt oder ablehnt.`
+        : `Deine Änderungen gehen als Vorschlag an ${this.info.hostName()}. Der Buchstabe kommt erst, wenn es losgeht.`;
+    this.pickList.replaceChildren(
+      ...s.categories.map((cat, k) => {
+        const li = el('li');
+        li.classList.toggle('editing', this.editing === cat);
+        const roll = this.btn('Würfeln', () => g.roll(cat), 'ghost small');
+        roll.title = 'Neu würfeln: eine zufällige aus dem Pool';
+        const swap = this.btn('Ersetzen', () => this.openEditor(cat), 'ghost small');
+        const del = this.btn('✕', () => g.removeCat(cat), 'ghost small danger');
+        del.title = 'Entfernen';
+        del.setAttribute('aria-label', `${cat} entfernen`);
+        roll.disabled = full || dry;
+        if (dry) roll.title = dryTip;
+        swap.disabled = full;
+        del.disabled = full || n <= min;
+        li.append(el('span', 'slf-cat-n', String(k + 1)), el('b', '', cat), roll, swap, del);
+        return li;
+      }),
+    );
+    const add = this.btn('+ Hinzufügen', () => this.openEditor(null), 'ghost small');
+    const rnd = this.btn('+ Zufällige', () => g.addCat(null), 'ghost small');
+    add.disabled = full || n >= max;
+    rnd.disabled = add.disabled || dry;
+    if (dry) rnd.title = dryTip;
+    this.pickAdd.replaceChildren(add, rnd);
+    this.renderEditor(s, full);
+    this.renderProposals(s);
+    const foot: HTMLElement[] = [];
+    const classic = this.btn('Klassisch', () => g.preset('klassisch'), 'ghost small');
+    classic.title = 'Stadt, Land, Fluss und die klassischen';
+    const random = this.btn('Zufall', () => g.preset('zufall'), 'ghost small');
+    random.title = 'Alle neu ziehen';
+    classic.disabled = random.disabled = full;
+    foot.push(classic, random);
+    if (host) {
+      const keep = this.btn('Für nächste Runden behalten', () => g.setKeep(!s.keep), 'small toggle');
+      keep.setAttribute('aria-pressed', String(s.keep));
+      const go = this.btn('Los geht’s', () => void g.go(), 'big');
+      go.disabled = n < min || n > max;
+      foot.push(keep, go);
+    } else if (s.keep) foot.push(el('span', 'note', 'Die Liste bleibt für die nächsten Runden.'));
+    this.pickFoot.replaceChildren(...foot);
+  }
+
+  private describe(e: Edit): string {
+    switch (e.op) {
+      case 'set':
+        return `„${e.at}“ → „${e.text}“${HOW[e.how]}`;
+      case 'add':
+        return `+ „${e.text}“${HOW[e.how]}`;
+      case 'remove':
+        return `„${e.at}“ entfernen`;
+      case 'preset':
+        return `${e.name === 'klassisch' ? 'Klassisch' : 'Zufall'}: ${e.list.join(', ')}`;
+    }
+  }
+
+  private renderProposals(s: SlfState): void {
+    const g = this.game;
+    if (!s.proposals.length) {
+      this.pickProps.replaceChildren();
+      return;
+    }
+    const rows = s.proposals.map((p) => {
+      const row = el('div', 'slf-prop');
+      row.style.setProperty('--c', hex(this.seatOf(p.by)));
+      row.append(el('i', '', this.name(p.by)), el('span', 'slf-prop-what', this.describe(p.edit)));
+      if (g.isHost) {
+        const ok = this.btn('Annehmen', () => g.accept(p.id), 'small');
+        ok.disabled = !g.applies(p);
+        if (ok.disabled) ok.title = 'Passt gerade nicht (zu viele oder zu wenige Kategorien)';
+        row.append(ok, this.btn('Ablehnen', () => g.reject(p.id), 'ghost small'));
+      } else if (p.by === g.selfId) row.append(el('span', 'note', 'wartet'), this.btn('Zurückziehen', () => g.withdraw(p.id), 'ghost small'));
+      else row.append(el('span', 'note', `wartet auf ${this.info.hostName()}`));
+      return row;
+    });
+    this.pickProps.replaceChildren(el('span', 'eyebrow', 'Vorschläge'), ...rows);
+  }
+
+  private openEditor(at: string | null): void {
+    this.editing = at;
+    this.ed.input.value = '';
+    this.ed.err.textContent = '';
+    this.pickView = '';
+    this.render();
+    requestAnimationFrame(() => this.ed.input.focus());
+  }
+
+  private closeEditor(render = true): void {
+    this.editing = undefined;
+    this.ed.box.hidden = true;
+    this.pickView = '';
+    if (render) this.render();
+  }
+
+  private renderEditor(s: SlfState, full: boolean): void {
+    const ed = this.ed;
+    ed.box.hidden = this.editing === undefined || full;
+    if (ed.box.hidden) return;
+    ed.title.textContent = this.editing === null ? 'Neue Kategorie' : `„${this.editing}“ ersetzen durch`;
+    ed.submit.textContent = this.game.isHost ? 'Übernehmen' : 'Vorschlagen';
+    // The player's own lists of categories, to keep a typed one.
+    const lists = myLists.ofKind('kategorien');
+    const opts: [string, string][] = [['', 'nicht speichern'], ...lists.map((l) => [l.id, l.name] as [string, string])];
+    if (!lists.some((l) => l.name === NEW_LIST)) opts.push(['+', `Neue Liste „${NEW_LIST}“`]);
+    if (!opts.some(([v]) => v === this.saveTo)) this.saveTo = '';
+    ed.save.replaceChildren(
+      ...opts.map(([v, t]) => {
+        const o = el('option', '', t);
+        o.value = v;
+        return o;
+      }),
+    );
+    ed.save.value = this.saveTo;
+    this.fillPool(s);
+  }
+
+  /** The pool as buttons, filtered by what is typed; categories already in the list are left out. */
+  private fillPool(s = this.game.state): void {
+    if (!s) return;
+    const q = normWord(this.ed.input.value);
+    const inList = new Set(s.categories.map(normWord));
+    const parts: HTMLElement[] = [];
+    for (const g of this.game.poolGroups()) {
+      const items = g.items.filter((c) => !inList.has(normWord(c)) && (!q || normWord(c).includes(q)));
+      if (!items.length) continue;
+      parts.push(el('span', 'eyebrow', g.label), ...items.map((c) => this.btn(c, () => this.choose(c, 'pool'), 'ghost small')));
+    }
+    if (!parts.length) parts.push(el('span', 'note', q ? 'Nichts davon im Pool: mit Enter so übernehmen.' : 'Der Pool ist ausgeschöpft: eintippen.'));
+    this.ed.pool.replaceChildren(...parts);
+  }
+
+  private submitTyped(): void {
+    const ed = this.ed;
+    const text = cleanCategory(ed.input.value, SLF.pick.maxTyped);
+    if (!text) {
+      ed.err.textContent = `Leer oder länger als ${SLF.pick.maxTyped} Zeichen.`;
+      return;
+    }
+    if (this.game.state?.categories.some((c) => normWord(c) === normWord(text))) {
+      ed.err.textContent = `„${text}“ ist schon dabei.`;
+      return;
+    }
+    this.pickMsg.textContent = this.keepTyped(text);
+    this.choose(text, 'free');
+  }
+
+  /** "In eigene Liste übernehmen": into the list the player chose, made on demand. Returns a note for the player. */
+  private keepTyped(text: string): string {
+    let id = this.saveTo;
+    if (!id) return '';
+    if (id === '+') {
+      const made = myLists.create('kategorien', NEW_LIST);
+      if (typeof made === 'string') return made;
+      id = this.saveTo = made.id;
+    }
+    const err = myLists.add(id, text);
+    return err ?? `„${text}“ steht jetzt in „${myLists.get(id)?.name ?? NEW_LIST}“.`;
+  }
+
+  private choose(text: string, how: 'free' | 'pool'): void {
+    const at = this.editing;
+    if (at === undefined) return;
+    if (at === null) this.game.addCat(text, how);
+    else this.game.replaceCat(at, text, how);
+    this.closeEditor();
   }
 
   // ---------- writing ----------
@@ -381,7 +653,7 @@ export class SlfUi implements GameUi {
 
   private renderBar(s: SlfState): void {
     // While rating, the boards over the heads own the top of the view; the dock carries letter and category.
-    if (s.phase === 'done' || s.phase === 'rate' || !this.sheet.hidden) {
+    if (s.phase === 'done' || s.phase === 'rate' || s.phase === 'pick' || !this.sheet.hidden) {
       this.bar.hidden = true;
       return;
     }
@@ -619,7 +891,7 @@ export class SlfUi implements GameUi {
   private renderBoard(s: SlfState): void {
     const b = this.board;
     const phase = s.phase === 'write' ? (s.mode === 'text' ? 'Schreiben' : 'Bilder suchen') : s.phase === 'rate' ? s.categories[s.cat] : s.phase === 'done' ? 'Runde vorbei' : 'Aufdecken';
-    b.replaceChildren(el('span', 'eyebrow', `Stadt, Land, Fluss · Runde ${s.round}`), el('strong', 'wi-phase', `${s.letter} · ${phase}`));
+    b.replaceChildren(el('span', 'eyebrow', `Stadt, Land, Fluss · Runde ${s.round}`), el('strong', 'wi-phase', s.phase === 'pick' ? 'Kategorien wählen' : `${s.letter} · ${phase}`));
     const ol = el('ol', 'wi-scores');
     for (const id of s.players) {
       const li = el('li');
@@ -707,7 +979,12 @@ export class SlfUi implements GameUi {
       ),
     );
     const row = el('div', 'row');
-    if (this.game.isHost) row.append(this.btn('Neue Runde [G]', () => this.info.start(), 'big'));
+    if (this.game.isHost) {
+      const keep = this.btn('Kategorien behalten', () => this.game.setKeep(!s.keep), 'small toggle');
+      keep.title = 'Die nächste Runde beginnt mit denselben Kategorien (noch änderbar)';
+      keep.setAttribute('aria-pressed', String(s.keep));
+      row.append(keep, this.btn('Neue Runde [G]', () => this.info.start(), 'big'));
+    }
     else row.append(el('span', 'note', `${this.info.hostName()} kann eine neue Runde starten.`));
     row.append(this.btn('Schließen', () => this.close(), 'ghost'));
     d.append(row);

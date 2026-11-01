@@ -533,12 +533,26 @@ export const SLF = {
   /** Letters the host draws from: Q, X and Y leave too many categories empty. */
   letters: 'ABCDEFGHIJKLMNOPRSTUVWZ',
   /**
-   * Classics that stay in every text round (the game's name). The category lists themselves are
-   * content (src/words/content.ts): sealed in the vault, the classic set in the public fallback.
+   * The preset "Klassisch" starts with these (the game's name) and fills up from the public fallback.
+   * They are no longer forced into every round: the table picks its categories before writing. The
+   * category lists themselves are content (src/words/content.ts): sealed in the vault, the classic
+   * set in the public fallback.
    */
   fixed: ['Stadt', 'Land', 'Fluss'],
-  /** Categories per round by mode. */
+  /** Categories a round starts with by mode (a fresh draw, "Klassisch", "Zufall"). */
   count: { text: 6, bild: 3 },
+  /**
+   * The step "Kategorien" before writing. Bounds of the list per mode (pictures take longer to find,
+   * so fewer); pending proposals per player, so nobody floods the host. A category may be as long
+   * as the sealed content allows (the seal script's limit), typed ones as long as an own-list entry.
+   */
+  pick: {
+    min: { text: 4, bild: 2 },
+    max: { text: 10, bild: 5 },
+    maxProposals: 3,
+    maxLen: 40,
+    maxTyped: LISTS.maxChars.kategorien,
+  },
   /** Seconds to write all categories; a "Stopp!" leaves the others `stopS` more. */
   writeS: 180,
   stopS: 10,

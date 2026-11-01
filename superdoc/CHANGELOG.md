@@ -10,6 +10,7 @@ What changed, day by day, newest first (date-based, see the [version policy](cla
 - Settings v2/v3: regrouped, graphics (glow levels, render brightness, vignette, blur behind menus), comfort (less motion, less flicker, soften blackouts), "Nur Mundbewegung"; card size setting removed.
 - Deck editor `npm run listen` (`tools/listen/`, Rust): edits the built-in decks right in the sealed vault (password file or prompt, nothing in plaintext on disk), seals compatible with the browser, and pushes only the vault with a three-way merge against what others pushed meanwhile ([Built-in decks](features/content-decks.md)).
 - Docs moved into this public `superdoc/`: project status, decisions 0001/0002 and this changelog replace the former private notes. Public repo hygiene rule added.
+- "Stadt, Land, Fluss": new step "Kategorien" before every round (no timer, letter drawn only at the start): reroll, replace from the pool or free text, remove, add, presets "Klassisch" and "Zufall"; the host edits directly, everyone else proposes and the host accepts or rejects (3 open per player, duplicates dropped); "Für nächste Runden behalten"; typed categories can go into an own list. Stadt, Land, Fluss are no longer forced: "Klassisch" is the default while the decks are locked, unlocked rooms start with a random draw. Zug zurück works inside the step but never leads back into it from the writing ([SLF](features/minigames-zeig-ahnungslos-slf.md)).
 
 ## 2026-10-31
 

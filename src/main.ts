@@ -413,7 +413,7 @@ function launch(clock: SharedClock, session: Session | null, startCam: 'wagon' |
     { id: 'gleich', game: gleich, ui: ggUi, bots: botsFor((r, ids) => new GleichBots(r, ids, gleichRoom)), closeOn: ['done'], fineable: () => gleich.writing, board: (id) => ggUi.boardOf(id) },
     { id: 'zeig', game: zeig, ui: zdUi, bots: botsFor((r, ids) => new ZeigBots(r, ids, zeigRoom)), closeOn: ['done'], fineable: () => zeig.running, board: (id) => zdUi.boardOf(id), gaze: zeig },
     { id: 'ahnungslos', game: ahnung, ui: ahUi, bots: botsFor((r, ids) => new AhnungBots(r, ids, ahnRoom)), closeOn: ['done'], fineable: () => ahnung.cluing, board: (id) => ahUi.boardOf(id), gaze: ahnung },
-    { id: 'slf', game: slf, ui: slfUi, bots: botsFor((r, ids) => new SlfBots(r, ids, slfRoom)), closeOn: ['write', 'done'], fineable: () => slf.writing, board: (id) => slfUi.boardOf(id) },
+    { id: 'slf', game: slf, ui: slfUi, bots: botsFor((r, ids) => new SlfBots(r, ids, slfRoom)), closeOn: ['pick', 'write', 'done'], fineable: () => slf.writing, board: (id) => slfUi.boardOf(id) },
   ];
   const entry = (id: GameId | null) => games.find((g) => g.id === id) ?? null;
   const runningGame = () => games.find((g) => g.game.running) ?? null;
