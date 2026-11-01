@@ -279,14 +279,63 @@ describe('rejoin', () => {
     expect(host.roster.has('z')).toBe(true);
   });
 
-  it('two hosts after a split: the one with the smaller id stays, the other joins it like a returning player', () => {
+  it('two hosts after a split: the room that elected a new host stays, the cut-off ex-host joins it like a returning player', () => {
+    const hub = new MemoryHub();
+    const t = { ms: 1_000_000 };
+    const now = () => t.ms;
+    // 'a' is the smallest id: ids must not decide this.
+    const ex = new Session(hub.connect('a'), new SharedClock(1, now()), true, state(1), now, 'tok-a');
+    const m = new Session(hub.connect('m'), new SharedClock(2, now()), false, state(2), now, 'tok-m');
+    const n = new Session(hub.connect('n'), new SharedClock(3, now()), false, state(3), now, 'tok-n');
+    const tick = (all: Session[]) => {
+      for (let i = 0; i < 10; i++) {
+        t.ms += 300;
+        for (const x of all) x.tick();
+        hub.flush();
+      }
+    };
+    tick([ex, m, n]);
+    // a loses its connection: nothing crosses between a and the others, and each side sees the other leave.
+    const h = hub as unknown as { post(p: { from: string }, to?: string): void; nodes: Map<string, unknown> };
+    const post = h.post.bind(h);
+    let split = true;
+    h.post = (p, to) => {
+      for (const id of to ? [to] : [...h.nodes.keys()]) if (!split || (id === 'a') === (p.from === 'a')) post(p, id);
+    };
+    const links = (x: Session) => x as unknown as { onLeave(id: string): void; onJoin(id: string): void };
+    links(m).onLeave('a');
+    links(n).onLeave('a');
+    links(ex).onLeave('m');
+    links(ex).onLeave('n');
+    tick([ex, m, n]);
+    expect(ex.role).toBe('host');
+    expect(m.role).toBe('host');
+    // The room plays on without a.
+    m.setSpeed(321, 5);
+    hub.flush();
+    split = false;
+    for (const x of [m, n]) links(x).onJoin('a');
+    links(ex).onJoin('m');
+    links(ex).onJoin('n');
+    hub.flush();
+    tick([ex, m, n]);
+    expect(ex.role).toBe('client');
+    expect(m.role).toBe('host');
+    expect([ex.hostId, n.hostId]).toEqual(['m', 'm']);
+    expect(ex.train.kmh).toBe(321);
+    expect(n.train.kmh).toBe(321);
+    expect(ex.mySeat).toBe(0);
+    expect(m.roster.size).toBe(3);
+  });
+
+  it('two rooms opened under the same code (both hosts from the start): the smaller id stays, the other joins it like a returning player', () => {
     const hub = new MemoryHub();
     const t = { ms: 1_000_000 };
     const now = () => t.ms;
     const big = new Session(hub.connect('m'), new SharedClock(1, now()), true, state(1), now, 'tok-m');
     new Session(hub.connect('n'), new SharedClock(2, now()), false, state(2), now, 'tok-n');
     hub.flush();
-    // Only ids decide, not room sizes (roster sizes differ between peers and moments); 'z' is the larger id.
+    // Same Host-Epoche on both sides: the id decides, not the room size; 'z' is the larger id.
     const lone = new Session(hub.connect('z'), new SharedClock(3, now()), true, state(3), now, 'tok-z');
     const status: string[] = [];
     lone.listen({ status: (s) => status.push(s) });

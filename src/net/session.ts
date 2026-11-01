@@ -5,7 +5,7 @@ import {
   encodePose,
   idHash,
   parsePose,
-  parseRoster,
+  parseRosterMsg,
   parseState,
   parseTrain,
   parseOpts,
@@ -13,6 +13,7 @@ import {
   trainDistance,
   type RoomOpts,
   type RosterEntry,
+  type RosterMsg,
   type Train,
   type Welcome,
 } from './protocol';
@@ -24,13 +25,18 @@ export type Role = 'host' | 'client';
 const PENDING_GAME_MS = 10_000;
 const PENDING_GAME_MAX = 100;
 /**
- * How long a handover is remembered for settling a clash and for electing its target when the old
- * host leaves. Long enough for a late welcome (the wait is `NET.handoverWaitMs`), short enough that a
- * handover that never happened stops mattering quickly.
+ * How long the other peers keep a handover's target as successor (elected if the old host leaves).
+ * Long enough for a late welcome (the wait is `NET.handoverWaitMs`), short enough that a handover
+ * that never happened stops mattering quickly.
  */
-const HANDOVER_MEMORY_MS = 15_000;
+const SUCCESSOR_MS = 15_000;
 /** A host that has answered a clash as the winner does not answer the same host again within this time. */
 const CLASH_ANSWER_MS = 3_000;
+
+/** A host claim (epoch `e`, peer `id`) against another: the higher epoch wins, on a tie the smaller id. */
+function beats(e: number, id: string, otherE: number, otherId: string | null): boolean {
+  return e > otherE || (e === otherE && (otherId === null || id < otherId));
+}
 
 export interface SessionEvents {
   /** First welcome from a host: seed and clock are known now, the world can be built. */
@@ -69,19 +75,27 @@ export class Session {
   blackoutAt: number | null = null;
   opts: RoomOpts = parseOpts(undefined);
   private lastHello = -Infinity;
+  /**
+   * Host-Epoche: on a host, its own claim; on a client, the claim of the host it follows (as that host
+   * last announced it, or what a host we just elected claims at first). The room creator starts at 0. Whoever becomes host later from epoch N first
+   * claims N - 1 and N + 2 once another player of the room has confirmed it (`confirmed`); a handover
+   * target claims N + 2 at once. Carried in every `welcome` and `roster`: of two hosts the higher
+   * epoch stays, on a tie the smaller id (`hostClash`), and a client switches host by welcome only to
+   * a better claim (`onWelcome`).
+   */
+  epoch = 0;
+  /** A new host's epoch once someone of the room has shown it is really there; null when confirmed. */
+  private unconfirmed: number | null = null;
+  /** The last epoch a host announced to us, or our own once confirmed: what an election builds on. */
+  private known = 0;
   /** Host who asked someone to take over and still waits for their welcome; stays host until it comes. */
   private handing: { to: string; until: number } | null = null;
-  /**
-   * Who handed over to whom, remembered for `HANDOVER_MEMORY_MS` on the two sides of a handover
-   * (`handedTo` on the old host, `handedFrom` on the new one). If both claim to be host (the
-   * confirmation was late or lost) the new host wins, whatever the roster sizes say.
-   */
-  private handedTo: { id: string; at: number } | null = null;
-  private handedFrom: { id: string; at: number } | null = null;
-  /** Every other peer's hint of the same handover: if the host leaves now, this player takes over. */
+  /** Every other peer's hint of a handover: if the host leaves now, this player takes over. */
   private successor: { id: string; at: number } | null = null;
   /** When the host last showed a sign of life (any message of its we accepted, or since we started following it). */
   private hostSeenAt = 0;
+  /** When `tick` last ran: a long gap means the tab was asleep, not that the host was silent. */
+  private lastTickAt = -Infinity;
   /** When we last answered a clash against this host as the winner (loop breaker). */
   private clashAnswered = new Map<string, number>();
   private nextPing = 0;
@@ -119,7 +133,9 @@ export class Session {
       if (p) this.poses.set(from, p);
     });
     net.on('ping', (d, from) => {
-      if (this.role === 'host' && typeof d === 'number') net.send('pong', [d, this.clock.hostMs(this.now())], from);
+      if (this.role !== 'host' || typeof d !== 'number') return;
+      net.send('pong', [d, this.clock.hostMs(this.now())], from);
+      this.confirmed(from);
     });
     net.on('pong', (d, from) => {
       if (from !== this.hostId || !Array.isArray(d) || typeof d[0] !== 'number' || typeof d[1] !== 'number') return;
@@ -224,12 +240,16 @@ export class Session {
   /** Per frame: hello retries until welcomed (or back in the roster), clock pings to the host. */
   tick(): void {
     const now = this.now();
+    // A throttled or frozen tab (background, mobile) ticks seconds apart. Its pings went out late, so
+    // the host's silence says nothing: count it from the wake-up instead of firing the watchdog.
+    if (now - this.lastTickAt > NET.hostSilentMs / 2) this.hostSeenAt = now;
+    this.lastTickAt = now;
     if (this.role === 'host') {
       // Nobody confirmed the handover in time (the target left or never heard): carry on as host.
       if (this.handing && now > this.handing.until) {
         this.handing = null;
-        // Tell the others it is off, so none of them keeps the target as its successor. The old host
-        // keeps `handedTo` on purpose: the target may have become host after all, and then it wins.
+        // Tell the others it is off, so none of them keeps the target as its successor. If the target
+        // did become host after all and only its welcome was lost, its higher epoch wins the clash.
         this.net.send('handover', this.net.selfId);
         this.broadcastRoster();
       }
@@ -310,8 +330,6 @@ export class Session {
     if (this.role !== 'host' || this.handing || id === this.net.selfId || !this.roster.has(id) || !this.peers.has(id)) return false;
     const now = this.now();
     this.handing = { to: id, until: now + NET.handoverWaitMs };
-    this.handedTo = { id, at: now };
-    this.handedFrom = null;
     this.net.send('handover', id);
     return true;
   }
@@ -331,7 +349,7 @@ export class Session {
     this.peers.add(id);
     if (this.role === 'host') {
       // If the newcomer is a host too (both sides of a network split), our roster settles who stays.
-      this.net.send('roster', [...this.roster.values()], id);
+      this.net.send('roster', this.rosterMsg(), id);
     } else if (!this.welcomed || id === this.hostId) {
       // A first contact, or the host is reachable again after a drop.
       this.lastHello = this.now();
@@ -374,10 +392,7 @@ export class Session {
     this.peers.delete(id);
     this.poses.delete(id);
     const wasHost = id === this.hostId;
-    if (this.handing?.to === id) {
-      this.handing = null;
-      this.handedTo = null;
-    }
+    if (this.handing?.to === id) this.handing = null;
     const left = this.roster.get(id);
     if (left) this.remember(left);
     if (!this.roster.delete(id)) return;
@@ -402,7 +417,7 @@ export class Session {
   private elect(connectedOnly: boolean, skip?: string): RosterEntry | undefined {
     const rank = (e: RosterEntry) => NET.seatOrder.indexOf(e.seat);
     const ok = (e: RosterEntry) => e.id !== skip && (!connectedOnly || e.id === this.net.selfId || this.peers.has(e.id));
-    const hinted = this.successor && this.now() - this.successor.at <= HANDOVER_MEMORY_MS ? this.roster.get(this.successor.id) : undefined;
+    const hinted = this.successor && this.now() - this.successor.at <= SUCCESSOR_MS ? this.roster.get(this.successor.id) : undefined;
     this.successor = null;
     if (hinted && ok(hinted)) return hinted;
     return [...this.roster.values()].filter(ok).sort((a, b) => rank(a) - rank(b))[0];
@@ -415,6 +430,9 @@ export class Session {
       return;
     }
     this.setHost(next.id);
+    // The pick claims one less until we confirm it (`becomeHost`): count with that, so a peer that
+    // elected itself at the same time can still win a tie by id and take us along by welcome.
+    this.epoch = this.known - 1;
     this.clock.resetSamples();
     this.pingsSent = 0;
     this.nextPing = 0;
@@ -449,7 +467,12 @@ export class Session {
     }
   }
 
-  private becomeHost(announce = false): void {
+  /**
+   * `handedOver`: the old host asked us (it is there and gives way), so the claim is confirmed from the
+   * start. Otherwise (a leave, the watchdog, reopening the room) we may only be cut off ourselves: the
+   * peers we still count as connected may be gone without us knowing yet.
+   */
+  private becomeHost(announce = false, handedOver = false): void {
     this.role = 'host';
     this.handing = null;
     this.successor = null;
@@ -460,6 +483,12 @@ export class Session {
       this.remember(e);
       this.roster.delete(id);
     }
+    // A confirmed claim beats every host of an earlier epoch (a cut-off ex-host coming back). Until a
+    // player of the room confirms us, the claim is weaker than the room's: a peer that was only cut off
+    // and made itself host loses against the room it left, whatever the ids.
+    this.unconfirmed = handedOver ? null : this.known + 2;
+    if (handedOver) this.setEpoch(this.known + 2);
+    else this.epoch = this.known - 1;
     const first = !this.welcomed;
     this.welcomed = true;
     this.ev.status?.('host');
@@ -473,9 +502,24 @@ export class Session {
     this.flushPending();
   }
 
+  /**
+   * Another player of the room pinged us, said hello or sent its state as host: we are not just cut
+   * off on our own. A new host's claim rises to its full epoch, and it announces that by welcome, so
+   * peers that still follow an older host switch, too. The epoch only ever rises while one stays
+   * host, so two hosts can still never both give way in a clash.
+   */
+  private confirmed(from: string): void {
+    if (this.unconfirmed === null || this.role !== 'host' || from === this.net.selfId || !this.roster.has(from)) return;
+    this.setEpoch(this.unconfirmed);
+    this.unconfirmed = null;
+    this.net.send('welcome', this.welcomeMsg());
+    this.broadcastRoster();
+  }
+
   private onHello(d: unknown, from: string): void {
     // While handing over, the joiner's next hello (they repeat it) goes to the new host.
     if (this.role !== 'host' || this.handing) return;
+    this.confirmed(from);
     const o = (typeof d === 'object' && d !== null ? d : {}) as { s?: unknown; k?: unknown; p?: unknown };
     const state = parseState(o.s);
     if (!state) return;
@@ -509,6 +553,7 @@ export class Session {
 
   welcomeMsg(): Welcome {
     return {
+      epoch: this.epoch,
       seed: this.clock.seed,
       startMs: this.clock.startMs,
       hostMs: this.clock.hostMs(this.now()),
@@ -526,12 +571,15 @@ export class Session {
       // Another host announces itself: a handover target, or the winner of a clash. Only believed from
       // a peer we know and if the welcome lists us, like a client would require.
       if (!w.roster.some((e) => e.id === this.net.selfId) || !this.roster.has(from) || !this.peers.has(from)) return;
-      this.hostClash(w.roster, from);
+      this.hostClash({ epoch: w.epoch, roster: w.roster }, from);
       if (this.role === 'host') return;
+    } else {
+      if (!w.roster.some((e) => e.id === this.net.selfId)) return;
+      // Once in a room, a welcome counts only from someone our roster knows (not from a stranger), and
+      // makes us switch only to a better claim than our host's: a cut-off ex-host with an older epoch
+      // cannot pull anyone back to its stale state.
+      if (this.welcomed && (!this.roster.has(from) || (from !== this.hostId && !beats(w.epoch, from, this.epoch, this.hostId)))) return;
     }
-    if (!w.roster.some((e) => e.id === this.net.selfId)) return;
-    // Once in a room, a welcome counts only from someone our roster knows (not from a stranger).
-    if (this.welcomed && !this.roster.has(from)) return;
     const first = !this.welcomed;
     // Another host than the one we followed (a handover): measure the clock against the new one.
     if (this.welcomed && this.hostId !== from) {
@@ -541,6 +589,7 @@ export class Session {
     }
     if (this.hostId !== from) this.successor = null;
     this.setHost(from);
+    this.setEpoch(w.epoch);
     this.welcomed = true;
     this.applyRoster(w.roster);
     this.train = w.train;
@@ -570,15 +619,15 @@ export class Session {
       this.successor = { id: d, at: this.now() };
       return;
     }
-    this.handedFrom = { id: from, at: this.now() };
-    this.handedTo = null;
-    this.becomeHost(true);
+    this.becomeHost(true, true);
   }
 
   /** Give up the host role to `to` (it won a clash, or took over at our request). */
-  private stepDown(to: string): void {
+  private stepDown(to: string, epoch: number): void {
     this.role = 'client';
     this.setHost(to);
+    this.setEpoch(epoch);
+    this.unconfirmed = null;
     this.handing = null;
     this.successor = null;
     this.clock.resetSamples();
@@ -589,51 +638,51 @@ export class Session {
   }
 
   private onRoster(d: unknown, from: string): void {
-    if (this.role === 'host' && from !== this.net.selfId) {
-      this.hostClash(parseRoster(d), from);
+    const m = parseRosterMsg(d);
+    if (!m) return;
+    if (this.role === 'host') {
+      if (from !== this.net.selfId) this.hostClash(m, from);
       return;
     }
     if (from !== this.hostId) return;
-    const r = parseRoster(d);
-    if (r) {
-      this.heard();
-      this.applyRoster(r);
-    }
+    this.heard();
+    // From the host we follow, its epoch is taken as it comes (we chose this host; see `onWelcome` for switching).
+    this.setEpoch(m.epoch);
+    this.applyRoster(m.roster);
   }
 
   /**
-   * Two hosts at once: the old one was cut off and came back, or a handover's confirmation was late
-   * or lost. Who stays:
-   * 1. a handover target against the host that handed over to it (for `HANDOVER_MEMORY_MS`): the target;
-   * 2. otherwise the smaller id.
-   * Nothing else enters the decision: roster sizes differ between peers that see different parts of
-   * the mesh (and between moments), and a rule on them let both sides win or both give way. Each side
-   * evaluates the same rule on ids and on the handover it took part in, so they decide alike. The
-   * loser joins the winner like a returning player and keeps its place through the rejoin; the winner
-   * tells *everyone* by welcome, so the loser's followers switch too (`onWelcome`), at most once per
-   * `CLASH_ANSWER_MS` per other host.
+   * Two hosts at once: one was cut off and came back, two peers elected themselves at the same time,
+   * or a handover's confirmation was late or lost. The better claim stays: the higher Host-Epoche, on
+   * a tie the smaller id (`beats`). Both sides compare the same two numbers from the two messages,
+   * so they decide alike even when they see different parts of the mesh. A host's epoch only ever
+   * rises while it stays host (`confirmed`), so even crossing messages cannot make both give way; at
+   * worst both answer once, and the next answer settles it. Roster sizes are not used: they differ between peers and
+   * moments, and a rule on them let both sides win or both give way. The loser joins the winner like
+   * a returning player and keeps its place through the rejoin; the winner tells *everyone* by
+   * welcome, so the loser's followers switch too (`onWelcome`), at most once per `CLASH_ANSWER_MS`
+   * per other host.
    */
-  private hostClash(r: RosterEntry[] | null, from: string): void {
-    if (!r || !r.some((e) => e.id === from)) return;
-    const now = this.now();
-    const fresh = (h: { id: string; at: number } | null) => h?.id === from && now - h.at <= HANDOVER_MEMORY_MS;
-    const theyWin = fresh(this.handedTo) || (!fresh(this.handedFrom) && from < this.net.selfId);
-    if (!theyWin) {
+  private hostClash(m: RosterMsg, from: string): void {
+    if (!m.roster.some((e) => e.id === from)) return;
+    if (!beats(m.epoch, from, this.epoch, this.net.selfId)) {
+      const now = this.now();
       const last = this.clashAnswered.get(from);
       if (last !== undefined && now - last < CLASH_ANSWER_MS) return;
       this.clashAnswered.set(from, now);
       // The loser hears it by roster (it may not know us yet, so a welcome alone would not convince it)
       // and everyone else by welcome.
-      this.net.send('roster', [...this.roster.values()], from);
+      this.net.send('roster', this.rosterMsg(), from);
       this.net.send('welcome', this.welcomeMsg());
       return;
     }
-    this.stepDown(from);
-    this.applyRoster(r);
+    this.stepDown(from, m.epoch);
+    this.applyRoster(m.roster);
   }
 
   private onState(d: unknown, from: string): void {
     if (this.role !== 'host') return;
+    this.confirmed(from);
     const e = this.roster.get(from);
     const s = parseState(d);
     if (!e || !s) return;
@@ -652,7 +701,16 @@ export class Session {
 
   private broadcastRoster(): void {
     // Not while handing over: the new host would take it for a second host's roster. It sends the roster itself.
-    if (!this.handing) this.net.send('roster', [...this.roster.values()]);
+    if (!this.handing) this.net.send('roster', this.rosterMsg());
     this.ev.roster?.();
+  }
+
+  private setEpoch(e: number): void {
+    this.epoch = e;
+    this.known = e;
+  }
+
+  private rosterMsg(): { e: number; r: RosterEntry[] } {
+    return { e: this.epoch, r: [...this.roster.values()] };
   }
 }

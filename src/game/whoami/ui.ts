@@ -425,6 +425,8 @@ export class WhoamiUi {
 
   private key(e: KeyboardEvent): void {
     const s = this.game.state;
+    // Ctrl/Cmd/Alt + A, S, D or a digit is a browser or system shortcut, never a vote.
+    if (e.ctrlKey || e.metaKey || e.altKey) return;
     if (e.repeat || e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement || e.target instanceof HTMLSelectElement) return;
     if (!s || s.phase !== 'play') return;
     const me = this.game.selfId;

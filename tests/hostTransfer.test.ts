@@ -315,20 +315,25 @@ describe('Host übergeben: findings of the second review', () => {
 
   it('N1: hosts that see different parts of the mesh still settle on one host and go quiet', () => {
     // x is host, c is connected to x only; b sees only x and elects itself, with a smaller roster than x's.
-    const { hub, s, run, hosts } = room(['x', 'b', 'c']);
-    run();
-    const b = priv(s.b);
-    b.peers.delete('c');
-    b.roster.delete('c');
-    b.takeOver();
-    hub.flush();
-    expect(hosts()).toEqual(['b']);
-    // Nothing keeps bouncing between them.
-    hub.flush(50);
-    expect(queueOf(hub).length).toBe(0);
-    run(3000);
-    expect(hosts()).toEqual(['b']);
-    expect(queueOf(hub).length).toBe(0);
+    // Unconfirmed, b's claim is weaker than x's; confirmed (higher epoch), it is stronger.
+    for (const confirmed of [false, true]) {
+      const { hub, s, run, hosts } = room(['x', 'b', 'c']);
+      run();
+      const b = priv(s.b);
+      b.peers.delete('c');
+      b.roster.delete('c');
+      b.takeOver();
+      if (confirmed) Object.assign(b, { epoch: 2, unconfirmed: null });
+      const winner = confirmed ? 'b' : 'x';
+      hub.flush();
+      expect(hosts()).toEqual([winner]);
+      // Nothing keeps bouncing between them.
+      hub.flush(50);
+      expect(queueOf(hub).length).toBe(0);
+      run(3000);
+      expect(hosts()).toEqual([winner]);
+      expect(queueOf(hub).length).toBe(0);
+    }
   });
 
   it('N2: a handover that never reached the target leaves no stale successor behind', () => {
@@ -504,6 +509,257 @@ describe('Host-Wächter: a room never stays without a host', () => {
     const hs = ['b', 'c'].filter((id) => s[id].role === 'host');
     expect(hs.length).toBe(1);
     expect(follows().slice(1)).toEqual([hs[0], hs[0]]);
+  });
+});
+
+type Room = ReturnType<typeof room>;
+type HubPriv = { post(p: { type: string; data: unknown; from: string }, to?: string): void; nodes: Map<string, unknown> };
+type Links = { onLeave(id: string): void; onJoin(id: string): void };
+
+/**
+ * A real network split: `cut` loses its connection to everyone else (both sides see the others
+ * leave, nothing crosses), the rest stays connected. Returns `heal`, after which both sides see
+ * each other join again.
+ */
+function partition(r: Room, cut: string[]): () => void {
+  r.hub.flush();
+  const hub = r.hub as unknown as HubPriv;
+  const post = hub.post.bind(hub);
+  let split = true;
+  hub.post = (p, to) => {
+    if (!split) return post(p, to);
+    for (const id of to ? [to] : [...hub.nodes.keys()]) if (id !== p.from && cut.includes(id) === cut.includes(p.from)) post(p, id);
+  };
+  const others = Object.keys(r.s).filter((id) => !cut.includes(id) && !r.left.has(id));
+  const link = (x: string) => r.s[x] as unknown as Links;
+  for (const c of cut) for (const o of others) link(o).onLeave(c);
+  for (const c of cut) for (const o of others) link(c).onLeave(o);
+  return () => {
+    split = false;
+    for (const c of cut) for (const o of others) link(o).onJoin(c);
+    for (const c of cut) for (const o of others) link(c).onJoin(o);
+  };
+}
+
+const settled = (r: Room) => {
+  const h = r.hosts();
+  return h.length === 1 && r.follows().every((x) => x === h[0]);
+};
+
+describe('Host-Epoche: which of two hosts stays', () => {
+  for (const ids of [['a', 'b', 'c'], ['z', 'b', 'c']]) {
+    it(`F1: a host cut off longer than leave detection comes back (ex-host id ${ids[0]}): the room that played on stays`, () => {
+      const r = room(ids);
+      r.run();
+      const ex = ids[0];
+      const heal = partition(r, [ex]);
+      r.run(8000);
+      // Both sides have a host: the ex-host carries on alone, the room elected a new one with a higher epoch.
+      expect(r.s[ex].role).toBe('host');
+      const nh = r.hosts().filter((id) => id !== ex);
+      expect(nh).toHaveLength(1);
+      expect(r.s[nh[0]].epoch).toBeGreaterThan(r.s[ex].epoch);
+      // The room makes progress the ex-host knows nothing of.
+      r.s[nh[0]].setSpeed(321, 5);
+      r.run(300);
+      heal();
+      r.hub.flush();
+      r.run(6000);
+      expect(r.hosts(), `follows ${r.follows()}`).toEqual(nh);
+      expect(settled(r)).toBe(true);
+      for (const id of ids) expect(r.s[id].train.kmh, id).toBe(321);
+      // The ex-host joined like a returning player and kept its seat.
+      expect(r.s[ex].mySeat).toBe(0);
+      for (const id of ids) expect(r.s[id].roster.size, id).toBe(3);
+    });
+  }
+
+  for (const lone of ['b', 'z']) {
+    it(`a client cut off long enough to make itself host (id ${lone}) loses against the room it left`, () => {
+      const ids = ['m', 'b', 'z'];
+      const r = room(ids);
+      r.run();
+      const heal = partition(r, [lone]);
+      r.run(8000);
+      // The lone peer took over, nobody of the room confirmed it: a weaker claim than the room's.
+      expect(r.s[lone].role).toBe('host');
+      expect(r.s[lone].epoch).toBeLessThan(r.s.m.epoch);
+      expect(r.s.m.role).toBe('host');
+      r.s.m.setSpeed(222, 5);
+      r.run(300);
+      heal();
+      r.hub.flush();
+      r.run(6000);
+      expect(r.hosts()).toEqual(['m']);
+      expect(settled(r)).toBe(true);
+      expect(r.s[lone].train.kmh).toBe(222);
+    });
+  }
+
+  it('a client never switches back to a host with an older epoch, even by a welcome from a room member', () => {
+    const r = room(['a', 'b', 'c']);
+    r.run();
+    const heal = partition(r, ['a']);
+    r.run(8000);
+    r.s.b.setSpeed(321, 5);
+    heal();
+    r.hub.flush();
+    r.run(6000);
+    expect(r.hosts()).toEqual(['b']);
+    // a is a client of b now and in everyone's roster: a welcome of its old room (epoch 0) changes nothing.
+    rawSend(r.s.a, 'welcome', { ...r.s.a.welcomeMsg(), epoch: 0, train: { kmh: 0, t0: 0, d0: 0 } });
+    r.hub.flush();
+    r.run(3000);
+    expect(r.hosts()).toEqual(['b']);
+    expect(settled(r)).toBe(true);
+    expect(r.s.c.train.kmh).toBe(321);
+  });
+
+  for (const [ids, hinted, winner] of [
+    [['a', 'b', 'c', 'd'], 'c', 'b'],
+    [['a', 'z', 'c', 'd'], 'c', 'c'],
+  ] as const) {
+    it(`two peers elect themselves at once from the same epoch: the smaller id stays (${ids.join('')}, winner ${winner})`, () => {
+      const r = room([...ids]);
+      r.run();
+      // The seat rank picks ids[1] (seat 2); a stale hint makes the hinted peer pick itself, too.
+      (r.s[hinted] as unknown as { successor: { id: string; at: number } }).successor = { id: hinted, at: r.t.ms };
+      r.left.add('a');
+      r.hub.disconnect('a');
+      const both = [ids[1], hinted];
+      for (const id of both) expect(r.s[id].role, id).toBe('host');
+      expect(r.s[ids[1]].epoch).toBe(r.s[hinted].epoch);
+      r.hub.flush();
+      r.run(3000);
+      expect(r.hosts()).toEqual([winner]);
+      expect(settled(r)).toBe(true);
+      // Nothing keeps bouncing.
+      expect((r.hub as unknown as { queue: unknown[] }).queue.length).toBe(0);
+    });
+  }
+
+  it('epochs: a handover target claims +2 at once; an elected host claims -1 until a player of the room confirms it, then +2', () => {
+    const r = room(['a', 'b', 'c']);
+    r.run();
+    const epochs = () => ['a', 'b', 'c'].filter((id) => !r.left.has(id)).map((id) => r.s[id].epoch);
+    expect(epochs()).toEqual([0, 0, 0]);
+    r.s.a.handOver('c');
+    r.run(300);
+    expect(r.hosts()).toEqual(['c']);
+    expect(epochs()).toEqual([2, 2, 2]);
+    // c leaves: a (seat 0) is elected and claims 1 until b's first ping, then 4.
+    r.left.add('c');
+    r.hub.disconnect('c');
+    expect(r.hosts()).toEqual(['a']);
+    expect(epochs()).toEqual([1, 1]);
+    r.hub.flush();
+    r.run(600);
+    expect(epochs()).toEqual([4, 4]);
+  });
+
+  it('the wire format is checked: a roster or welcome without a whole-number epoch is dropped', () => {
+    const r = room(['a', 'b', 'c']);
+    r.run();
+    const w = r.s.a.welcomeMsg();
+    for (const epoch of [undefined, '9', 1.5, Infinity, 1e12]) {
+      rawSend(r.s.b, 'welcome', { ...w, epoch }, 'a');
+      rawSend(r.s.b, 'roster', { e: epoch, r: w.roster }, 'a');
+    }
+    // The old roster format (a bare array) is no host's roster any more.
+    rawSend(r.s.b, 'roster', w.roster, 'a');
+    r.hub.flush();
+    r.run(1000);
+    expect(r.hosts()).toEqual(['a']);
+    expect(settled(r)).toBe(true);
+  });
+});
+
+describe('Host-Wächter and other findings of the third review', () => {
+  it('F2: a client whose tab ticks only every few seconds never replaces a working host', () => {
+    for (const every of [5000, 20_000, 60_000]) {
+      const r = room(['a', 'b', 'c']);
+      r.run();
+      let flips = 0;
+      let last = r.s.c.hostId;
+      for (let i = 0; i < 200; i++) {
+        r.t.ms += 1000;
+        r.s.a.tick();
+        r.s.b.tick();
+        if (r.t.ms % every < 1000) r.s.c.tick();
+        r.hub.flush();
+        if (r.s.c.hostId !== last) {
+          flips++;
+          last = r.s.c.hostId;
+        }
+      }
+      expect(flips, `every ${every} ms`).toBe(0);
+      expect(r.hosts()).toEqual(['a']);
+      expect(settled(r)).toBe(true);
+    }
+  });
+
+  for (const ids of [['a', 'b', 'c'], ['z', 'b', 'c']]) {
+    it(`a host frozen for 20 s (id ${ids[0]}) is replaced, and stays replaced when it wakes up`, () => {
+      const r = room(ids);
+      r.run();
+      const h = ids[0];
+      const node = (r.hub as unknown as { nodes: Map<string, { deliver(t: string, d: unknown, f: string): void }> }).nodes.get(h)!;
+      const deliver = node.deliver.bind(node);
+      const held: [string, unknown, string][] = [];
+      node.deliver = (t, d, f) => void held.push([t, d, f]);
+      for (let i = 0; i < 70; i++) {
+        r.t.ms += 300;
+        for (const [id, x] of Object.entries(r.s)) if (id !== h) x.tick();
+        r.hub.flush();
+      }
+      const nh = r.hosts().filter((id) => id !== h);
+      expect(nh).toHaveLength(1);
+      node.deliver = deliver;
+      for (const [t, d, f] of held) deliver(t, d, f);
+      r.run(20_000);
+      expect(r.hosts()).toEqual(nh);
+      expect(settled(r)).toBe(true);
+    });
+  }
+
+  it('a host who reloads comes back as a client under its new id, with seat 0', () => {
+    const r = room(['a', 'b', 'c']);
+    r.run();
+    r.leave('a');
+    r.run();
+    const a2 = new Session(r.hub.connect('a2'), new SharedClock(1, r.t.ms), false, state(1), () => r.t.ms, 'tok-a');
+    r.s.a2 = a2;
+    r.hub.flush();
+    r.run(5000);
+    expect(a2.role).toBe('client');
+    expect(a2.mySeat).toBe(0);
+    expect(r.hosts()).toEqual(['b']);
+    expect(settled(r)).toBe(true);
+  });
+
+  it('a fifth peer in a full room never runs the watchdog or takes over', () => {
+    const r = room(['a', 'b', 'c', 'd']);
+    r.run();
+    const e = new Session(r.hub.connect('e'), new SharedClock(1, r.t.ms), false, state(5), () => r.t.ms, 'tok-e');
+    r.s.e = e;
+    r.hub.flush();
+    r.run(20_000);
+    expect(e.welcomed).toBe(false);
+    expect(e.role).toBe('client');
+    expect(r.hosts()).toEqual(['a']);
+  });
+
+  it('a forged welcome or roster from a room member heals within a few seconds', () => {
+    for (const forger of ['b', 'c'])
+      for (const kind of ['welcome', 'roster'] as const) {
+        const r = room(['m', 'b', 'c']);
+        r.run();
+        const w = r.s.m.welcomeMsg();
+        rawSend(r.s[forger], kind, kind === 'welcome' ? w : { e: w.epoch, r: w.roster });
+        r.hub.flush();
+        r.run(20_000);
+        expect(settled(r), `${forger} ${kind}: hosts ${r.hosts()} follows ${r.follows()}`).toBe(true);
+      }
   });
 });
 
