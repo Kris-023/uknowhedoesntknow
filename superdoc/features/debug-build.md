@@ -50,7 +50,7 @@ All parsed once at the top of `src/main.ts` (`params`, `seedParam`, `debug`).
 - **`base: './'`.** *Why:* a relative base lets the same bundle work under any GitHub Pages path (`/<repo>/`) with no per-repo configuration.
 - **TypeScript:** `tsconfig.json` is strict with `noUnusedLocals`/`noUnusedParameters`, target ES2022, `moduleResolution: bundler`, `noEmit` (Vite builds, `tsc` only checks), includes `src` and `tests`. The build target is `es2022`.
 - **Chunk split** (`build.rolldownOptions.output.codeSplitting.groups` in `vite.config.ts`): `three` (everything under `node_modules/three`), and `vendor` (all other `node_modules` except `@sapphi-red`). *Why:* libraries change far less often than game code, so separate chunks stay cached across deploys; the noise suppressor is loaded on demand and is kept out of the eager vendor chunk. `chunkSizeWarningLimit` is 600 kB because three alone is about 570 kB minified and cannot be split further.
-- **Test config:** `vite.config.ts` sets `test.exclude` to Vitest's defaults plus a tooling folder, so only this project's own tests run.
+- **Test config:** `vite.config.ts` sets `test.exclude` to Vitest's defaults plus a tooling folder, so only this project's own tests run. *Gotcha:* a checkout (git worktree) that itself lives inside that excluded folder finds no tests with plain `vitest run`, because every file path matches the exclude. Run vitest there with a throwaway config file that sets an absolute `root` (the checkout's directory) and the same `test` settings without the exclude.
 
 ### Sealed content check
 

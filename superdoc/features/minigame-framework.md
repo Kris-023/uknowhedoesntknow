@@ -46,10 +46,17 @@ Every game folder has the same four files:
   and the checks stop a stranger or a malformed packet from corrupting state.
 - **`publish()`** sends `{...structuredClone(host.state), sentAt}`, then applies the same state locally. `sentAt` lets
   clients estimate `hostSkew`, so deadlines (host wall-clock ms) render right on other clocks.
-- **Rounds.** `start()` (host, at least 2 members) sorts members by `NET.seatOrder.indexOf(seat)` to get turn order,
-  carries `scores` over from the previous host state and bumps `round`. `NET.seatOrder` is currently `[0, 2, 1, 3]`
-  (a zig-zag fill order) and every game reads the same expression, so turn order follows that array. A change of the
-  seating direction is planned; it would be made there.
+- **Rounds.** `start()` (host, at least 2 members) sorts members with `byTableOrder(a.seat, b.seat)` to get turn order,
+  carries `scores` over from the previous host state and bumps `round`. All six games and the roster in the menu
+  use the same comparator.
+- **Table order** (`src/game/tableOrder.ts`). Turn order is counter-clockwise around the table seen from above,
+  starting top right (top right, top left, bottom left, bottom right). `tableOrder(seats)` computes it from seat
+  positions: the angle `atan2(-(z - cz), x - cx)` around the centre, measured from +x. `setTableSeats(seats)` stores the
+  current order in a module-level variable; the `World` constructor (`src/scene/world.ts`) calls it with `map.seats`, so a
+  map swap updates it. `byTableOrder(a, b)` is the comparator over seat indices (hypertrain seats until a world exists;
+  unknown seats go last). *Why:* the maps number their seats differently ([Maps](maps.md), "Seat layouts and turn order"),
+  so the order has to come from geometry. `NET.seatOrder` is *not* the turn order any more: it is only the order seats are
+  filled and the rank for host takeover ([Networking](networking.md)).
 
 ### Players, NPCs, fake peers
 
@@ -133,16 +140,26 @@ Games where people pick a player by looking (Zeig drauf, the Ahnungslos vote) op
 - `aimGaze()` in `launch()` feeds the `pickable()` ids into `Gaze` each frame (POV camera only) and highlights the pick
   on the name tags and head cards.
 
+### Reconnect helpers: `tabStore` and `Recovery`
+
+Two shared tools make a reload or a host change survivable. Nothing asks or stores automatically; each game decides what to keep and what to ask for.
+
+- **`src/game/tabStore.ts:tabStore(game, scope = currentRoom())`** returns `{get(key, check?), set(key, value): boolean, remove, clear}` over `sessionStorage`, so the data is per tab and survives F5, while a new tab starts empty. Keys are `ukhdk.g.<game>.<scope>.<key>`; the scope defaults to the room code from the address hash, so an old room's answers never show up in a new room. `get` takes an optional type guard because stored data is untrusted too. `set` returns `false` on quota or blocked storage, and a game then keeps working from memory. `clearTabGame(game)` removes a game's keys in every scope. The tab token `ukhdk.token.<code>` is a different thing and untouched. *Why `sessionStorage`:* a reload is the case to survive; `localStorage` would leak an answer into a second tab of the same browser, which is a different player.
+- **`src/game/minigame.ts:Recovery`** asks other players for data you lost. It rides the `mg` envelope as `mg:ask` and `mg:have`. `new Recovery(net)`; `answer(topic, fn)` registers the answering side (`fn(query, from)` returns the data, or `undefined` if this player cannot help, then nothing is sent); `ask(topic, query, {to, onReply, done, intervalMs = 2000, maxTries = 8, onGiveUp})` sends now and again on every `tick(now)` until `done()` is true or the tries run out (`to` may be a function, and `null` skips a try); `cancel(topic)`, `pending(topic)`. The game must call `tick(now)` from its own tick. Topics are prefixed per game (`wi:cards`, `sa:card`, `slf:mine`).
+- **Secret game data may be replicated to other browsers for recovery, as long as no UI shows it.** *Why:* a game among friends cannot be made safe against devtools without a dealer outside the room, and recovering after a reload or a host loss is worth more than that guarantee. Anything shown to the screen must still be filtered by who may see it (the Sag's anders explainer only answers its listed watchers; Wer bin ich? never hands out a player's own unrevealed card). Ahnungslos is the extreme case: every browser holds the word and the clueless player ([Wer bin ich? and friends](minigames-zeig-ahnungslos-slf.md)).
+- Which game keeps what is on the game pages: [whoami / sags / gleich](minigames-whoami-sags-gleich.md), [zeig / ahnungslos / slf](minigames-zeig-ahnungslos-slf.md).
+
 ### Absent players and rejoin/host takeover (the pattern every game follows)
 
 - **Rejoin.** A reload gives a new peer id. `Session` matches the returner to the old seat (tab token, browser id or
   name, within `NET.rejoinMs`) and fires `rejoin(old, new)`; `launch()` forwards it to every game
   (`session?.listen({ rejoin })`). Each host-side game calls `Host.replace(old, new)`, which renames the id everywhere:
   players, turn, teams, scores, votes, `ready`, logs and the undo history. Then `publish()`. Games with private data
-  also re-send what the returner lost (whoami cards).
+  also re-send what the returner lost (whoami cards) or let the returner ask for it (`Recovery`, below).
 - **Host takeover.** When the host leaves, the next member becomes host. In `tick()` a game that `isHost` but has no
-  host object builds one with `Host.fromState(lastPublicState)`. Everything that lived only on the old host is gone:
-  undo history and secret in-flight votes (a running vote is cleared). Conversely a game that sees `!isHost` while
+  host object builds one with `Host.fromState(lastPublicState)`. Everything that lived only on the old host is gone
+  unless a game replicated it on purpose: undo history always, and in-flight votes unless the game keeps copies of the
+  ballots (Gleich gedacht does; Wer bin ich? clears a running vote, see the game pages). Conversely a game that sees `!isHost` while
   holding a host object drops it (network split: the other host's state wins).
 - **Absent players never block.** `absent()` lists round players who are not in `net.members()`. "Everyone answered"
   checks are filtered by who is present (whoami `closeIfAllIn`, gleich `present`). Turn games pass an absent player's
@@ -178,7 +195,7 @@ Games where people pick a player by looking (Zeig drauf, the Ahnungslos vote) op
 | --- | --- | --- |
 | `UNDO.depth` | 5 | Decisions kept per round for Zug zurück |
 | `UNDO.resumeMinS` | 10 | Least number of seconds a taken-back Sag's-anders turn resumes with |
-| `NET.seatOrder` | `[0, 2, 1, 3]` | Turn order of every game |
+| `NET.seatOrder` | `[0, 2, 1, 3]` | Seat fill order and host-takeover rank (not the turn order, see "Rounds") |
 | `NET.rejoinMs` | 30 min | How long a returner gets seat and place back |
 | `NET.dropWaitMs` | 30 s | How long a "weiterspielen" request waits for the host to see the player gone |
 | `SCHAFFNER.loudLevel / loudS / windowS / cooldownS / penalty / showS` | 0.97 / 2.5 / 5 / 30 / 1 / 7 | Shouting trigger and fine |

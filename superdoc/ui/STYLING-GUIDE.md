@@ -58,7 +58,7 @@ for (const o of options) {
 
 Do NOT style a pressed state with a custom class; use `aria-pressed`, the CSS keys off it.
 
-Known issue (neutral note, fix planned): when a `.seg` wraps onto several lines, the rows get no horizontal separators and the first button of a new row draws a double left line (`.seg button + button` border plus the container border).
+`.seg` is built so that it can wrap onto several rows (`src/style.css`): the container has `gap: 1px` on a `var(--line)` background, every button is an opaque `var(--bg)` cell with `flex: 1 1 auto`, so the gap shows as a 1 px line between buttons and between rows, in both directions. There is no `button + button` border rule. *Why:* a per-button border cannot draw the line between wrapped rows without doubling at the row start. Disabled `.seg` buttons are dimmed with `color-mix` instead of `opacity: .4`, because transparency would let the line colour bleed through the cell.
 
 ## Settings forms
 

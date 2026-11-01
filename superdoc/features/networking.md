@@ -35,9 +35,9 @@ src/net/transport.ts:Transport    send / on / onJoin / onLeave / leave
 - The creator is `host` (`Session` constructor with `host = true`, seat 0); everyone else is `client` and sends `hello` with their `PersonState`, tab token and browser id. The host answers with `welcome` (`src/net/session.ts:welcomeMsg`): seed, `startMs`, current host clock, roster, train, blackout time, room options.
 - A client's `welcome` event fires once, on the first welcome. Only then do seed and `startMs` overwrite the local `SharedClock` and the world can be built (`go` in `src/main.ts`). The joiner repeats `hello` every `NET.helloRetryMs` (`src/net/session.ts:tick`) until a host answers, because the host may still be connecting.
 - The host owns the roster; every change is re-broadcast (`broadcastRoster`), and clients mirror it (`applyRoster`). A client only accepts `roster`, `train`, `blackout`, `opts` and `pong` from `hostId`.
-- Seats fill in `NET.seatOrder = [0, 2, 1, 3]`: the first two players face each other instead of sitting side by side. A fifth joiner gets `full` (`NET.maxPlayers` = 4). Note: games currently derive turn order from the same `seatOrder`.
+- Seats fill in `NET.seatOrder = [0, 2, 1, 3]`: on the hypertrain the first two players face each other instead of sitting side by side. A fifth joiner gets `full` (`NET.maxPlayers` = 4). `seatOrder` is only the seat fill order and the host-takeover rank; turn order in games comes from the real seat positions (`src/game/tableOrder.ts`, [Minigame framework](minigame-framework.md), "Rounds").
 - Head poses (`pose`, `NET.poseHz` 20, rounded to 3 decimals by `src/net/protocol.ts:encodePose`) go peer to peer, not via the host. *Why:* they are cosmetic and a hop through the host would only add latency.
-- Minigame traffic uses one channel `mg` with `{ t, d }` (`src/net/session.ts:sendGame` / `onGame`). Messages from senders not in the roster are dropped. *Why:* one channel keeps the transport generic; games define their own message types.
+- Minigame traffic uses one channel `mg` with `{ t, d }` (`src/net/session.ts:sendGame` / `onGame`). A message from a sender who is not in the roster *yet* is held (`holdGame`) for up to 10 s (`PENDING_GAME_MS`), at most 100 entries (`PENDING_GAME_MAX`, oldest dropped first), and delivered in arrival order when the roster grows (`flushPending`, called from `applyRoster`, after the host's `onHello` / rejoin and from `becomeHost`); entries that are older or still unknown are dropped. *Why:* a returning or new peer often sends its first game message before the roster that lists it has arrived, and dropping that message made reconnects lose cards and answers. One channel keeps the transport generic; games define their own message types. Games can also ask each other for lost data with `Recovery` (`mg:ask` / `mg:have`, [Minigame framework](minigame-framework.md), "Reconnect helpers").
 
 ### Untrusted peers
 
@@ -84,7 +84,7 @@ For multi-device development with `npm run dev:lan`, HTTPS with a throwaway cert
 | --- | --- | --- |
 | `appId` | `'uknowhedoesntknow'` | Relay namespace |
 | `maxPlayers` | 4 | Seats |
-| `seatOrder` | `[0, 2, 1, 3]` | Fill order |
+| `seatOrder` | `[0, 2, 1, 3]` | Seat fill order and host-takeover rank (not the turn order) |
 | `codeLength` | 8 | Room code symbols |
 | `poseHz` / `poseKeepAliveMs` / `poseEpsilon` | 20 / 1000 / 0.002 | Head pose rate, keep-alive, minimum change |
 | `remoteRate` | 18 | Smoothing of remote heads |
