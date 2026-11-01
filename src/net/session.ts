@@ -20,6 +20,10 @@ import type { Transport } from './transport';
 
 export type Role = 'host' | 'client';
 
+/** Game messages from peers not yet in the roster wait this long (ms) and at most this many (oldest dropped first). */
+const PENDING_GAME_MS = 10_000;
+const PENDING_GAME_MAX = 100;
+
 export interface SessionEvents {
   /** First welcome from a host: seed and clock are known now, the world can be built. */
   welcome(w: Welcome): void;
@@ -116,12 +120,39 @@ export class Session {
     net.on('full', (_d, from) => {
       if (!this.welcomed && from !== this.net.selfId) this.ev.status?.('full');
     });
-    // Minigame traffic: one channel, typed inside. Only from players in the room.
+    // Minigame traffic: one channel, typed inside. Only from players in the room; from someone who
+    // is not (yet) in our roster it waits briefly: a just-rejoined peer speaks before the roster
+    // that names it has reached us.
     net.on('mg', (d, from) => {
-      if (!this.roster.has(from) || typeof d !== 'object' || d === null) return;
+      if (typeof d !== 'object' || d === null) return;
       const { t, d: data } = d as { t?: unknown; d?: unknown };
-      if (typeof t === 'string' && t.length < 40) for (const h of this.gameHandlers) h(t, data, from);
+      if (typeof t !== 'string' || t.length >= 40) return;
+      if (this.roster.has(from)) this.deliverGame(t, data, from);
+      else this.holdGame(t, data, from);
     });
+  }
+
+  /** Game messages from peers our roster doesn't know yet, oldest first. */
+  private pendingGame: { t: string; d: unknown; from: string; at: number }[] = [];
+
+  private deliverGame(t: string, data: unknown, from: string): void {
+    for (const h of this.gameHandlers) h(t, data, from);
+  }
+
+  private holdGame(t: string, data: unknown, from: string): void {
+    const now = this.now();
+    this.pendingGame = this.pendingGame.filter((m) => now - m.at <= PENDING_GAME_MS);
+    this.pendingGame.push({ t, d: data, from, at: now });
+    if (this.pendingGame.length > PENDING_GAME_MAX) this.pendingGame.shift();
+  }
+
+  /** Roster grew: hand over what peers said before we knew them (in order); the rest keeps waiting until it expires. */
+  private flushPending(): void {
+    if (!this.pendingGame.length) return;
+    const now = this.now();
+    const all = this.pendingGame.filter((m) => now - m.at <= PENDING_GAME_MS);
+    this.pendingGame = all.filter((m) => !this.roster.has(m.from));
+    for (const m of all) if (this.roster.has(m.from)) this.deliverGame(m.t, m.d, m.from);
   }
 
   private gameHandlers: ((type: string, data: unknown, from: string) => void)[] = [];
@@ -318,6 +349,7 @@ export class Session {
     this.broadcastRoster();
     this.net.send('train', this.train);
     if (first) this.ev.welcome?.(this.welcomeMsg());
+    this.flushPending();
   }
 
   private onHello(d: unknown, from: string): void {
@@ -344,11 +376,13 @@ export class Session {
         this.net.send('welcome', this.welcomeMsg(), from);
         this.broadcastRoster();
         this.ev.rejoin?.(back.id, from);
+        this.flushPending();
         return;
       }
     }
     this.net.send('welcome', this.welcomeMsg(), from);
     this.broadcastRoster();
+    this.flushPending();
   }
 
   welcomeMsg(): Welcome {
@@ -431,6 +465,7 @@ export class Session {
     this.roster.clear();
     for (const e of r) this.roster.set(e.id, e);
     this.ev.roster?.();
+    this.flushPending();
   }
 
   private broadcastRoster(): void {

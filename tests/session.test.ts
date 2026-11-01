@@ -300,3 +300,80 @@ describe('rejoin', () => {
     expect(lone.mySeat).toBeGreaterThanOrEqual(0);
   });
 });
+
+describe('game messages around a rejoin', () => {
+  function room() {
+    const hub = new MemoryHub();
+    const t = { ms: 1_000_000 };
+    const now = () => t.ms;
+    const mk = (id: string, host: boolean) => new Session(hub.connect(id), new SharedClock(1, now()), host, state(id.length), now, `tok-${id}`);
+    const h = mk('h', true);
+    const b1 = mk('b1', false);
+    const c = mk('c1', false);
+    hub.flush();
+    const got = (s: Session) => {
+      const log: string[] = [];
+      s.onGame((ty, d, from) => log.push(`${from}:${ty}:${JSON.stringify(d)}`));
+      return log;
+    };
+    return { hub, t, mk, h, b1, c, got };
+  }
+
+  it('a message from a just-rejoined peer reaches a peer whose roster does not know it yet', () => {
+    const { hub, mk, c, got } = room();
+    const log = got(c);
+    hub.disconnect('b1');
+    hub.flush();
+    const b2 = mk('b2', false);
+    // Sent before the host's roster has told c1 about b2.
+    b2.sendGame('wi:card', { x: 1 }, 'c1');
+    hub.flush();
+    expect(c.roster.has('b2')).toBe(true);
+    expect(log).toEqual(['b2:wi:card:{"x":1}']);
+  });
+
+  it('a message to a peer that is not welcomed yet is delivered once it is', () => {
+    const { hub, mk, c, got } = room();
+    const b2 = mk('b2', false);
+    const log = got(b2);
+    c.sendGame('wi:state', 7, 'b2');
+    hub.flush();
+    expect(b2.roster.has('b2')).toBe(true);
+    expect(log).toEqual(['c1:wi:state:7']);
+  });
+
+  it('held messages keep their order', () => {
+    const { hub, mk, c, got } = room();
+    const log = got(c);
+    const d = mk('d2', false);
+    d.sendGame('a', 1, 'c1');
+    d.sendGame('b', 2, 'c1');
+    d.sendGame('a', 3, 'c1');
+    hub.flush();
+    expect(log).toEqual(['d2:a:1', 'd2:b:2', 'd2:a:3']);
+  });
+
+  it.each([
+    [1_000, ['p4:a:"early"']],
+    [9_000, []],
+  ])('a message from someone the roster only learns of %i ms before its hello retry is delivered only if fresh', (wait, expected) => {
+    const { hub, t, h, got } = room();
+    const log = got(h);
+    const mk = (id: string) => new Session(hub.connect(id), new SharedClock(1, t.ms), false, state(1), () => t.ms, `tok-${id}`);
+    mk('p3');
+    hub.flush();
+    // Room is full: p4 is turned away, but already said something.
+    const p4 = mk('p4');
+    p4.sendGame('a', 'early', 'h');
+    hub.flush();
+    expect(h.roster.has('p4')).toBe(false);
+    // The hello retry comes 2 s after the first (+0.5 s slack).
+    t.ms += wait + 2_500;
+    hub.disconnect('p3');
+    hub.flush();
+    p4.tick();
+    hub.flush();
+    expect(h.roster.has('p4')).toBe(true);
+    expect(log).toEqual(expected);
+  });
+});
