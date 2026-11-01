@@ -126,7 +126,7 @@ export class BenchPanel {
             render: r,
             gpuTimer: this.diag.gpuTimer,
             heapPrecise: this.diag.heapPrecise(),
-            settings: `Licht ${settings.light} · Leuchten ${settings.bloom ? `an (${Math.round(settings.bloomStrength * 100)} %)` : 'aus'} · Auflösung ${Math.round(settings.renderScale * 100)} %`,
+            settings: `Leuchten ${settings.glow} · Helligkeit Bild ${Math.round(settings.imageBrightness * 100)} % / Render ${Math.round(settings.renderBrightness * 100)} % · Nachschärfen ${settings.sharpen ? 'an' : 'aus'} · Vignette ${settings.vignette ? 'an' : 'aus'} · Auflösung ${Math.round(settings.renderScale * 100)} %`,
           });
         },
       }),

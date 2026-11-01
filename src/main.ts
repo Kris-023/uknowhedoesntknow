@@ -2,7 +2,7 @@ import * as THREE from 'three';
 import { Ambience } from './audio/ambience';
 import { echoNeedsHeadphones, getVoice, type Voice } from './audio/voice';
 import type { PersonState } from './characters/person';
-import { AMBIENCE, CAMERA, HEAD, LIGHT_PRESETS, LIGHTS, NET, SCHAFFNER, VOICE } from './config';
+import { AMBIENCE, CAMERA, HEAD, NET, SCHAFFNER, VOICE } from './config';
 import { SharedClock } from './core/clock';
 import { DebugPanel } from './debug/panel';
 import { sceneTree } from './debug/sceneTree';
@@ -51,7 +51,7 @@ import { RoomLists } from './game/roomLists';
 import { RoomKey } from './game/roomKey';
 import { deckLock } from './words/content';
 import { initUiScale } from './ui/scale';
-import { loadProfile, onSettings, saveProfile, settings, updateSettings } from './ui/store';
+import { GLOW_LEVELS, loadProfile, onSettings, saveProfile, settings, updateSettings } from './ui/store';
 import './style.css';
 
 // The prototype's palette was tuned on r128, where hex colours went into the shader unconverted.
@@ -72,10 +72,6 @@ const setProfile = (p: PersonState) => {
 };
 
 initUiScale();
-
-const applyLight = () => Object.assign(LIGHTS, LIGHT_PRESETS[settings.light]);
-applyLight();
-onSettings(applyLight);
 
 void start();
 
@@ -193,7 +189,7 @@ function launch(clock: SharedClock, session: Session | null, startCam: 'wagon' |
     {
       onSight: (on) => {
         setSightMode(world.scene, on);
-        applyBloom();
+        applyRender();
       },
       onCam: (cam) => {
         world.cam = cam;
@@ -214,14 +210,18 @@ function launch(clock: SharedClock, session: Session | null, startCam: 'wagon' |
     },
     debug,
   );
-  const applyBloom = () => {
+  const applyRender = () => {
     if (!pipeline) return;
-    pipeline.bloomOn = settings.bloom && !panel.state.sight;
-    pipeline.bloomStrength = settings.bloomStrength;
+    pipeline.bloomOn = settings.glow !== 'aus' && !panel.state.sight;
+    pipeline.bloomStrength = GLOW_LEVELS[settings.glow];
+    pipeline.renderBrightness = settings.renderBrightness;
+    pipeline.sharpen = settings.sharpen;
+    pipeline.vignette = settings.vignette;
+    pipeline.setImageBrightness(settings.imageBrightness);
     pipeline.setRenderScale(settings.renderScale);
   };
-  applyBloom();
-  onSettings(applyBloom);
+  applyRender();
+  onSettings(applyRender);
 
   // Your own character: the menu profile goes onto your seat (in a room it came with the hello).
   if (!session) players.applyState(players.active, profile);

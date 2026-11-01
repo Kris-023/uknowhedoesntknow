@@ -1,4 +1,4 @@
-import { COLORS, HALT_CYCLE_S, SHAKE, SPEED, type LightPresetName } from '../config';
+import { COLORS, HALT_CYCLE_S, SHAKE, SPEED } from '../config';
 import { ITEMS, ITEM_IDS, SLOT_LABEL, SLOTS } from '../characters/accessories';
 import { haltCountdown, smoothstep } from '../core/motion';
 import type { Players } from '../game/players';
@@ -133,33 +133,21 @@ export class DebugPanel {
     const tempo = this.slider('Tempo', 0, SPEED.maxKmh, 10, this.state.kmh, (v) => `${v} km/h`, (v) => (this.state.kmh = v));
     this.tempo = tempo;
     this.root.append(tempo.row);
-    // Shake, bloom and light are player settings (Esc menu); the panel edits the same values.
+    // Shake and glow are player settings (Esc menu); the panel edits the same values.
     const shake = this.slider('Wackeln', 0, SHAKE.maxMm, 1, settings.shakeMm, (v) => `${v} mm`, (v) => updateSettings({ shakeMm: v }));
     shake.row.append(this.toggle(() => settings.shakeOn, (on) => updateSettings({ shakeOn: on })));
     this.root.append(shake.row);
     const fx = el('div', 'ctl');
     fx.append(
       el('span', 'ctl-label', 'Effekte'),
-      this.toggle(() => settings.bloom, (on) => updateSettings({ bloom: on }), 'Bloom'),
+      this.toggle(() => settings.glow !== 'aus', (on) => updateSettings({ glow: on ? 'standard' : 'aus' }), 'Leuchten'),
       (this.blackoutBtn = this.button('Ausfall testen', () => this.hooks.onBlackout())),
     );
     this.root.append(fx);
-    const lightSeg = el('div', 'seg');
-    const lightBtns: HTMLButtonElement[] = [];
-    for (const [label, name] of [['Nacht', 'nacht'], ['Hell', 'hell']] as const satisfies readonly (readonly [string, LightPresetName])[]) {
-      const b = this.segButton(label, () => updateSettings({ light: name }));
-      b.dataset.light = name;
-      lightBtns.push(b);
-      lightSeg.append(b);
-    }
-    const syncLight = () => lightBtns.forEach((x) => x.setAttribute('aria-pressed', String(x.dataset.light === settings.light)));
-    syncLight();
     onSettings(() => {
-      syncLight();
       shake.input.value = String(settings.shakeMm);
       shake.out.textContent = `${settings.shakeMm} mm`;
     });
-    this.root.append(this.row('Licht', lightSeg));
 
     // Head turn test tools
     const yaw = this.slider('Kopf', -100, 100, 1, 0, (v) => `${Math.round(v * YAW_PER_UNIT * 57.3)}°`, (v) => {

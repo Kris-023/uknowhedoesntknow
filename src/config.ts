@@ -61,19 +61,24 @@ export interface LightPreset {
   bloomThreshold: number;
 }
 
-export const LIGHT_PRESETS = {
-  /** Night train: the neon strips carry the room, everything else is a faint fill. */
-  nacht: { hemi: 0.04, ceilingWhite: 0.06, neonBlue: 0.9, window: 0.8, neonTubeHdr: 1.9, frameOpacity: 0.28, exposure: 0.85, bloomThreshold: 0.28 },
-  /** The brighter M1 look (as in the prototype), with bloom kept by lifting tubes and threshold together. */
-  hell: { hemi: 0.5, ceilingWhite: 0.45, neonBlue: 1.5, window: 1.0, neonTubeHdr: 3.2, frameOpacity: 0.7, exposure: 1.15, bloomThreshold: 0.62 },
-} satisfies Record<string, LightPreset>;
-export type LightPresetName = keyof typeof LIGHT_PRESETS;
+/** Only the night look remains (the "Licht" switch is gone); kept as a type for the legacy settings shim in `ui/store.ts`. */
+export type LightPresetName = 'nacht';
 
 /**
- * The active lighting values. Mutable on purpose: every lighting consumer reads it per frame,
- * so switching presets is a single Object.assign with no plumbing through the scene.
+ * Lighting values every lighting consumer reads per frame. Night train: the neon strips carry
+ * the room, everything else is a faint fill. All maps are tuned for exactly these values; the
+ * player-facing brightness settings act on the output (exposure multiplier, canvas filter), not here.
  */
-export const LIGHTS: LightPreset = { ...LIGHT_PRESETS.nacht };
+export const LIGHTS: Readonly<LightPreset> = {
+  hemi: 0.04,
+  ceilingWhite: 0.06,
+  neonBlue: 0.9,
+  window: 0.8,
+  neonTubeHdr: 1.9,
+  frameOpacity: 0.28,
+  exposure: 0.85,
+  bloomThreshold: 0.28,
+};
 
 export const RENDER = {
   maxPixelRatio: 2,
