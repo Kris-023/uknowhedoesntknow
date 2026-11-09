@@ -38,10 +38,18 @@ export function parseIntent(v: unknown): Intent | null {
   return o.a === 'ready' || o.a === 'ask' || o.a === 'guess' || o.a === 'pass' || o.a === 'end' ? { a: o.a } : null;
 }
 
-/** Everyone makes the card for the next one in the circle, so nobody makes their own. */
-export function assignAuthors(players: string[]): Record<string, string> {
+/**
+ * Everyone makes the card for the next one in a circle shuffled anew each round, so nobody makes
+ * their own and the targets don't repeat with the join order (issue #2).
+ */
+export function assignAuthors(players: string[], rnd: () => number = Math.random): Record<string, string> {
+  const c = [...players];
+  for (let i = c.length - 1; i > 0; i--) {
+    const j = Math.floor(rnd() * (i + 1));
+    [c[i], c[j]] = [c[j], c[i]];
+  }
   const out: Record<string, string> = {};
-  players.forEach((author, i) => (out[players[(i + 1) % players.length]] = author));
+  c.forEach((author, i) => (out[c[(i + 1) % c.length]] = author));
   return out;
 }
 
@@ -214,7 +222,7 @@ export class WhoamiHost {
     this.history.fine(id, points);
   }
 
-  /** Someone left: drop them; in the card phase the circle is drawn anew without them. */
+  /** Someone left: drop them; in the card phase the circle closes the gap they leave. */
   removePlayer(id: string, now: number): boolean {
     const s = this.state;
     if (!s.players.includes(id)) return false;
@@ -231,7 +239,11 @@ export class WhoamiHost {
     }
     if (s.phase === 'cards') {
       const before = s.authorOf;
-      s.authorOf = assignAuthors(s.players);
+      // Close the gap instead of a new shuffle: only the leaver's author gets a new target.
+      s.authorOf = { ...before };
+      const theirTarget = Object.keys(before).find((t) => before[t] === id);
+      if (theirTarget) s.authorOf[theirTarget] = before[id];
+      delete s.authorOf[id];
       // Authors whose target didn't change keep their submitted card.
       s.ready = s.ready.filter((a) => a !== id && Object.entries(s.authorOf).some(([t, au]) => au === a && before[t] === a));
       if (s.ready.length >= s.players.length) this.startPlay();

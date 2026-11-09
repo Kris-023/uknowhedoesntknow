@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { assignAuthors, majority, parseIntent, WhoamiHost } from '../src/game/whoami/logic';
 
 const P = ['a', 'b', 'c'];
@@ -9,6 +9,19 @@ describe('Wer bin ich? rules', () => {
     const m = assignAuthors(['a', 'b', 'c', 'd']);
     for (const [target, author] of Object.entries(m)) expect(author).not.toBe(target);
     expect(new Set(Object.values(m)).size).toBe(4);
+  });
+
+  it('the circle is shuffled, not tied to the join order', () => {
+    const seen = new Set<string>();
+    for (let k = 0; k < 50; k++) seen.add(assignAuthors(['a', 'b', 'c', 'd']).a);
+    expect(seen.size).toBe(3);
+    // One circle: following author -> target from anyone visits everyone.
+    const m = assignAuthors(['a', 'b', 'c', 'd', 'e'], () => 0.3);
+    const next = Object.fromEntries(Object.entries(m).map(([t, au]) => [au, t]));
+    let p = 'a';
+    const visited = new Set<string>();
+    while (!visited.has(p)) visited.add(p), (p = next[p]);
+    expect(visited.size).toBe(5);
   });
 
   it('starts playing once every card is in', () => {
@@ -76,10 +89,19 @@ describe('Wer bin ich? rules', () => {
 
   it('a player leaving during the card phase redraws the circle', () => {
     const h = new WhoamiHost(['a', 'b', 'c', 'd']);
-    h.intent('b', { a: 'ready' }, 0, false);
+    const before = { ...h.state.authorOf };
+    const cAuthor = before.c;
+    const cTarget = Object.keys(before).find((t) => before[t] === 'c')!;
+    h.intent(cAuthor, { a: 'ready' }, 0, false);
+    const keeper = before[cAuthor];
+    h.intent(keeper, { a: 'ready' }, 0, false);
     h.removePlayer('c', 0);
     expect(h.state.players).toEqual(['a', 'b', 'd']);
     for (const [t, au] of Object.entries(h.state.authorOf)) expect(au).not.toBe(t);
+    // Only c's author gets c's old target; everyone else keeps theirs, and a sent card stays sent.
+    expect(h.state.authorOf[cTarget]).toBe(cAuthor);
+    expect(Object.keys(h.state.authorOf).sort()).toEqual(['a', 'b', 'd']);
+    expect(h.state.ready).toEqual([keeper]);
   });
 
   it('rejects unknown intents', () => {
@@ -253,6 +275,8 @@ describe('dropped-out players', async () => {
 describe('WhoamiHost.replace', () => {
   it('moves everything that names the player to the new id, and a running vote keeps their vote', () => {
     const h = new WhoamiHost(P);
+    const r = (id: string) => (id === 'b' ? 'b2' : id);
+    const want = Object.fromEntries(Object.entries(h.state.authorOf).map(([t, au]) => [r(t), r(au)]));
     ready(h);
     // a asks, b answers, then b is the one to reload.
     h.intent('a', { a: 'ask' }, 0, true);
@@ -261,7 +285,7 @@ describe('WhoamiHost.replace', () => {
     const s = h.state;
     expect(s.players).toEqual(['a', 'b2', 'c']);
     expect([...s.ready].sort()).toEqual(['a', 'b2', 'c']);
-    expect(s.authorOf).toEqual({ b2: 'a', c: 'b2', a: 'c' });
+    expect(s.authorOf).toEqual(want);
     expect(s.vote?.voters).toEqual(['b2']);
     expect(s.questions).toEqual({ a: 0, b2: 0, c: 0 });
     expect(Object.keys(s.scores).sort()).toEqual(['a', 'b2', 'c']);
@@ -333,9 +357,12 @@ describe('Wer bin ich? reload', async () => {
   beforeEach(() => {
     const s = fakeStorage();
     Object.defineProperty(globalThis, 'sessionStorage', { configurable: true, get: () => s });
+    // These cases name who made whose card: pin the shuffled circle to table order (a -> b -> c ...).
+    vi.spyOn(Math, 'random').mockReturnValue(0.9999);
   });
   afterEach(() => {
     delete (globalThis as { sessionStorage?: unknown }).sessionStorage;
+    vi.restoreAllMocks();
   });
 
   /** A room of `ids` (in table order a, b, c ...) plus the ids of tabs that reload into it later. */

@@ -14,8 +14,10 @@ host-change recovery uses the shared helpers `tabStore` and `Recovery` described
 
 ### Rules and phases
 
-- Phase `cards`: everyone makes a card (an image) for the next player in the circle (`assignAuthors`), so nobody makes
-  their own. When all authors have sent (`ready`), the round goes to `play`; the first player in turn order starts.
+- Phase `cards`: everyone makes a card (an image) for the next player in a circle that is shuffled anew every round
+  (`assignAuthors`), so nobody makes their own. *Why shuffled:* a circle in turn order meant the same author for the same
+  target every round with the same seating (issue #2). It stays one circle, not just any derangement, so a leaver's gap
+  can be closed without touching anyone else. When all authors have sent (`ready`), the round goes to `play`; the first player in turn order starts.
 - Phase `play`: the player on turn either asks (`ask`) a yes/no question out loud or says "Ich bin ..." and `guess`es, or
   passes. Both open a **secret vote** among everyone else (`WHOAMI.voteS`, default 20 s, room setting). The vote closes
   when all other players have voted, when all *present* ones have, or at its deadline with the votes that came in.
@@ -69,8 +71,8 @@ host-change recovery uses the shared helpers `tabStore` and `Recovery` described
   the old host) and the guesser is on turn again; undo history is gone.
 - **Absent players**: `absent()`; the host's `tick()` runs `closeIfAllIn(here)` so a vote does not wait for them; an absent
   player's turn passes after `WHOAMI.absentPassS` (8 s) when no vote is running; they are removed after `absentLeaveS`
-  (30 min) or on "Ohne X weiterspielen" (`drop` → `dropNow`). `removePlayer` in phase `cards` redraws the circle
-  (`assignAuthors`) and keeps the cards whose target did not change.
+  (30 min) or on "Ohne X weiterspielen" (`drop` → `dropNow`). `removePlayer` in phase `cards` closes the circle
+  around the leaver (their author takes over their target, no new shuffle), so every other card already sent stays valid.
 - **Zug zurück**: decisions are a resolved vote (snapshot taken when the vote *opened*, saved on resolve via
   `beforeVote`, so the guesser is on turn again), a pass, and a host `end`. Takes back scores and `solved` with it; fines
   stay. After an undo, `applyState` reacts to the `undo` counter: if you are no longer solved, your own card is removed

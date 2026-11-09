@@ -2,6 +2,10 @@
 
 What changed, day by day, newest first (date-based, see the [version policy](claude-instructions/documentation-version-policy.md)). Add a few lines to today's block after each work session; the details belong in the feature pages and in the commits.
 
+## 2026-11-09
+
+- "Wer bin ich?": who makes whose card is shuffled anew every round instead of following the turn order; a player leaving during the card phase only changes their own author's target (issue #2, [Wer bin ich?](features/minigames-whoami-sags-gleich.md)).
+
 ## 2026-11-01
 
 - Host transfer ("Host übergeben") from the Esc menu; host epochs decide between two hosts, a host guard asks everyone and survives sleep.
