@@ -5,6 +5,7 @@ What changed, day by day, newest first (date-based, see the [version policy](cla
 ## 2026-11-09
 
 - "Wer bin ich?": who makes whose card is shuffled anew every round instead of following the turn order; a player leaving during the card phase only changes their own author's target (issue #2, [Wer bin ich?](features/minigames-whoami-sags-gleich.md)).
+- "Wer bin ich?": after Zug zurück, a vote reopened in the same clock tick no longer blocks everyone from voting again (the vote key now includes the undo counter); this also fixes a test in `tests/undo.test.ts` that failed at random.
 
 ## 2026-11-01
 

@@ -36,7 +36,9 @@ host-change recovery uses the shared helpers `tabStore` and `Recovery` described
 - **Single votes never leave the host.** `WhoamiHost` keeps `votes` privately; the public state only has
   `vote.voters` (who has voted) and, afterwards, `last.result` and the vote count. *Why:* the point is a secret ballot;
   the host is a player and could otherwise read others' votes from state. A client keeps its own choice only locally
-  (`WhoamiGame.myVote`, keyed by `voteKey`, "Deine Stimme: Ja") and never sends it back.
+  (`WhoamiGame.myVote`, keyed by `voteKey`, "Deine Stimme: Ja") and never sends it back. `voteKey` contains the
+  round, the `undo` counter, guesser, kind and deadline. *Why `undo`:* a vote reopened right after Zug zurück can get the
+  same deadline (same clock tick), and without it everyone's remembered vote would block them from voting again.
 - **Cards are peer-to-peer and never touch the host.** `src/game/whoami/game.ts:WhoamiGame.submitCard` sends
   `wi:card {target, img}` straight to every member except the author and the target, then sends the `ready` intent.
   Images are JPEG data URLs (longest side `WHOAMI.cardPx` 512, quality `cardQuality`), parsed on receipt by
