@@ -158,10 +158,11 @@ export class WhoamiGame implements Minigame {
     this.emit();
   }
 
-  /** Key of the running vote, so a remembered vote never leaks into the next one. */
+  /** Key of the running vote, so a remembered vote never leaks into the next one. `undo` is in it because a vote
+   * reopened after Zug zurück can get the very same deadline (same clock tick). */
   get voteKey(): string {
     const s = this.state;
-    return s?.vote ? `${s.round}|${s.vote.guesser}|${s.vote.kind}|${s.vote.deadline}` : '';
+    return s?.vote ? `${s.round}|${s.undo}|${s.vote.guesser}|${s.vote.kind}|${s.vote.deadline}` : '';
   }
 
   vote(v: Vote): void {
